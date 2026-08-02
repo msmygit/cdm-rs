@@ -145,19 +145,74 @@ fn openapi(check: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `OPS-012`, generated-documentation half. Delivered with the config model in PR #4.
+/// `OPS-012`, generated-documentation half (`CFG-001`, `CFG-003`).
+///
+/// Both artefacts are projections of `cdm_config::CdmConfig`: the JSON Schema the web UI and
+/// editors consume, and the property reference table. Generating them from the same registry the
+/// loaders use is what makes the "no hand-maintained parallel list" half of `CFG-001` mechanical
+/// rather than aspirational.
+///
+/// The metric and CLI tables named by `OPS-012` join this list when their models land, in PR #19
+/// and PR #10 respectively.
 fn docs(check: bool) -> anyhow::Result<()> {
-    let dir = repo_root()?.join("docs/generated");
-    anyhow::ensure!(dir.is_dir(), "{} is missing", dir.display());
+    let root = repo_root()?;
+    let artefacts = [
+        (
+            root.join("schema/cdm-config.schema.json"),
+            cdm_config::json_schema_document(),
+        ),
+        (
+            root.join("docs/generated/PROPERTIES.md"),
+            cdm_config::properties_markdown(),
+        ),
+    ];
+
+    let mut stale = Vec::new();
+    for (path, generated) in &artefacts {
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", path.display()))?;
+        anyhow::ensure!(parent.is_dir(), "{} is missing", parent.display());
+
+        let current = std::fs::read_to_string(path).unwrap_or_default();
+        // Line-ending policy is git's business, not a staleness signal: a Windows checkout may
+        // materialise an LF artefact with CRLF.
+        if cdm_config::generate::is_current(&current, generated) {
+            continue;
+        }
+        if check {
+            stale.push(
+                path.strip_prefix(&root)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string(),
+            );
+        } else {
+            std::fs::write(path, generated)
+                .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+            println!(
+                "docs: wrote {}",
+                path.strip_prefix(&root).unwrap_or(path).display()
+            );
+        }
+    }
 
     anyhow::ensure!(
-        check,
-        "the documentation generator is delivered by PR #4; see docs/ROADMAP.md"
+        stale.is_empty(),
+        "{} generated artefact(s) are stale; run `cargo xtask docs`:\n{}",
+        stale.len(),
+        stale
+            .iter()
+            .map(|path| format!("  - {path}"))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
-    println!(
-        "docs --check: {} exists.\n\
-         note: generation from the config, metric and CLI models arrives in PR #4.",
-        dir.display()
-    );
+
+    if check {
+        println!(
+            "docs --check: {} generated artefact(s) are up to date.",
+            artefacts.len()
+        );
+    }
     Ok(())
 }

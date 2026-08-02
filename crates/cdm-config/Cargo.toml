@@ -13,6 +13,31 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `humantime-serde` is reached only through `#[serde(with = "humantime_serde")]`, a string
+# literal that cargo-machete's source scan cannot see. Removing it breaks the build.
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
+
+# ARCHITECTURE §3.2: `cdm-config` depends on `cdm-core` and nothing else in the workspace. In
+# particular it must NOT depend on `cdm-cql` — Tier-3 (schema-bound) validation is expressed as
+# the `SchemaProvider` trait defined here and implemented there.
+#
+# There is no `thiserror`: every failure in this crate is a `cdm_core::Diagnostic`, because
+# `CFG-021` requires every violation to be reported at once rather than as one returned error.
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+cdm-core.workspace = true
+chrono-tz.workspace = true
+humantime-serde.workspace = true
+num_cpus.workspace = true
+regex.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+strsim.workspace = true
+toml.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
