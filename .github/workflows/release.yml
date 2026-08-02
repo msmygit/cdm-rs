@@ -60,7 +60,7 @@ jobs:
       - name: Sign artefacts
         run: |
           find dist -type f -exec cosign sign-blob --yes --output-signature {}.sig {} \;
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           body_path: RELEASE_NOTES.md
           files: |
