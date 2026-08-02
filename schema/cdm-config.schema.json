@@ -1,0 +1,1637 @@
+{
+  "$defs": {
+    "Astra": {
+      "additionalProperties": false,
+      "description": "Astra DevOps / secure-connect-bundle auto-download (`CFG-110`).",
+      "properties": {
+        "custom_domain": {
+          "default": null,
+          "description": "The custom domain the bundle should be issued for.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "database_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AstraDatabaseId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The Astra database UUID, used to download a bundle through the DevOps API."
+        },
+        "metadata_refresh_interval": {
+          "$ref": "#/$defs/Duration",
+          "default": "5m",
+          "description": "How often to refresh Astra control-connection metadata (`CON-025`)."
+        },
+        "mode": {
+          "$ref": "#/$defs/AstraMode",
+          "default": "sni",
+          "description": "How CQL traffic reaches Astra (`CON-022`, `CON-026`).\n\n`sni` follows the bundle's `config.json`; `single_endpoint` is for deployments\nthat terminate SNI upstream."
+        },
+        "region": {
+          "default": null,
+          "description": "The Astra region whose bundle to download, for multi-region databases.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scb_type": {
+          "$ref": "#/$defs/ScbType",
+          "default": "default",
+          "description": "Whether to download the standard bundle or a custom-domain one."
+        }
+      },
+      "type": "object"
+    },
+    "AstraDatabaseId": {
+      "description": "The Astra database UUID, as shown in the Astra console.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "AstraMode": {
+      "description": "How to route CQL traffic to Astra (`CON-022`, `CON-026`).",
+      "oneOf": [
+        {
+          "const": "sni",
+          "description": "SNI proxy routing, as the bundle's `config.json` describes it.",
+          "type": "string"
+        },
+        {
+          "const": "single_endpoint",
+          "description": "A single endpoint, for deployments that terminate SNI upstream.",
+          "type": "string"
+        }
+      ]
+    },
+    "Auth": {
+      "additionalProperties": false,
+      "description": "How callers of the HTTP control plane authenticate (`SEC-010`).",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/AuthMode",
+          "default": "none",
+          "description": "The authentication scheme."
+        }
+      },
+      "type": "object"
+    },
+    "AuthMode": {
+      "description": "How the HTTP control plane authenticates callers (`SEC-010`).",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No authentication. Only safe on a loopback bind.",
+          "type": "string"
+        },
+        {
+          "const": "bearer",
+          "description": "A bearer token in the `Authorization` header.",
+          "type": "string"
+        },
+        {
+          "const": "mtls",
+          "description": "Mutual TLS.",
+          "type": "string"
+        }
+      ]
+    },
+    "Autocorrect": {
+      "additionalProperties": false,
+      "description": "What the validate job repairs when it finds a difference (`CFG-140`).",
+      "properties": {
+        "mismatch": {
+          "default": false,
+          "description": "Overwrite target rows whose values differ from origin.",
+          "type": "boolean"
+        },
+        "missing": {
+          "default": false,
+          "description": "Write rows that are present on origin and absent on target.",
+          "type": "boolean"
+        },
+        "missing_counter": {
+          "default": false,
+          "description": "Write missing rows even for a counter table.\n\nDangerous: re-inserting a deleted counter row double-counts it. Off by default.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Cluster": {
+      "additionalProperties": false,
+      "description": "Distributed mode (`CFG-200`, `DST-001`).",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Coordinate token ranges with other cdm-rs processes through the tracking table.",
+          "type": "boolean"
+        },
+        "heartbeat_interval": {
+          "$ref": "#/$defs/Duration",
+          "default": "15s",
+          "description": "How often a node renews its leases and refreshes its membership row."
+        },
+        "lease_duration": {
+          "$ref": "#/$defs/Duration",
+          "default": "1m",
+          "description": "How long a range lease is held before another node may reclaim it (`DST-012`)."
+        },
+        "node_id": {
+          "default": null,
+          "description": "This node's identity in the membership table.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ColumnFilter": {
+      "additionalProperties": false,
+      "description": "A single-column equality filter applied in cdm-rs (`CFG-180`).",
+      "properties": {
+        "name": {
+          "default": null,
+          "description": "The origin column to test.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "default": null,
+          "description": "The value the column must equal, compared as a string.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Connect": {
+      "additionalProperties": false,
+      "description": "The origin and target connections (`CFG-100`).",
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/SideConnect",
+          "default": {
+            "astra": {
+              "custom_domain": null,
+              "database_id": null,
+              "metadata_refresh_interval": "5m",
+              "mode": "sni",
+              "region": null,
+              "scb_type": "default"
+            },
+            "host": "localhost",
+            "password": "***",
+            "port": 9042,
+            "scb": null,
+            "tls": {
+              "cipher_suites": [
+                "TLS_RSA_WITH_AES_128_CBC_SHA",
+                "TLS_RSA_WITH_AES_256_CBC_SHA"
+              ],
+              "enabled": false,
+              "is_astra": false,
+              "keystore": {
+                "password": null,
+                "path": null
+              },
+              "truststore": {
+                "password": null,
+                "path": null,
+                "type": "JKS"
+              }
+            },
+            "username": "cassandra"
+          },
+          "description": "The cluster data is read from."
+        },
+        "target": {
+          "$ref": "#/$defs/SideConnect",
+          "default": {
+            "astra": {
+              "custom_domain": null,
+              "database_id": null,
+              "metadata_refresh_interval": "5m",
+              "mode": "sni",
+              "region": null,
+              "scb_type": "default"
+            },
+            "host": "localhost",
+            "password": "***",
+            "port": 9042,
+            "scb": null,
+            "tls": {
+              "cipher_suites": [
+                "TLS_RSA_WITH_AES_128_CBC_SHA",
+                "TLS_RSA_WITH_AES_256_CBC_SHA"
+              ],
+              "enabled": false,
+              "is_astra": false,
+              "keystore": {
+                "password": null,
+                "path": null
+              },
+              "truststore": {
+                "password": null,
+                "path": null,
+                "type": "JKS"
+              }
+            },
+            "username": "cassandra"
+          },
+          "description": "The cluster data is written to."
+        }
+      },
+      "type": "object"
+    },
+    "Consistency": {
+      "additionalProperties": false,
+      "description": "Consistency levels (`CFG-160`, `CFG-161`).",
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/ConsistencyLevel",
+          "default": "LOCAL_QUORUM",
+          "description": "Consistency level for reads from the origin."
+        },
+        "write": {
+          "$ref": "#/$defs/ConsistencyLevel",
+          "default": "LOCAL_QUORUM",
+          "description": "Consistency level for writes to the target."
+        }
+      },
+      "type": "object"
+    },
+    "ConsistencyLevel": {
+      "description": "A CQL consistency level (`CFG-160`).\n\nUnlike Java CDM, an unrecognised value is a Tier-1 error rather than a silent coercion to\n`LOCAL_QUORUM` (`CFG-161`); `--compat-java` restores the coercion.",
+      "oneOf": [
+        {
+          "const": "ANY",
+          "description": "Any node, including a hinted handoff target. Writes only.",
+          "type": "string"
+        },
+        {
+          "const": "ONE",
+          "description": "One replica.",
+          "type": "string"
+        },
+        {
+          "const": "TWO",
+          "description": "Two replicas.",
+          "type": "string"
+        },
+        {
+          "const": "THREE",
+          "description": "Three replicas.",
+          "type": "string"
+        },
+        {
+          "const": "QUORUM",
+          "description": "A quorum of all replicas.",
+          "type": "string"
+        },
+        {
+          "const": "LOCAL_ONE",
+          "description": "One replica in the local datacentre.",
+          "type": "string"
+        },
+        {
+          "const": "LOCAL_QUORUM",
+          "description": "A quorum of the local datacentre's replicas. The default.",
+          "type": "string"
+        },
+        {
+          "const": "EACH_QUORUM",
+          "description": "A quorum in every datacentre.",
+          "type": "string"
+        },
+        {
+          "const": "SERIAL",
+          "description": "Linearisable consistency, cluster-wide.",
+          "type": "string"
+        },
+        {
+          "const": "LOCAL_SERIAL",
+          "description": "Linearisable consistency within the local datacentre.",
+          "type": "string"
+        },
+        {
+          "const": "ALL",
+          "description": "Every replica.",
+          "type": "string"
+        }
+      ]
+    },
+    "ConstantColumns": {
+      "additionalProperties": false,
+      "description": "Columns written with a fixed value on every row (`CFG-190`).",
+      "properties": {
+        "names": {
+          "default": [],
+          "description": "Target columns to populate with a constant.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "split_regex": {
+          "default": ",",
+          "description": "The regular expression that splits\n[`values`](ConstantColumns::values), for literals that contain commas.",
+          "type": "string"
+        },
+        "values": {
+          "default": null,
+          "description": "The constants, as CQL literals, in the order of\n[`names`](ConstantColumns::names) (`CFG-030`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Duration": {
+      "description": "A duration such as `100ms`, `30s`, `5m` or `1h30m`.",
+      "examples": [
+        "30s",
+        "5m"
+      ],
+      "format": "duration",
+      "type": "string"
+    },
+    "EventSink": {
+      "description": "Where run events are written (`MET-030`).",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Events are not emitted.",
+          "type": "string"
+        },
+        {
+          "const": "stdout_json",
+          "description": "One JSON object per line on standard output.",
+          "type": "string"
+        },
+        {
+          "const": "file",
+          "description": "One JSON object per line in a file.",
+          "type": "string"
+        }
+      ]
+    },
+    "Events": {
+      "additionalProperties": false,
+      "description": "The run event stream (`MET-030`).",
+      "properties": {
+        "sink": {
+          "$ref": "#/$defs/EventSink",
+          "default": "none",
+          "description": "Where run events are written."
+        }
+      },
+      "type": "object"
+    },
+    "ExplodeMap": {
+      "additionalProperties": false,
+      "description": "Turning one origin map into many target rows (`CFG-190`, `CFG-031`).",
+      "properties": {
+        "origin_column": {
+          "default": null,
+          "description": "The origin map column to explode.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_key_column": {
+          "default": null,
+          "description": "The target column that receives each map key.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target_value_column": {
+          "default": null,
+          "description": "The target column that receives each map value.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ExtractJson": {
+      "additionalProperties": false,
+      "description": "Lifting JSON properties out of a text column into target columns (`CFG-190`).",
+      "properties": {
+        "exclusive": {
+          "default": false,
+          "description": "Migrate only the extracted columns, not the JSON column itself.",
+          "type": "boolean"
+        },
+        "origin_column": {
+          "default": null,
+          "description": "The origin column holding a JSON document.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "overwrite": {
+          "default": false,
+          "description": "Overwrite a target column that already holds a value.",
+          "type": "boolean"
+        },
+        "property_mapping": {
+          "default": null,
+          "description": "The mapping from JSON property to target column, as `property:column` pairs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Feature": {
+      "additionalProperties": false,
+      "description": "Optional behaviours (`CFG-190`).",
+      "properties": {
+        "constant_columns": {
+          "$ref": "#/$defs/ConstantColumns",
+          "default": {
+            "names": [],
+            "split_regex": ",",
+            "values": null
+          },
+          "description": "Columns written with a fixed value on every row."
+        },
+        "explode_map": {
+          "$ref": "#/$defs/ExplodeMap",
+          "default": {
+            "origin_column": null,
+            "target_key_column": null,
+            "target_value_column": null
+          },
+          "description": "Turning one origin map into many target rows."
+        },
+        "extract_json": {
+          "$ref": "#/$defs/ExtractJson",
+          "default": {
+            "exclusive": false,
+            "origin_column": null,
+            "overwrite": false,
+            "property_mapping": null
+          },
+          "description": "Lifting JSON properties out of a text column into target columns."
+        },
+        "guardrail": {
+          "$ref": "#/$defs/Guardrail",
+          "default": {
+            "column_size_kb": 0.0
+          },
+          "description": "Limits that make a row be skipped and reported rather than written."
+        }
+      },
+      "type": "object"
+    },
+    "Filter": {
+      "additionalProperties": false,
+      "description": "Which rows take part in the run (`CFG-180`).",
+      "properties": {
+        "column": {
+          "$ref": "#/$defs/ColumnFilter",
+          "default": {
+            "name": null,
+            "value": null
+          },
+          "description": "A single-column equality filter applied in cdm-rs, not in CQL."
+        },
+        "cql_where": {
+          "default": null,
+          "description": "A CQL predicate appended to the origin `SELECT`, without the `WHERE` keyword.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "$ref": "#/$defs/TokenFilter",
+          "default": {
+            "max": null,
+            "min": null
+          },
+          "description": "The slice of the token ring to process."
+        },
+        "token_coverage_percent": {
+          "default": 100,
+          "description": "Percentage of each token range to process, for sampling runs.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "writetime": {
+          "$ref": "#/$defs/WritetimeFilter",
+          "default": {
+            "max": null,
+            "min": null
+          },
+          "description": "A writetime window (`CFG-032`, `CFG-034`)."
+        }
+      },
+      "type": "object"
+    },
+    "Guardrail": {
+      "additionalProperties": false,
+      "description": "Limits that make a row be skipped and reported rather than written (`CFG-190`).",
+      "properties": {
+        "column_size_kb": {
+          "default": 0.0,
+          "description": "Report any column whose serialised size exceeds this. `0` disables the check.\n\nA negative value is invalid (`CFG-035`).",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "KeyStore": {
+      "additionalProperties": false,
+      "description": "The key store of one side (`CFG-120`).",
+      "properties": {
+        "password": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Secret"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Password protecting the key store."
+        },
+        "path": {
+          "default": null,
+          "description": "Path to the key store holding the client certificate.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "LogFormat": {
+      "description": "The shape of log records.",
+      "oneOf": [
+        {
+          "const": "pretty",
+          "description": "Human-readable, multi-line, coloured when the terminal supports it.",
+          "type": "string"
+        },
+        {
+          "const": "json",
+          "description": "One JSON object per record.",
+          "type": "string"
+        },
+        {
+          "const": "compact",
+          "description": "Human-readable, one line per record.",
+          "type": "string"
+        }
+      ]
+    },
+    "Logging": {
+      "additionalProperties": false,
+      "description": "Logging (`CFG-200`).",
+      "properties": {
+        "diff_file": {
+          "default": "cdm_logs/cdm_diff.log",
+          "description": "Where the validate job writes its row-level difference log.",
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/LogFormat",
+          "default": "pretty",
+          "description": "The shape of log records."
+        },
+        "level": {
+          "default": "info",
+          "description": "The `tracing` filter directive, e.g. `info` or `cdm_engine=debug,info`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Metrics": {
+      "additionalProperties": false,
+      "description": "Metrics and event export (`CFG-200`).",
+      "properties": {
+        "events": {
+          "$ref": "#/$defs/Events",
+          "default": {
+            "sink": "none"
+          },
+          "description": "The run event stream (`MET-030`)."
+        },
+        "otlp": {
+          "$ref": "#/$defs/Otlp",
+          "default": {
+            "endpoint": null
+          },
+          "description": "OpenTelemetry export (`MET-021`)."
+        },
+        "prometheus": {
+          "$ref": "#/$defs/Prometheus",
+          "default": {
+            "enabled": null
+          },
+          "description": "The Prometheus scrape endpoint (`MET-020`)."
+        }
+      },
+      "type": "object"
+    },
+    "OriginColumns": {
+      "additionalProperties": false,
+      "description": "Column selection and renaming on the origin side (`CFG-130`).",
+      "properties": {
+        "rename": {
+          "default": [],
+          "description": "Column renames, each written `origin_name:target_name` (`CFG-038`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skip": {
+          "default": [],
+          "description": "Origin columns to leave out of the run.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "OriginSchema": {
+      "additionalProperties": false,
+      "description": "The origin side of the schema (`CFG-130`).",
+      "properties": {
+        "column": {
+          "$ref": "#/$defs/OriginColumns",
+          "default": {
+            "rename": [],
+            "skip": []
+          },
+          "description": "Column-level mapping."
+        },
+        "keyspace_table": {
+          "default": null,
+          "description": "The origin table, as `keyspace.table`.\n\nThe only unconditionally required property (`CFG-022`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ttl": {
+          "$ref": "#/$defs/TtlColumns",
+          "default": {
+            "automatic": true,
+            "names": []
+          },
+          "description": "Which columns supply the TTL of a migrated row."
+        },
+        "writetime": {
+          "$ref": "#/$defs/WritetimeColumns",
+          "default": {
+            "automatic": true,
+            "names": []
+          },
+          "description": "Which columns supply the writetime of a migrated row."
+        }
+      },
+      "type": "object"
+    },
+    "Otlp": {
+      "additionalProperties": false,
+      "description": "OpenTelemetry export (`MET-021`).",
+      "properties": {
+        "endpoint": {
+          "default": null,
+          "description": "The OTLP collector endpoint. Export is off when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PerfOps": {
+      "additionalProperties": false,
+      "description": "Throughput, concurrency and reliability tuning (`CFG-160`).",
+      "properties": {
+        "adaptive_ratelimit": {
+          "default": false,
+          "description": "Reduce the rate limit automatically when the target signals overload.",
+          "type": "boolean"
+        },
+        "batch_size": {
+          "default": 5,
+          "description": "Rows per write batch.\n\nCoerced to 1 for counter tables and when a writetime filter is active\n(`CFG-040`, `MIG-021`).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "connection_pool_size": {
+          "default": 4,
+          "description": "Connections per host, per side.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "consistency": {
+          "$ref": "#/$defs/Consistency",
+          "default": {
+            "read": "LOCAL_QUORUM",
+            "write": "LOCAL_QUORUM"
+          },
+          "description": "Consistency levels."
+        },
+        "error_limit": {
+          "default": 0,
+          "description": "Stop the run after this many row-level errors. `0` means never stop.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fetch_size": {
+          "default": 1000,
+          "description": "Rows read from the origin per page.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_inflight_reads": {
+          "default": 256,
+          "description": "Maximum read requests in flight across all workers.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_inflight_writes": {
+          "default": 2000,
+          "description": "Maximum write requests in flight across all workers.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "num_parts": {
+          "default": 5000,
+          "description": "Number of token-range splits the ring is divided into.\n\nRule of thumb: one part per 10 MB of table data.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ratelimit": {
+          "$ref": "#/$defs/RateLimit",
+          "default": {
+            "origin": 20000,
+            "target": 20000
+          },
+          "description": "Rate limits, per side."
+        },
+        "request_timeout": {
+          "$ref": "#/$defs/Duration",
+          "default": "30s",
+          "description": "Per-request timeout."
+        },
+        "retry": {
+          "$ref": "#/$defs/Retry",
+          "default": {
+            "initial_backoff": "100ms",
+            "max_attempts": 5,
+            "max_backoff": "10s"
+          },
+          "description": "Retry policy for transient failures."
+        },
+        "workers": {
+          "default": null,
+          "description": "Concurrent range workers.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Prometheus": {
+      "additionalProperties": false,
+      "description": "The Prometheus scrape endpoint (`MET-020`).",
+      "properties": {
+        "enabled": {
+          "default": null,
+          "description": "Serve `/metrics`. Defaults to whether the control plane is enabled.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RateLimit": {
+      "additionalProperties": false,
+      "description": "Rate limits (`CFG-160`).",
+      "properties": {
+        "origin": {
+          "default": 20000,
+          "description": "Rows read per second, per cdm-rs process.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "default": 20000,
+          "description": "Rows written per second, per cdm-rs process.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Retry": {
+      "additionalProperties": false,
+      "description": "Retry policy for transient failures (`CFG-160`).",
+      "properties": {
+        "initial_backoff": {
+          "$ref": "#/$defs/Duration",
+          "default": "100ms",
+          "description": "Delay before the first retry; doubles each attempt."
+        },
+        "max_attempts": {
+          "default": 5,
+          "description": "How many times a failed request is retried before the range fails.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_backoff": {
+          "$ref": "#/$defs/Duration",
+          "default": "10s",
+          "description": "Ceiling on the exponential backoff."
+        }
+      },
+      "type": "object"
+    },
+    "ScbType": {
+      "description": "Which secure-connect-bundle the Astra DevOps API should hand back (`CFG-110`).",
+      "oneOf": [
+        {
+          "const": "default",
+          "description": "The bundle for the database's primary region.",
+          "type": "string"
+        },
+        {
+          "const": "custom",
+          "description": "A bundle for a custom domain.",
+          "type": "string"
+        }
+      ]
+    },
+    "SchemaSettings": {
+      "additionalProperties": false,
+      "description": "Which tables and columns take part in the run (`CFG-130`).",
+      "properties": {
+        "origin": {
+          "$ref": "#/$defs/OriginSchema",
+          "default": {
+            "column": {
+              "rename": [],
+              "skip": []
+            },
+            "keyspace_table": null,
+            "ttl": {
+              "automatic": true,
+              "names": []
+            },
+            "writetime": {
+              "automatic": true,
+              "names": []
+            }
+          },
+          "description": "The origin table and its column handling."
+        },
+        "target": {
+          "$ref": "#/$defs/TargetSchema",
+          "default": {
+            "keyspace_table": null
+          },
+          "description": "The target table."
+        },
+        "ttl_writetime": {
+          "$ref": "#/$defs/TtlWritetime",
+          "default": {
+            "use_collections": false
+          },
+          "description": "How TTL and writetime are calculated."
+        }
+      },
+      "type": "object"
+    },
+    "Secret": {
+      "description": "A credential. Accepts the literal value or the indirection forms `env:VAR`, `file:/path` and `exec:command` (CFG-012).",
+      "format": "password",
+      "type": "string"
+    },
+    "Server": {
+      "additionalProperties": false,
+      "description": "The HTTP control plane (`CFG-200`).",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/Auth",
+          "default": {
+            "mode": "none"
+          },
+          "description": "How callers authenticate."
+        },
+        "bind": {
+          "default": "127.0.0.1:8080",
+          "description": "The address the control plane listens on.\n\nBinding anywhere other than loopback without authentication is refused\n(`SEC-010`).",
+          "type": "string"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Start the HTTP control plane.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SideConnect": {
+      "additionalProperties": false,
+      "description": "One side's connection (`CFG-100`).\n\nDeclared once and instantiated twice; the `{side}` placeholder in each legacy alias is\nsubstituted with `origin` or `target` when the registry is built.",
+      "properties": {
+        "astra": {
+          "$ref": "#/$defs/Astra",
+          "default": {
+            "custom_domain": null,
+            "database_id": null,
+            "metadata_refresh_interval": "5m",
+            "mode": "sni",
+            "region": null,
+            "scb_type": "default"
+          },
+          "description": "Astra DevOps API settings for downloading the bundle (`CFG-110`)."
+        },
+        "host": {
+          "default": "localhost",
+          "description": "Contact point host name or IP address.\n\nIgnored when a secure-connect-bundle is configured. Either this or\n[`scb`](SideConnect::scb) must be non-empty (`CFG-024`).",
+          "type": "string"
+        },
+        "password": {
+          "$ref": "#/$defs/Secret",
+          "default": "***",
+          "description": "Password, or the Astra token.\n\nSupports `env:VAR`, `file:/path` and `exec:command` indirection (`CFG-012`)."
+        },
+        "port": {
+          "default": 9042,
+          "description": "Native transport port.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scb": {
+          "default": null,
+          "description": "Path to an Astra secure-connect-bundle zip.\n\nTakes precedence over [`host`](SideConnect::host) and\n[`port`](SideConnect::port) (`CON-020`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tls": {
+          "$ref": "#/$defs/Tls",
+          "default": {
+            "cipher_suites": [
+              "TLS_RSA_WITH_AES_128_CBC_SHA",
+              "TLS_RSA_WITH_AES_256_CBC_SHA"
+            ],
+            "enabled": false,
+            "is_astra": false,
+            "keystore": {
+              "password": null,
+              "path": null
+            },
+            "truststore": {
+              "password": null,
+              "path": null,
+              "type": "JKS"
+            }
+          },
+          "description": "TLS settings for a non-Astra cluster (`CFG-120`)."
+        },
+        "username": {
+          "default": "cassandra",
+          "description": "Username, or the literal `token` when authenticating to Astra.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "TargetSchema": {
+      "additionalProperties": false,
+      "description": "The target side of the schema (`CFG-130`).",
+      "properties": {
+        "keyspace_table": {
+          "default": null,
+          "description": "The target table, as `keyspace.table`. Defaults to the origin table (`CFG-023`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Tls": {
+      "additionalProperties": false,
+      "description": "TLS settings for one side (`CFG-120`).",
+      "properties": {
+        "cipher_suites": {
+          "default": [
+            "TLS_RSA_WITH_AES_128_CBC_SHA",
+            "TLS_RSA_WITH_AES_256_CBC_SHA"
+          ],
+          "description": "Cipher suites offered during the handshake.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Whether to use TLS.\n\nWhen enabled and no secure-connect-bundle is configured, the trust store, key\nstore and cipher suites must all be supplied (`CFG-025`).",
+          "type": "boolean"
+        },
+        "is_astra": {
+          "default": false,
+          "description": "Whether this side is Astra, which implies its own trust material.",
+          "type": "boolean"
+        },
+        "keystore": {
+          "$ref": "#/$defs/KeyStore",
+          "default": {
+            "password": null,
+            "path": null
+          },
+          "description": "The client certificate this side presents."
+        },
+        "truststore": {
+          "$ref": "#/$defs/TrustStore",
+          "default": {
+            "password": null,
+            "path": null,
+            "type": "JKS"
+          },
+          "description": "The certificates this side will trust."
+        }
+      },
+      "type": "object"
+    },
+    "TokenBound": {
+      "description": "A partitioner token, as a decimal string. Murmur3 tokens span -2^63..2^63-1; RandomPartitioner tokens span 0..2^127.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string"
+    },
+    "TokenFilter": {
+      "additionalProperties": false,
+      "description": "The slice of the token ring to process (`CFG-180`).",
+      "properties": {
+        "max": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenBound"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Highest token to process. Defaults to the partitioner's maximum."
+        },
+        "min": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TokenBound"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lowest token to process. Defaults to the partitioner's minimum."
+        }
+      },
+      "type": "object"
+    },
+    "TrackRun": {
+      "additionalProperties": false,
+      "description": "Run tracking, resume and rerun (`CFG-150`).",
+      "properties": {
+        "auto_rerun": {
+          "default": false,
+          "description": "Automatically rerun the ranges the previous run did not complete.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": false,
+          "description": "Record each token range's outcome so the run can be resumed.",
+          "type": "boolean"
+        },
+        "previous_run_id": {
+          "default": 0,
+          "description": "The run to resume. `0` starts from the beginning.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "rerun_multiplier": {
+          "default": 1,
+          "description": "How many times to subdivide a range that is rerun.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "run_id": {
+          "default": 0,
+          "description": "The identifier to record this run under. `0` allocates a new one.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Transform": {
+      "additionalProperties": false,
+      "description": "Changes applied to values on their way to the target (`CFG-170`).",
+      "properties": {
+        "codec_timestamp_format": {
+          "default": "yyyyMMddHHmmss",
+          "description": "The `java.time` pattern the `TIMESTAMP_STRING_FORMAT` codec parses and prints.\n\nCanonically `transform.codec_timestamp_format`. `docs/SPEC.md` §3.5.8 names this\n`transform.codecs.timestamp_format`, which cannot coexist with the\n`transform.codecs` list in a struct tree; the legacy alias is unaffected.",
+          "type": "string"
+        },
+        "codec_timestamp_zone": {
+          "default": "UTC",
+          "description": "The IANA time zone the `TIMESTAMP_STRING_FORMAT` codec assumes.\n\nCanonically `transform.codec_timestamp_zone`, for the reason given on\n[`codec_timestamp_format`](Transform::codec_timestamp_format).",
+          "type": "string"
+        },
+        "codecs": {
+          "default": [],
+          "description": "Codecs to enable, by name.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "custom_ttl": {
+          "default": 0,
+          "description": "TTL, in seconds, to use instead of the origin's. `0` disables.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "custom_writetime": {
+          "default": 0,
+          "description": "Writetime, in microseconds, to use instead of the origin's. `0` disables.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "custom_writetime_increment": {
+          "default": 0,
+          "description": "Microseconds added to every writetime (`CFG-033`, `CFG-039`).",
+          "format": "int64",
+          "type": "integer"
+        },
+        "map_remove_null_value": {
+          "default": false,
+          "description": "Drop map entries whose value is null instead of writing them.",
+          "type": "boolean"
+        },
+        "missing_key_ts_replace": {
+          "default": null,
+          "description": "Timestamp, in epoch milliseconds, substituted for a null key column.\n\nPartition and clustering columns cannot be null; when a schema change introduces\na key column the origin does not have, this supplies a constant in its place.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "TrustStore": {
+      "additionalProperties": false,
+      "description": "The trust store of one side (`CFG-120`).",
+      "properties": {
+        "password": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Secret"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Password protecting the trust store."
+        },
+        "path": {
+          "default": null,
+          "description": "Path to the trust store.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/TrustStoreType",
+          "default": "JKS",
+          "description": "The store's on-disk format."
+        }
+      },
+      "type": "object"
+    },
+    "TrustStoreType": {
+      "description": "The on-disk format of a trust store (`CFG-120`).",
+      "oneOf": [
+        {
+          "const": "JKS",
+          "description": "A Java key store.",
+          "type": "string"
+        },
+        {
+          "const": "PKCS12",
+          "description": "A PKCS#12 store.",
+          "type": "string"
+        },
+        {
+          "const": "PEM",
+          "description": "PEM-encoded certificates.",
+          "type": "string"
+        }
+      ]
+    },
+    "TtlColumns": {
+      "additionalProperties": false,
+      "description": "TTL source columns (`CFG-130`).",
+      "properties": {
+        "automatic": {
+          "default": true,
+          "description": "Use every eligible non-key column as a TTL source.\n\nNaming columns explicitly disables this (`CFG-037`).",
+          "type": "boolean"
+        },
+        "names": {
+          "default": [],
+          "description": "The columns whose TTL to read, largest wins.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "TtlWritetime": {
+      "additionalProperties": false,
+      "description": "How TTL and writetime are calculated (`CFG-130`).",
+      "properties": {
+        "use_collections": {
+          "default": false,
+          "description": "Allow collection columns to contribute TTL and writetime.\n\nNecessary when every non-key column is a collection, since Cassandra reports no\nrow-level TTL or writetime in that case.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "WritetimeColumns": {
+      "additionalProperties": false,
+      "description": "Writetime source columns (`CFG-130`).",
+      "properties": {
+        "automatic": {
+          "default": true,
+          "description": "Use every eligible non-key column as a writetime source.\n\nNaming columns explicitly disables this (`CFG-037`).",
+          "type": "boolean"
+        },
+        "names": {
+          "default": [],
+          "description": "The columns whose writetime to read, largest wins.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WritetimeFilter": {
+      "additionalProperties": false,
+      "description": "A writetime window (`CFG-180`).",
+      "properties": {
+        "max": {
+          "default": null,
+          "description": "Skip rows whose writetime is above this, in microseconds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min": {
+          "default": null,
+          "description": "Skip rows whose writetime is below this, in microseconds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The complete configuration of a cdm-rs run (`CFG-001`).\n\nConstruct one with [`ConfigLoader`](crate::ConfigLoader) rather than by hand: only the\nloader applies the layered precedence of `CFG-010`, resolves secret indirection\n(`CFG-012`) and reports the diagnostics of `CFG-021`.",
+  "properties": {
+    "autocorrect": {
+      "$ref": "#/$defs/Autocorrect",
+      "default": {
+        "mismatch": false,
+        "missing": false,
+        "missing_counter": false
+      },
+      "description": "What the validate job repairs when it finds a difference (`CFG-140`)."
+    },
+    "cluster": {
+      "$ref": "#/$defs/Cluster",
+      "default": {
+        "enabled": false,
+        "heartbeat_interval": "15s",
+        "lease_duration": "1m",
+        "node_id": null
+      },
+      "description": "Distributed mode (`CFG-200`)."
+    },
+    "connect": {
+      "$ref": "#/$defs/Connect",
+      "default": {
+        "origin": {
+          "astra": {
+            "custom_domain": null,
+            "database_id": null,
+            "metadata_refresh_interval": "5m",
+            "mode": "sni",
+            "region": null,
+            "scb_type": "default"
+          },
+          "host": "localhost",
+          "password": "***",
+          "port": 9042,
+          "scb": null,
+          "tls": {
+            "cipher_suites": [
+              "TLS_RSA_WITH_AES_128_CBC_SHA",
+              "TLS_RSA_WITH_AES_256_CBC_SHA"
+            ],
+            "enabled": false,
+            "is_astra": false,
+            "keystore": {
+              "password": null,
+              "path": null
+            },
+            "truststore": {
+              "password": null,
+              "path": null,
+              "type": "JKS"
+            }
+          },
+          "username": "cassandra"
+        },
+        "target": {
+          "astra": {
+            "custom_domain": null,
+            "database_id": null,
+            "metadata_refresh_interval": "5m",
+            "mode": "sni",
+            "region": null,
+            "scb_type": "default"
+          },
+          "host": "localhost",
+          "password": "***",
+          "port": 9042,
+          "scb": null,
+          "tls": {
+            "cipher_suites": [
+              "TLS_RSA_WITH_AES_128_CBC_SHA",
+              "TLS_RSA_WITH_AES_256_CBC_SHA"
+            ],
+            "enabled": false,
+            "is_astra": false,
+            "keystore": {
+              "password": null,
+              "path": null
+            },
+            "truststore": {
+              "password": null,
+              "path": null,
+              "type": "JKS"
+            }
+          },
+          "username": "cassandra"
+        }
+      },
+      "description": "How to reach the origin and target clusters (`CFG-100`)."
+    },
+    "feature": {
+      "$ref": "#/$defs/Feature",
+      "default": {
+        "constant_columns": {
+          "names": [],
+          "split_regex": ",",
+          "values": null
+        },
+        "explode_map": {
+          "origin_column": null,
+          "target_key_column": null,
+          "target_value_column": null
+        },
+        "extract_json": {
+          "exclusive": false,
+          "origin_column": null,
+          "overwrite": false,
+          "property_mapping": null
+        },
+        "guardrail": {
+          "column_size_kb": 0.0
+        }
+      },
+      "description": "Optional behaviours (`CFG-190`)."
+    },
+    "filter": {
+      "$ref": "#/$defs/Filter",
+      "default": {
+        "column": {
+          "name": null,
+          "value": null
+        },
+        "cql_where": null,
+        "token": {
+          "max": null,
+          "min": null
+        },
+        "token_coverage_percent": 100,
+        "writetime": {
+          "max": null,
+          "min": null
+        }
+      },
+      "description": "Which rows take part in the run (`CFG-180`)."
+    },
+    "logging": {
+      "$ref": "#/$defs/Logging",
+      "default": {
+        "diff_file": "cdm_logs/cdm_diff.log",
+        "format": "pretty",
+        "level": "info"
+      },
+      "description": "Logging (`CFG-200`)."
+    },
+    "metrics": {
+      "$ref": "#/$defs/Metrics",
+      "default": {
+        "events": {
+          "sink": "none"
+        },
+        "otlp": {
+          "endpoint": null
+        },
+        "prometheus": {
+          "enabled": null
+        }
+      },
+      "description": "Metrics and event export (`CFG-200`)."
+    },
+    "perfops": {
+      "$ref": "#/$defs/PerfOps",
+      "default": {
+        "adaptive_ratelimit": false,
+        "batch_size": 5,
+        "connection_pool_size": 4,
+        "consistency": {
+          "read": "LOCAL_QUORUM",
+          "write": "LOCAL_QUORUM"
+        },
+        "error_limit": 0,
+        "fetch_size": 1000,
+        "max_inflight_reads": 256,
+        "max_inflight_writes": 2000,
+        "num_parts": 5000,
+        "ratelimit": {
+          "origin": 20000,
+          "target": 20000
+        },
+        "request_timeout": "30s",
+        "retry": {
+          "initial_backoff": "100ms",
+          "max_attempts": 5,
+          "max_backoff": "10s"
+        },
+        "workers": null
+      },
+      "description": "Throughput, concurrency and reliability tuning (`CFG-160`)."
+    },
+    "schema": {
+      "$ref": "#/$defs/SchemaSettings",
+      "default": {
+        "origin": {
+          "column": {
+            "rename": [],
+            "skip": []
+          },
+          "keyspace_table": null,
+          "ttl": {
+            "automatic": true,
+            "names": []
+          },
+          "writetime": {
+            "automatic": true,
+            "names": []
+          }
+        },
+        "target": {
+          "keyspace_table": null
+        },
+        "ttl_writetime": {
+          "use_collections": false
+        }
+      },
+      "description": "Which tables and columns take part in the run (`CFG-130`)."
+    },
+    "server": {
+      "$ref": "#/$defs/Server",
+      "default": {
+        "auth": {
+          "mode": "none"
+        },
+        "bind": "127.0.0.1:8080",
+        "enabled": false
+      },
+      "description": "The HTTP control plane (`CFG-200`)."
+    },
+    "track_run": {
+      "$ref": "#/$defs/TrackRun",
+      "default": {
+        "auto_rerun": false,
+        "enabled": false,
+        "previous_run_id": 0,
+        "rerun_multiplier": 1,
+        "run_id": 0
+      },
+      "description": "Run tracking, resume and rerun (`CFG-150`)."
+    },
+    "transform": {
+      "$ref": "#/$defs/Transform",
+      "default": {
+        "codec_timestamp_format": "yyyyMMddHHmmss",
+        "codec_timestamp_zone": "UTC",
+        "codecs": [],
+        "custom_ttl": 0,
+        "custom_writetime": 0,
+        "custom_writetime_increment": 0,
+        "map_remove_null_value": false,
+        "missing_key_ts_replace": null
+      },
+      "description": "Changes applied to values on their way to the target (`CFG-170`)."
+    }
+  },
+  "title": "CdmConfig",
+  "type": "object"
+}

@@ -89,46 +89,46 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CFG-001` <sup>N</sup> | Configuration MUST be defined **once**, as a strongly-typed Rust struct tree (`cdm_config::CdmConfig`) with `serde` derives | `cdm-config` | `cfg_001_*` | #4 |
-| `CFG-002` <sup>N</sup> | Each field MUST carry, via attribute macros: canonical name, legacy `spark.cdm.*` alias(es), type, default, unit, whether… | `cdm-config` | `cfg_002_*` | #4 |
-| `CFG-003` <sup>N</sup> | The generated JSON Schema MUST be published at `schema/cdm-config.schema.json` and served at `GET /v1/config/schema` | `cdm-config` | `cfg_003_*` | #4 |
-| `CFG-010` <sup>P+</sup> | Configuration MUST be loadable from, in increasing order of precedence: 1 | `cdm-config` | `cfg_010_*` | #5 |
-| `CFG-011` <sup>P</sup> | The `.properties` loader MUST accept the complete Java `spark.cdm.*` namespace (§3.5), including keys nested under a… | `cdm-config` | `cfg_011_*` | #5 |
-| `CFG-012` <sup>N</sup> | Secrets (`*.password`, `*.token`, `*.keyStore.password`, `*.trustStore.password`) MUST support indirection: `env:VAR_NAME`,… | `cdm-config` | `cfg_012_*` | #5 |
-| `CFG-013` <sup>N</sup> | A configuration profile system: a file may declare `[profiles.<name>]` blocks that are deep-merged over the base when… | `cdm-config` | `cfg_013_*` | #5 |
-| `CFG-020` <sup>P+</sup> | Validation runs in three escalating tiers — syntactic, semantic (cross-field), schema-bound — each independently invocable | `cdm-config` | `cfg_020_*` | #6 |
-| `CFG-021` <sup>N</sup> | All three tiers MUST run *before* any data is read or written, and MUST report **every** violation at once (not fail-fast),… | `cdm-config` | `cfg_021_*` | #6 |
-| `CFG-022` <sup>P</sup> | `spark.cdm.schema.origin.keyspaceTable` (canonical `schema.origin.keyspace_table`) is the only unconditionally required property | `cdm-config` | `cfg_022_*` | #6 |
-| `CFG-023` <sup>P</sup> | If the target keyspace/table is unset it MUST default to the origin keyspace/table | `cdm-config` | `cfg_023_*` | #6 |
-| `CFG-024` <sup>P</sup> | An origin connection MUST specify either a host or a secure-connect-bundle; likewise for target | `cdm-config` | `cfg_024_*` | #6 |
-| `CFG-025` <sup>P</sup> | When TLS is enabled on a side and no SCB is configured, all of `trustStore.path`, `trustStore.password`, `trustStore.type`,… | `cdm-config` | `cfg_025_*` | #6 |
-| `CFG-026` <sup>P</sup> | Empty username or password on either side MUST emit a warning, not an error | `cdm-config` | `cfg_026_*` | #6 |
-| `CFG-027` <sup>P</sup> | A list-typed property set to an empty value MUST be rejected as invalid | `cdm-config` | `cfg_027_*` | #6 |
-| `CFG-028` <sup>N</sup> | `cdm config explain <key>` MUST print the description, type, default, current effective value, and which source supplied it | `cdm-config` | `cfg_028_*` | #6 |
-| `CFG-029` <sup>N</sup> | `cdm config diff <a> <b>` MUST print a normalised semantic diff of two configs, ignoring ordering and defaults | `cdm-config` | `cfg_029_*` | #6 |
-| `CFG-030` <sup>P</sup> | `constantColumns.names` and the split of `constantColumns.values` by `constantColumns.split_regex` MUST have equal cardinality | `cdm-config` | `cfg_030_*` | #6 |
-| `CFG-031` <sup>P</sup> | Explode Map requires all three of origin column name, target key column name, target value column name, or none | `cdm-config` | `cfg_031_*` | #6 |
-| `CFG-032` <sup>P</sup> | `filter.java.writetime.min` and `.max` MUST both be > 0 when either is set, and `max` > `min` | `cdm-config` | `cfg_032_*` | #6 |
-| `CFG-033` <sup>P</sup> | `transform.custom.writetime.incrementBy` MUST be ≥ 0 | `cdm-config` | `cfg_033_*` | #6 |
-| `CFG-034` <sup>P</sup> | A writetime filter requires at least one resolvable writetime column | `cdm-config` | `cfg_034_*` | #6 |
-| `CFG-035` <sup>P</sup> | `guardrail.colSizeInKB` < 0 is invalid; `= 0` disables the feature | `cdm-config` | `cfg_035_*` | #6 |
-| `CFG-036` <sup>P</sup> | TTL/writetime features MUST be rejected as invalid when the target is a counter table | `cdm-config` | `cfg_036_*` | #6 |
-| `CFG-037` <sup>P</sup> | Explicit `column.ttl.names` / `column.writetime.names` MUST disable the corresponding `automatic` mode | `cdm-config` | `cfg_037_*` | #6 |
-| `CFG-038` <sup>P</sup> | `column.names.to.target` entries MUST be `origin:target` pairs referencing columns that exist on their respective sides | `cdm-config` | `cfg_038_*` | #6 |
-| `CFG-039` <sup>P+</sup> | `transform.custom.writetime.incrementBy == 0` combined with an unfrozen `list` column on origin MUST emit a warning about… | `cdm-config` | `cfg_039_*` | #6 |
-| `CFG-040` <sup>N</sup> | `perfops.batch_size > 1` combined with a counter table, or with an active writetime filter, MUST emit a notice that batch size… | `cdm-config` | `cfg_040_*` | #6 |
-| `CFG-100` | Property registry: connection properties (host, port, scb, username, password) for both sides | `cdm-config` | `cfg_100_*` | #4 |
-| `CFG-110` | Property registry: Astra DevOps / secure-connect-bundle auto-download properties | `cdm-config` | `cfg_110_*` | #4 |
-| `CFG-120` | Property registry: TLS properties per side (truststore, keystore, cipher suites, isAstra) | `cdm-config` | `cfg_120_*` | #4 |
-| `CFG-130` | Property registry: schema properties (keyspaceTable, TTL/writetime names, column skip, column rename) | `cdm-config` | `cfg_130_*` | #4 |
-| `CFG-140` | Property registry: autocorrect properties (missing, mismatch, missing.counter) | `cdm-config` | `cfg_140_*` | #4 |
-| `CFG-150` | Property registry: run-tracking properties (trackRun, runId, previousRunId, autoRerun, rerunMultiplier) | `cdm-config` | `cfg_150_*` | #4 |
-| `CFG-160` | Property registry: performance/operations properties, incl. new cdm-rs tuning knobs | `cdm-config` | `cfg_160_*` | #4 |
-| `CFG-161` <sup>P+</sup> | (this is a deliberate, documented behaviour change; `--compat-java` restores silent coercion) | `cdm-config` | `cfg_161_*` | #4 |
-| `CFG-170` | Property registry: transformation properties (custom writetime/TTL, codecs, map null removal) | `cdm-config` | `cfg_170_*` | #4 |
-| `CFG-180` | Property registry: Cassandra-side and Java-side filter properties | `cdm-config` | `cfg_180_*` | #4 |
-| `CFG-190` | Property registry: feature properties (constant columns, explode map, extract JSON, guardrail) | `cdm-config` | `cfg_190_*` | #4 |
-| `CFG-200` | Property registry: new cdm-rs sections (server, metrics, cluster, logging) | `cdm-config` | `cfg_200_*` | #4 |
+| `CFG-001` <sup>N</sup> | Configuration MUST be defined **once**, as a strongly-typed Rust struct tree (`cdm_config::CdmConfig`) with `serde` derives | `cdm-config` | `cfg_001_*` | #4, #5, #6 |
+| `CFG-002` <sup>N</sup> | Each field MUST carry, via attribute macros: canonical name, legacy `spark.cdm.*` alias(es), type, default, unit, whether… | `cdm-config` | `cfg_002_*` | #4, #5, #6 |
+| `CFG-003` <sup>N</sup> | The generated JSON Schema MUST be published at `schema/cdm-config.schema.json` and served at `GET /v1/config/schema` | `cdm-config` | `cfg_003_*` | #4, #5, #6 |
+| `CFG-010` <sup>P+</sup> | Configuration MUST be loadable from, in increasing order of precedence: 1 | `cdm-config` | `cfg_010_*` | #4, #5, #6 |
+| `CFG-011` <sup>P</sup> | The `.properties` loader MUST accept the complete Java `spark.cdm.*` namespace (§3.5), including keys nested under a… | `cdm-config` | `cfg_011_*` | #4, #5, #6 |
+| `CFG-012` <sup>N</sup> | Secrets (`*.password`, `*.token`, `*.keyStore.password`, `*.trustStore.password`) MUST support indirection: `env:VAR_NAME`,… | `cdm-config` | `cfg_012_*` | #4, #5, #6 |
+| `CFG-013` <sup>N</sup> | A configuration profile system: a file may declare `[profiles.<name>]` blocks that are deep-merged over the base when… | `cdm-config` | `cfg_013_*` | #4, #5, #6 |
+| `CFG-020` <sup>P+</sup> | Validation runs in three escalating tiers — syntactic, semantic (cross-field), schema-bound — each independently invocable | `cdm-config` | `cfg_020_*` | #4, #5, #6 |
+| `CFG-021` <sup>N</sup> | All three tiers MUST run *before* any data is read or written, and MUST report **every** violation at once (not fail-fast),… | `cdm-config` | `cfg_021_*` | #4, #5, #6 |
+| `CFG-022` <sup>P</sup> | `spark.cdm.schema.origin.keyspaceTable` (canonical `schema.origin.keyspace_table`) is the only unconditionally required property | `cdm-config` | `cfg_022_*` | #4, #5, #6 |
+| `CFG-023` <sup>P</sup> | If the target keyspace/table is unset it MUST default to the origin keyspace/table | `cdm-config` | `cfg_023_*` | #4, #5, #6 |
+| `CFG-024` <sup>P</sup> | An origin connection MUST specify either a host or a secure-connect-bundle; likewise for target | `cdm-config` | `cfg_024_*` | #4, #5, #6 |
+| `CFG-025` <sup>P</sup> | When TLS is enabled on a side and no SCB is configured, all of `trustStore.path`, `trustStore.password`, `trustStore.type`,… | `cdm-config` | `cfg_025_*` | #4, #5, #6 |
+| `CFG-026` <sup>P</sup> | Empty username or password on either side MUST emit a warning, not an error | `cdm-config` | `cfg_026_*` | #4, #5, #6 |
+| `CFG-027` <sup>P</sup> | A list-typed property set to an empty value MUST be rejected as invalid | `cdm-config` | `cfg_027_*` | #4, #5, #6 |
+| `CFG-028` <sup>N</sup> | `cdm config explain <key>` MUST print the description, type, default, current effective value, and which source supplied it | `cdm-config` | `cfg_028_*` | #4, #5, #6 |
+| `CFG-029` <sup>N</sup> | `cdm config diff <a> <b>` MUST print a normalised semantic diff of two configs, ignoring ordering and defaults | `cdm-config` | `cfg_029_*` | #4, #5, #6 |
+| `CFG-030` <sup>P</sup> | `constantColumns.names` and the split of `constantColumns.values` by `constantColumns.split_regex` MUST have equal cardinality | `cdm-config` | `cfg_030_*` | #4, #5, #6 |
+| `CFG-031` <sup>P</sup> | Explode Map requires all three of origin column name, target key column name, target value column name, or none | `cdm-config` | `cfg_031_*` | #4, #5, #6 |
+| `CFG-032` <sup>P</sup> | `filter.java.writetime.min` and `.max` MUST both be > 0 when either is set, and `max` > `min` | `cdm-config` | `cfg_032_*` | #4, #5, #6 |
+| `CFG-033` <sup>P</sup> | `transform.custom.writetime.incrementBy` MUST be ≥ 0 | `cdm-config` | `cfg_033_*` | #4, #5, #6 |
+| `CFG-034` <sup>P</sup> | A writetime filter requires at least one resolvable writetime column | `cdm-config` | `cfg_034_*` | #4, #5, #6 |
+| `CFG-035` <sup>P</sup> | `guardrail.colSizeInKB` < 0 is invalid; `= 0` disables the feature | `cdm-config` | `cfg_035_*` | #4, #5, #6 |
+| `CFG-036` <sup>P</sup> | TTL/writetime features MUST be rejected as invalid when the target is a counter table | `cdm-config` | `cfg_036_*` | #4, #5, #6 |
+| `CFG-037` <sup>P</sup> | Explicit `column.ttl.names` / `column.writetime.names` MUST disable the corresponding `automatic` mode | `cdm-config` | `cfg_037_*` | #4, #5, #6 |
+| `CFG-038` <sup>P</sup> | `column.names.to.target` entries MUST be `origin:target` pairs referencing columns that exist on their respective sides | `cdm-config` | `cfg_038_*` | #4, #5, #6 |
+| `CFG-039` <sup>P+</sup> | `transform.custom.writetime.incrementBy == 0` combined with an unfrozen `list` column on origin MUST emit a warning about… | `cdm-config` | `cfg_039_*` | #4, #5, #6 |
+| `CFG-040` <sup>N</sup> | `perfops.batch_size > 1` combined with a counter table, or with an active writetime filter, MUST emit a notice that batch size… | `cdm-config` | `cfg_040_*` | #4, #5, #6 |
+| `CFG-100` | Property registry: connection properties (host, port, scb, username, password) for both sides | `cdm-config` | `cfg_100_*` | #4, #5, #6 |
+| `CFG-110` | Property registry: Astra DevOps / secure-connect-bundle auto-download properties | `cdm-config` | `cfg_110_*` | #4, #5, #6 |
+| `CFG-120` | Property registry: TLS properties per side (truststore, keystore, cipher suites, isAstra) | `cdm-config` | `cfg_120_*` | #4, #5, #6 |
+| `CFG-130` | Property registry: schema properties (keyspaceTable, TTL/writetime names, column skip, column rename) | `cdm-config` | `cfg_130_*` | #4, #5, #6 |
+| `CFG-140` | Property registry: autocorrect properties (missing, mismatch, missing.counter) | `cdm-config` | `cfg_140_*` | #4, #5, #6 |
+| `CFG-150` | Property registry: run-tracking properties (trackRun, runId, previousRunId, autoRerun, rerunMultiplier) | `cdm-config` | `cfg_150_*` | #4, #5, #6 |
+| `CFG-160` | Property registry: performance/operations properties, incl. new cdm-rs tuning knobs | `cdm-config` | `cfg_160_*` | #4, #5, #6 |
+| `CFG-161` <sup>P+</sup> | (this is a deliberate, documented behaviour change; `--compat-java` restores silent coercion) | `cdm-config` | `cfg_161_*` | #4, #5, #6 |
+| `CFG-170` | Property registry: transformation properties (custom writetime/TTL, codecs, map null removal) | `cdm-config` | `cfg_170_*` | #4, #5, #6 |
+| `CFG-180` | Property registry: Cassandra-side and Java-side filter properties | `cdm-config` | `cfg_180_*` | #4, #5, #6 |
+| `CFG-190` | Property registry: feature properties (constant columns, explode map, extract JSON, guardrail) | `cdm-config` | `cfg_190_*` | #4, #5, #6 |
+| `CFG-200` | Property registry: new cdm-rs sections (server, metrics, cluster, logging) | `cdm-config` | `cfg_200_*` | #4, #5, #6 |
 
 ### CON
 
@@ -434,7 +434,7 @@ test, fails CI.
 | `UI-001` <sup>N</sup> | The Config Builder MUST be reimplemented as a static web app embedded in the binary (`rust-embed`) and served at `/ui` by `cdm… | `cdm-ui` | `ui_001_*` | #47 |
 | `UI-002` <sup>N</sup> | It MUST drive the same API as every other client: `POST /v1/config/validate`, `/v1/config/generate`, `GET /v1/schema` | `cdm-ui` | `ui_002_*` | #47 |
 | `UI-003` <sup>P</sup> | Feature parity with the React `cdm-config-builder`: CQL DDL paste-and-parse, sectioned form (connection, schema, performance,… | `cdm-ui` | `ui_003_*` | #47 |
-| `UI-004` <sup>P</sup> | The best-practice rules engine MUST be preserved and MUST live **server-side** so CLI, API and UI share it: table size GB →… | `cdm-ui` | `ui_004_*` | #47 |
+| `UI-004` <sup>P</sup> | The best-practice rules engine MUST be preserved and MUST live **server-side** so CLI, API and UI share it: table size GB →… | `cdm-config` | `ui_004_*` | #4, #5, #6 |
 | `UI-005` <sup>N</sup> | The UI MUST additionally provide live run monitoring (progress, throughput, errors) by consuming the SSE event stream | `cdm-ui` | `ui_005_*` | #48 |
 | `UI-006` <sup>N</sup> | The UI MUST be usable offline and MUST NOT make third-party network requests | `cdm-ui` | `ui_006_*` | #47 |
 
