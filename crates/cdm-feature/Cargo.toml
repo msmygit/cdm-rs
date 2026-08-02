@@ -1,0 +1,31 @@
+[package]
+name = "cdm-feature"
+description = "Optional behaviours as plugins: constant columns, explode map, extract JSON, TTL/writetime, filters, guardrails."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cdm-core.workspace = true
+cdm-config.workspace = true
+cdm-codec.workspace = true
+cdm-cql.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+tracing.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+proptest.workspace = true
+pretty_assertions.workspace = true

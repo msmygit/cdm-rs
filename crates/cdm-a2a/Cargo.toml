@@ -1,0 +1,29 @@
+[package]
+name = "cdm-a2a"
+description = "Agent-to-Agent agent card and task adapter."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cdm-core.workspace = true
+cdm-service.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+utoipa.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true

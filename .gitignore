@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Local run artefacts
+/cdm_logs/
+/reports/
+*.profraw
+lcov.info
+
+# Local configuration that may contain secrets
+cdm.local.*
+*.secret.*
+.env
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Generated during local integration runs
+/tests/local/

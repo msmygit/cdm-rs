@@ -1,0 +1,28 @@
+[package]
+name = "cdm-track"
+description = "Run tracking, resume and rerun behind the pluggable `TrackingStore` trait."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cdm-core.workspace = true
+cdm-config.workspace = true
+cdm-cql.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true

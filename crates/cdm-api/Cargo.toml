@@ -1,0 +1,39 @@
+[package]
+name = "cdm-api"
+description = "axum HTTP control plane with OpenAPI 3.1 generated from Rust types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cdm-core.workspace = true
+cdm-config.workspace = true
+cdm-service.workspace = true
+cdm-ui.workspace = true
+cdm-a2a.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+rustls.workspace = true
+futures.workspace = true
+tokio-stream.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true

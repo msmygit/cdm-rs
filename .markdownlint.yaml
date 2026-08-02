@@ -1,0 +1,6 @@
+default: true
+MD013: false   # line length is handled by the editor, not the linter
+MD024:
+  siblings_only: true
+MD033: false   # inline HTML (<sup>) is used in the traceability matrix
+MD041: false   # files may start with a front-matter table

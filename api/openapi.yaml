@@ -1,0 +1,588 @@
+# =============================================================================
+# GENERATED FILE — DO NOT EDIT BY HAND.
+#
+# Produced by `cargo xtask openapi` from the Rust types in `cdm-service`,
+# `cdm-config` and `cdm-metrics` (see docs/SPEC.md API-002 and docs/adr/0004).
+# CI regenerates this file and fails the build if it differs (OPS-012).
+#
+# This checked-in skeleton exists so that the contract, the vendor extensions
+# and the CI gates are reviewable from PR #1 onward. It is replaced wholesale
+# by generated output in PR #42.
+# =============================================================================
+openapi: 3.1.0
+
+info:
+  title: cdm-rs Control Plane
+  description: |
+    Control plane for cdm-rs, a Cassandra data migration and validation tool.
+
+    This document is the single source of truth for every machine interface.
+    The MCP tool server (`docs/SPEC.md` MCP-002) and the A2A agent card
+    (A2A-001) are generated from it; no interface is hand-written twice.
+
+    Run submission is asynchronous: `POST /v1/runs` returns `202` with a run id,
+    and progress is polled via `GET /v1/runs/{runId}` or streamed via
+    `GET /v1/runs/{runId}/events`.
+  version: 0.1.0
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    url: https://github.com/msmygit/cdm-rs
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local control plane (default bind, SEC-010)
+
+tags:
+  - name: health
+    description: Liveness and build information.
+  - name: config
+    description: Configuration schema, validation, generation and conversion.
+  - name: schema
+    description: Origin and target schema introspection and comparison.
+  - name: plan
+    description: Token-range planning without touching data.
+  - name: runs
+    description: Run submission, monitoring and control.
+  - name: cluster
+    description: Distributed-mode membership and leases.
+  - name: registry
+    description: Introspection of registered codecs and features.
+
+security:
+  - bearerAuth: []
+  - {}   # SEC-010: `none` is permitted on loopback binds only.
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness probe
+      x-mcp: { expose: false }
+      responses:
+        "200":
+          description: The service is alive.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /v1/version:
+    get:
+      tags: [health]
+      operationId: getVersion
+      summary: Build information and enabled features
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      responses:
+        "200":
+          description: Build information.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionInfo" }
+
+  /v1/config/schema:
+    get:
+      tags: [config]
+      operationId: getConfigSchema
+      summary: JSON Schema of the configuration model
+      description: Generated from `cdm_config::CdmConfig` (CFG-003).
+      x-mcp: { expose: resource, uri: "cdm://config/schema" }
+      responses:
+        "200":
+          description: A JSON Schema document.
+          content:
+            application/schema+json:
+              schema: { type: object }
+
+  /v1/config/validate:
+    post:
+      tags: [config]
+      operationId: validateConfig
+      summary: Validate a configuration
+      description: |
+        Runs validation tiers 1–3 (CFG-020). Tier 3 requires cluster access and is
+        skipped when `tier` is `syntactic` or `semantic`. Every violation is
+        returned, never only the first (CFG-021).
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      x-a2a: { skill: tune-configuration }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ValidateConfigRequest" }
+      responses:
+        "200":
+          description: Validation completed; inspect `diagnostics` for violations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationReport" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/config/convert:
+    post:
+      tags: [config]
+      operationId: convertConfig
+      summary: Convert a Java `spark.cdm.*` properties file to canonical form
+      description: Implements CLI-003 / CFG-011 over HTTP.
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        "200":
+          description: The converted configuration, with annotations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConvertedConfig" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/schema/diff:
+    get:
+      tags: [schema]
+      operationId: getSchemaDiff
+      summary: Compare origin and target schemas
+      description: |
+        Returns the per-column mapping, the resolved conversion plan and any
+        incompatibilities (SCH-008).
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      responses:
+        "200":
+          description: The schema comparison.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchemaDiff" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/plan:
+    post:
+      tags: [plan]
+      operationId: createPlan
+      summary: Compute a token-range plan without touching data
+      description: |
+        Returns the range count, span histogram, estimated row count from
+        `system.size_estimates`, estimated duration at the configured rate limit,
+        and the computed memory envelope (TOK-009, NFR-003).
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      x-a2a: { skill: plan-migration }
+      x-cli: { command: plan }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanRequest" }
+      responses:
+        "200":
+          description: The computed plan.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanView" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      summary: List runs
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/RunStatus" }
+      responses:
+        "200":
+          description: A page of runs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunPage" }
+    post:
+      tags: [runs]
+      operationId: submitRun
+      summary: Submit a run
+      description: |
+        Asynchronous (API-004). Returns `202` with the run id and a `Location`
+        header. Supply `Idempotency-Key` to make retries safe (API-006).
+      x-mcp:
+        expose: tool
+        destructive: true      # -> MCP destructiveHint
+        idempotent: true       # with Idempotency-Key
+        openWorld: true
+      x-a2a: { skill: run-migration }
+      x-cli: { command: "migrate | validate | guardrail" }
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitRunRequest" }
+      responses:
+        "202":
+          description: The run was accepted.
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunView" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/runs/{runId}:
+    get:
+      tags: [runs]
+      operationId: getRun
+      summary: Run detail, counters and progress
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunView" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/runs/{runId}/events:
+    get:
+      tags: [runs]
+      operationId: streamRunEvents
+      summary: Live event stream (SSE)
+      description: |
+        Server-sent events carrying `RunStarted`, `RangeStarted`, `RangeCompleted`,
+        `Discrepancy`, `Warning`, `Error` and `RunCompleted` (MET-030). This is the
+        same stream that backs the terminal UI, the web UI and A2A task updates.
+      x-mcp: { expose: false }   # streaming; agents poll getRun instead
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      responses:
+        "200":
+          description: An event stream.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/RunEvent" }
+
+  /v1/runs/{runId}/discrepancies:
+    get:
+      tags: [runs]
+      operationId: listDiscrepancies
+      summary: Validation findings
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      x-a2a: { skill: explain-discrepancies }
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of discrepancies.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DiscrepancyPage" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/runs/{runId}:cancel:
+    post:
+      tags: [runs]
+      operationId: cancelRun
+      summary: Cancel a run
+      x-mcp: { expose: tool, destructive: true, idempotent: true }
+      parameters: [{ $ref: "#/components/parameters/RunId" }]
+      responses:
+        "200":
+          description: The run is cancelling.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunView" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /v1/cluster:
+    get:
+      tags: [cluster]
+      operationId: getCluster
+      summary: Live nodes, their leases and their throughput
+      x-mcp: { expose: tool, destructive: false, idempotent: true }
+      responses:
+        "200":
+          description: Cluster membership.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClusterView" }
+
+  /v1/codecs:
+    get:
+      tags: [registry]
+      operationId: listCodecs
+      summary: Registered codecs and the type pairs they serve
+      x-mcp: { expose: resource, uri: "cdm://registry/codecs" }
+      responses:
+        "200":
+          description: The codec registry.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CodecInfo" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    mutualTLS:
+      type: mutualTLS
+
+  parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      description: The run identifier (TRK-003).
+      schema: { type: integer, format: int64 }
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque pagination cursor (API-007).
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: Replaying a key returns the original result (API-006).
+      schema: { type: string }
+
+  responses:
+    Problem:
+      description: An error, as RFC 9457 problem+json (API-005).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # NOTE: schema bodies are generated from the Rust types in PR #42. The shapes
+    # below fix the contract that the generator must satisfy.
+
+    Problem:
+      type: object
+      description: RFC 9457 problem detail, carrying a cdm-rs Diagnostic (ERR-002).
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        code:
+          type: string
+          description: Stable diagnostic code; documented at docs/errors/<CODE>.md.
+        diagnostics:
+          type: array
+          items: { $ref: "#/components/schemas/Diagnostic" }
+
+    Diagnostic:
+      type: object
+      required: [code, severity, title]
+      properties:
+        code: { type: string }
+        severity: { type: string, enum: [error, warning, notice] }
+        title: { type: string }
+        detail: { type: string }
+        location:
+          type: string
+          description: The configuration key or source location at fault.
+        value: { description: The offending value, secrets redacted. }
+        rule: { type: string }
+        suggestion: { type: string }
+        docsUrl: { type: string, format: uri }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+
+    VersionInfo:
+      type: object
+      required: [version, gitSha, buildProfile]
+      properties:
+        version: { type: string }
+        gitSha: { type: string }
+        buildProfile: { type: string }
+        features: { type: array, items: { type: string } }
+
+    ValidateConfigRequest:
+      type: object
+      required: [config]
+      properties:
+        config: { description: A configuration document (CFG-001). }
+        tier:
+          type: string
+          enum: [syntactic, semantic, schema]
+          default: schema
+
+    ValidationReport:
+      type: object
+      required: [valid, diagnostics]
+      properties:
+        valid: { type: boolean }
+        configHash:
+          type: string
+          description: Hash of the effective config with secrets excluded (DST-003).
+        diagnostics:
+          type: array
+          items: { $ref: "#/components/schemas/Diagnostic" }
+
+    ConvertedConfig:
+      type: object
+      required: [config, diagnostics]
+      properties:
+        config: { type: object }
+        diagnostics:
+          type: array
+          items: { $ref: "#/components/schemas/Diagnostic" }
+
+    SchemaDiff:
+      type: object
+      properties:
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              originColumn: { type: string }
+              targetColumn: { type: string }
+              originType: { type: string }
+              targetType: { type: string }
+              conversion:
+                type: string
+                enum: [passthrough, codec, udt, list, set, map, tuple, vector, unsupported]
+        incompatibilities:
+          type: array
+          items: { $ref: "#/components/schemas/Diagnostic" }
+
+    PlanRequest:
+      type: object
+      required: [config]
+      properties:
+        config: { description: A configuration document. }
+        job: { $ref: "#/components/schemas/JobKind" }
+
+    PlanView:
+      type: object
+      properties:
+        rangeCount: { type: integer }
+        partitioner: { type: string }
+        tokenMin: { type: string, description: Decimal string; may exceed int64 for RandomPartitioner. }
+        tokenMax: { type: string }
+        estimatedRows: { type: integer, format: int64 }
+        estimatedDurationSeconds: { type: integer }
+        estimatedPeakMemoryBytes: { type: integer, format: int64 }
+
+    JobKind:
+      type: string
+      enum: [migrate, validate, guardrail]
+
+    RunStatus:
+      type: string
+      description: The run lifecycle state machine (API-009).
+      enum: [pending, planning, running, paused, succeeded, failed, cancelled, interrupted]
+
+    SubmitRunRequest:
+      type: object
+      required: [job, config]
+      properties:
+        job: { $ref: "#/components/schemas/JobKind" }
+        config: { description: A configuration document. }
+        dryRun: { type: boolean, default: false, description: MIG-041. }
+        resumeFromRunId: { type: integer, format: int64 }
+
+    RunView:
+      type: object
+      required: [runId, job, status]
+      properties:
+        runId: { type: integer, format: int64 }
+        job: { $ref: "#/components/schemas/JobKind" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        keyspaceTable: { type: string }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        counters:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+        progress:
+          type: object
+          properties:
+            rangesTotal: { type: integer }
+            rangesCompleted: { type: integer }
+            rangesFailed: { type: integer }
+            rowsPerSecond: { type: number }
+            etaSeconds: { type: integer }
+
+    RunPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RunView" }
+        nextCursor: { type: string }
+
+    RunEvent:
+      type: object
+      required: [kind, runId, at]
+      properties:
+        kind:
+          type: string
+          enum:
+            [RunStarted, RangeStarted, RangeCompleted, Discrepancy, Warning, Error, RunCompleted]
+        runId: { type: integer, format: int64 }
+        at: { type: string, format: date-time }
+        data: { type: object }
+
+    DiscrepancyPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [missing, mismatch, corrected_missing, corrected_mismatch] }
+              primaryKey: { type: string }
+              tokenMin: { type: string }
+              columns:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    origin: { description: Redactable via validate.report.redact_values (SEC-002). }
+                    target: {}
+        nextCursor: { type: string }
+
+    ClusterView:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              nodeId: { type: string }
+              lastHeartbeat: { type: string, format: date-time }
+              leasesHeld: { type: integer }
+              rowsPerSecond: { type: number }
+
+    CodecInfo:
+      type: object
+      properties:
+        name: { type: string }
+        fromType: { type: string }
+        toType: { type: string }
+        builtin: { type: boolean }

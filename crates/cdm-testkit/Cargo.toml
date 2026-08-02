@@ -1,0 +1,31 @@
+[package]
+name = "cdm-testkit"
+description = "Test fixtures: containers, schema/data generators, counter assertions, mock sessions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cdm-core.workspace = true
+cdm-config.workspace = true
+cdm-cql.workspace = true
+cdm-metrics.workspace = true
+tokio.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+tempfile.workspace = true
+anyhow.workspace = true

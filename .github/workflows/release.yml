@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # NFR-001: static binaries for every supported target.
+        include:
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-latest,  target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-latest,  target: aarch64-unknown-linux-musl }
+          - { os: macos-latest,   target: x86_64-apple-darwin }
+          - { os: macos-latest,   target: aarch64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - run: cross build --profile dist --target ${{ matrix.target }} --bin cdm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cdm-${{ matrix.target }}
+          path: target/${{ matrix.target }}/dist/cdm*
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff,cargo-cyclonedx,cosign
+      - name: Generate changelog
+        run: git cliff --latest --output RELEASE_NOTES.md
+      - name: Generate SBOM
+        run: cargo cyclonedx --format json --all
+      - name: Sign artefacts
+        run: |
+          find dist -type f -exec cosign sign-blob --yes --output-signature {}.sig {} \;
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/**/*
+            **/*.cdx.json
+
+  container:
+    name: Container image
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=branch
+            type=sha
+      # OPS-022: distroless, non-root, binary only. No JVM, no Spark, no Maven.
+      - uses: docker/build-push-action@v6
+        with:
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

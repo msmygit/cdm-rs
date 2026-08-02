@@ -1,0 +1,6 @@
+# Keep the hot path honest: flag anything that allocates or blocks unexpectedly.
+too-many-arguments-threshold = 8
+type-complexity-threshold = 300
+cognitive-complexity-threshold = 20
+# ERR-004 / SEC-001: never let a secret-bearing type reach a formatter by accident.
+disallowed-methods = []

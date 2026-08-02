@@ -1,0 +1,26 @@
+[package]
+name = "cdm-core"
+description = "Domain vocabulary, error model, diagnostics and the plugin registry. Zero I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+schemars.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+num-bigint.workspace = true
+bigdecimal.workspace = true
+bytes.workspace = true
+tracing.workspace = true

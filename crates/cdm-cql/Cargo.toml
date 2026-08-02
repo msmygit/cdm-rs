@@ -1,0 +1,40 @@
+[package]
+name = "cdm-cql"
+description = "Driver layer: connections, TLS/Astra, schema introspection, statements. The only crate that depends on `scylla`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cdm-core.workspace = true
+cdm-codec.workspace = true
+scylla.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+webpki-roots.workspace = true
+reqwest.workspace = true
+zip.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tempfile.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+pretty_assertions.workspace = true

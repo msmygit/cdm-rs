@@ -1,0 +1,27 @@
+name: Differential vs Java CDM
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  differential:
+    # TST-020: run both implementations over the same seeded corpus and assert
+    # byte-identical target state and identical counter blocks.
+    name: Java/Rust differential suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask differential
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-report
+          path: reports/differential/
