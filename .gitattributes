@@ -1,0 +1,23 @@
+# Normalise line endings on checkout everywhere, including Windows.
+#
+# Without this, git converts LF to CRLF when checking out on Windows. The generated artefacts
+# (schema/cdm-config.schema.json, docs/generated/*.md, api/openapi.yaml) are produced with LF, so
+# a Windows checkout makes every "is the checked-in file current?" gate fail — which is exactly
+# how the Windows job of PR #16 broke. The comparison also normalises (`cdm_config::generate::
+# is_current`), but that only fixes reading; writing would still churn the files on Windows.
+* text=auto eol=lf
+
+# Files that must keep their bytes exactly.
+*.png binary
+*.jpg binary
+*.zip binary
+*.jks binary
+*.pfx binary
+
+# Generated — collapse them in review diffs.
+schema/*.json linguist-generated=true
+docs/generated/*.md linguist-generated=true
+api/openapi.yaml linguist-generated=true
+
+# Lockfiles: keep them, but do not let them dominate a diff.
+Cargo.lock linguist-generated=true
