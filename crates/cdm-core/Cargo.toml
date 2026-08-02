@@ -13,6 +13,16 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# Zero I/O (ARCHITECTURE §3.2): no driver, no HTTP client/server, no async runtime, no
+# filesystem access. `async-trait` only shapes trait signatures; it pulls in no executor.
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+async-trait.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+schemars.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+# `serde_json` proves the serde representations that `cdm-api` and the tracking store depend on.
+[dev-dependencies]
+serde_json.workspace = true
