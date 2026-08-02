@@ -23,7 +23,7 @@ jobs:
       - run: cargo doc --workspace --no-deps --all-features
       - run: mdbook build docs/book
       - run: cp -r target/doc docs/book/book/api
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/book/book
       - uses: actions/deploy-pages@v5
