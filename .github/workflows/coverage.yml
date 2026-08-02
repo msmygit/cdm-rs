@@ -30,14 +30,14 @@ jobs:
       - name: Measure coverage
         run: |
           cargo llvm-cov --workspace --all-features \
-            --ignore-filename-regex '^xtask/' \
+            --ignore-filename-regex 'xtask/' \
             --lcov --output-path lcov.info \
             --fail-under-lines "${COVERAGE_FLOOR}"
         env:
           COVERAGE_FLOOR: "70"
       - name: Report coverage
         if: always()
-        run: cargo llvm-cov report --summary-only --ignore-filename-regex '^xtask/'
+        run: cargo llvm-cov report --summary-only --ignore-filename-regex 'xtask/'
       - uses: codecov/codecov-action@v5
         with:
           files: lcov.info

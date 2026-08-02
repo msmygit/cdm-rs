@@ -23,10 +23,11 @@ jobs:
       - name: Regenerate and diff
         run: cargo xtask openapi --check
 
-      - name: Validate against the OpenAPI 3.1 meta-schema
-        uses: char0n/swagger-editor-validate@v1
-        with:
-          definition-file: api/openapi.yaml
+      # Redocly runs headless. The Swagger Editor action drives Chromium, which needs a
+      # sandbox the GitHub runners do not provide, so it cannot be used here.
+      - name: Validate and lint the contract
+        run: npx --yes @redocly/cli@latest lint api/openapi.yaml --format=stylish
+        # Ruleset is pinned in redocly.yaml; see the comment there.
 
       # API-008: breaking changes require an explicit version bump. Skipped when the base
       # branch has no contract yet, which is the case only for the PR that introduces it.
