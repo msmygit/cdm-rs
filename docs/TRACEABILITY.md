@@ -181,7 +181,7 @@ test, fails CI.
 | `TOK-001` <sup>P</sup> | The origin partitioner MUST be detected | `cdm-engine::planner` | `tok_001_*` | #17 |
 | `TOK-002` <sup>P</sup> | Default token bounds: Murmur3 → `[i64::MIN, i64::MAX]`; Random → `[0, 2^127 - 1]` | `cdm-engine::planner` | `tok_002_*` | #17 |
 | `TOK-003` <sup>P</sup> | The ring is split into `perfops.num_parts` ranges using the Java algorithm exactly, including its overflow edge cases | `cdm-engine::planner` | `tok_003_*` | #17 |
-| `TOK-004` <sup>P</sup> | All split arithmetic is performed in `i128` (Murmur3) or arbitrary precision (Random) so the overflow the Java code defends against cannot occur | `cdm-engine::planner` | `tok_004_*` | #17 |
+| `TOK-004` <sup>P</sup> | All split arithmetic is performed in `i128` (Murmur3) or arbitrary precision (Random) so the overflow the Java code defends against cannot occur | `cdm-core::domain::token`, `cdm-engine::planner` | `tok_004_*` | #3, #17 |
 | `TOK-005` <sup>P</sup> | `filter.token_coverage_percent` < 100 MUST shrink each emitted range from its lower bound, producing a deterministic random… | `cdm-engine::planner` | `tok_005_*` | #17 |
 | `TOK-006` <sup>P</sup> | The emitted range list MUST be shuffled (Java shuffles twice) before scheduling, to spread load across replicas | `cdm-engine::planner` | `tok_006_*` | #17 |
 | `TOK-007` <sup>N</sup> | . **TOK-008 [N]** — An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership… | `cdm-engine::planner` | `tok_007_*` | #17 |
@@ -325,10 +325,10 @@ test, fails CI.
 |---|---|---|---|---|
 | `TRK-001` <sup>P</sup> | Tracking MUST be enabled when any of: `track_run.enabled = true`, `track_run.run_id != 0`, `track_run.previous_run_id != 0`,… | `cdm-track` | `trk_001_*` | #25 |
 | `TRK-002` <sup>P</sup> | When enabled and `run_id == 0`, a run id MUST be generated | `cdm-track` | `trk_002_*` | #25 |
-| `TRK-003` <sup>P+</sup> | which preserves the "latest = highest" ordering Java relies on while eliminating collisions across nodes | `cdm-track` | `trk_003_*` | #25 |
+| `TRK-003` <sup>P+</sup> | which preserves the "latest = highest" ordering Java relies on while eliminating collisions across nodes | `cdm-core::domain::run`, `cdm-track` | `trk_003_*` | #3, #25 |
 | `TRK-010` <sup>P</sup> | Create `cdm_run_info` and `cdm_run_details` in the target keyspace with exactly the Java schema | `cdm-track` | `trk_010_*` | #25 |
 | `TRK-011` <sup>N</sup> | cdm-rs MUST additionally maintain, in the same keyspace, `cdm_run_leases` for distributed coordination (`DST-010`) | `cdm-track` | `trk_011_*` | #25 |
-| `TRK-012` <sup>P</sup> | Statuses: `NOT_STARTED, STARTED, PASS, FAIL, DIFF, DIFF_CORRECTED, ENDED` | `cdm-track` | `trk_012_*` | #25 |
+| `TRK-012` <sup>P</sup> | Statuses: `NOT_STARTED, STARTED, PASS, FAIL, DIFF, DIFF_CORRECTED, ENDED` | `cdm-core::domain::run`, `cdm-track` | `trk_012_*` | #3, #25 |
 | `TRK-020` <sup>P</sup> | Run initialisation MUST: reject a `run_id` that already exists; insert the info row as `NOT_STARTED`; insert one details row… | `cdm-track` | `trk_020_*` | #25 |
 | `TRK-021` <sup>P</sup> | Each range MUST be updated to `STARTED` (setting `start_time`) when work begins and to its terminal status with the metrics… | `cdm-track` | `trk_021_*` | #25 |
 | `TRK-022` <sup>P</sup> | On run completion the info row MUST be updated with `end_time`, the aggregate metrics string, and status `ENDED` | `cdm-track` | `trk_022_*` | #25 |
@@ -449,7 +449,7 @@ test, fails CI.
 | `PLG-007` <sup>N</sup> | `TrackingStorePlugin` — alternative tracking backends (`TRK-036`) | `cdm-core::registry` | `plg_007_*` | #3 |
 | `PLG-010` <sup>N</sup> | All plugins register through one `Registry`; built-ins use the same public registration path as third parties | `cdm-core::registry` | `plg_010_*` | #3 |
 | `PLG-011` <sup>N</sup> | Plugin registration MUST be possible both at compile time (Cargo feature + `inventory`-style linkage) and at runtime via a… | `cdm-core::registry` | `plg_011_*` | #54 |
-| `PLG-012` <sup>N</sup> | Every plugin trait MUST be object-safe, `Send + Sync`, and documented with a worked example in `docs/EXTENDING.md` plus a… | `cdm-core::registry` | `plg_012_*` | #54 |
+| `PLG-012` <sup>N</sup> | Every plugin trait MUST be object-safe, `Send + Sync`, and documented with a worked example in `docs/EXTENDING.md` plus a… | `cdm-core::registry` | `plg_012_*` | #3, #57 |
 | `PLG-013` <sup>N</sup> | Plugins MUST be able to contribute configuration keys, which are then automatically included in the JSON Schema, OpenAPI, docs… | `cdm-core::registry` | `plg_013_*` | #3 |
 
 ### ERR
@@ -458,7 +458,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `ERR-001` <sup>N</sup> | A single `CdmError` enum with stable documented kinds, each carrying side/keyspace/table/column/range context | `cdm-core::error` | `err_001_*` | #3 |
 | `ERR-002` <sup>N</sup> | A `Diagnostic` type rendered identically as CLI text, problem+json and SSE events | `cdm-core::error` | `err_002_*` | #3 |
-| `ERR-003` <sup>N</sup> | Every diagnostic code MUST have a page in `docs/errors/<CODE>.md`, and `docs_url` MUST point at it | `cdm-core::error` | `err_003_*` | #3 |
+| `ERR-003` <sup>N</sup> | Every diagnostic code MUST have a page in `docs/errors/<CODE>.md`, and `docs_url` MUST point at it | `cdm-core::error` | `err_003_*` | #3, #57 |
 | `ERR-004` <sup>N</sup> | `unwrap()`/`expect()`/`panic!` MUST be denied by Clippy in all non-test code except in `main` startup and documented… | `cdm-core::error` | `err_004_*` | #3 |
 | `ERR-005` <sup>P</sup> | Bind failures MUST log the value, its type, the column name, the CQL type, the bind index and the statement CQL — matching… | `cdm-core::error` | `err_005_*` | #18 |
 
