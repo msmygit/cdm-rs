@@ -146,6 +146,26 @@ fn engines_under_test() -> Vec<Engine> {
     }
 }
 
+/// Prints the container's output so a startup failure is diagnosable from the CI log alone.
+async fn dump_logs(container: &ContainerAsync<GenericImage>, name: &str, tag: &str) {
+    for (stream, bytes) in [
+        ("stdout", container.stdout_to_vec().await),
+        ("stderr", container.stderr_to_vec().await),
+    ] {
+        match bytes {
+            Ok(b) => {
+                let text = String::from_utf8_lossy(&b);
+                let tail: Vec<&str> = text.lines().rev().take(40).collect();
+                eprintln!("--- {name}:{tag} {stream} (last 40 lines) ---");
+                for line in tail.into_iter().rev() {
+                    eprintln!("{line}");
+                }
+            }
+            Err(e) => eprintln!("--- {name}:{tag} {stream} unavailable: {e} ---"),
+        }
+    }
+}
+
 /// Rows seeded for the token-range scan. Large enough to span several pages at the page size
 /// used below, small enough to insert quickly on a cold container.
 const ROWS: i32 = 500;
@@ -164,11 +184,11 @@ async fn start(engine: Engine) -> Option<Fixture> {
         .with_wait_for(WaitFor::message_on_stdout(engine.ready_message()))
         .with_startup_timeout(Duration::from_secs(300));
 
-    // Keep a single-node container inside a modest footprint; the defaults size for a server.
+    // Do NOT set HEAP_NEWSIZE. Cassandra 4.1 and 5.0 default to G1GC, where a new-size setting is
+    // invalid and aborts startup; 3.11 and 4.0 default to CMS and tolerate it. Tuning the heap
+    // here bought nothing and silently broke half the matrix, so the images keep their defaults.
     let image = match engine.flavour {
-        Flavour::Cassandra => image
-            .with_env_var("HEAP_NEWSIZE", "128M")
-            .with_env_var("MAX_HEAP_SIZE", "1024M"),
+        Flavour::Cassandra => image,
         Flavour::Scylla => image.with_cmd(["--smp", "1", "--skip-wait-for-gossip-to-settle", "0"]),
     };
 
@@ -203,12 +223,18 @@ async fn start(engine: Engine) -> Option<Fixture> {
                 Err(e) if std::time::Instant::now() < deadline => {
                     eprintln!("waiting for CQL on {name}:{tag}: {e}");
                 }
-                Err(e) => panic!("{name}:{tag} never became queryable: {e}"),
+                Err(e) => {
+                    dump_logs(&container, name, tag).await;
+                    panic!("{name}:{tag} never became queryable: {e}");
+                }
             },
             Err(e) if std::time::Instant::now() < deadline => {
                 eprintln!("waiting for CQL on {name}:{tag}: {e}");
             }
-            Err(e) => panic!("{name}:{tag} never accepted a connection: {e}"),
+            Err(e) => {
+                dump_logs(&container, name, tag).await;
+                panic!("{name}:{tag} never accepted a connection: {e}");
+            }
         }
         tokio::time::sleep(Duration::from_secs(3)).await;
     };
