@@ -368,7 +368,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `MET-001` <sup>P</sup> | The following counters MUST exist with exactly these semantics: `READ, WRITE, MISMATCH, CORRECTED_MISMATCH, MISSING,… | `cdm-metrics` | `met_001_*` | #19 |
 | `MET-002` <sup>P</sup> | Per-job counter registration must match Java exactly for migrate, validate and guardrail | `cdm-metrics` | `met_002_*` | #19 |
-| `MET-003` <sup>P+</sup> | (Java throws at runtime) | `cdm-metrics` | `met_003_*` | #19 |
+| `MET-003` <sup>P+</sup> | Using an unregistered counter MUST be a compile-time or startup error, never a runtime surprise (Java throws at runtime) | `cdm-metrics` | `met_003_*` | #19 |
 | `MET-004` <sup>P</sup> | The interim/committed two-level accounting MUST be preserved: per-range interim counts are folded into totals on range… | `cdm-metrics` | `met_004_*` | #19 |
 | `MET-005` <sup>P</sup> | The metrics string format MUST be reproduced exactly: `Read: 10; Write: 9; Skipped: 1` (title-cased counter names, `; `… | `cdm-metrics` | `met_005_*` | #19 |
 | `MET-006` <sup>P</sup> | The final metrics block must be printed in the Java format so existing assertion tooling keeps working | `cdm-metrics` | `met_006_*` | #19 |

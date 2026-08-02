@@ -1,0 +1,13 @@
+---
+source: crates/cdm-metrics/src/report.rs
+expression: "guardrail.final_block(Some(RunId::from_raw(1_712_345_678_901_234)))"
+---
+################################################################################################
+RunId: 1712345678901234
+Final Read Record Count: 4
+Final Valid Record Count: 1
+Final Skipped Record Count: 0
+Final Large Record Count: 3
+Final Partitions Passed: 1
+Final Partitions Failed: 0
+################################################################################################
