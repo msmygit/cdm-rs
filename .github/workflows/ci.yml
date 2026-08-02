@@ -49,9 +49,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable]
         include:
-          # OPS: the MSRV declared in Cargo.toml is tested, not assumed (NFR-005).
+          # NFR-005: the MSRV declared in Cargo.toml is tested, not assumed. Keep this in
+          # step with `rust-version` in the workspace manifest.
           - os: ubuntu-latest
-            rust: "1.85"
+            rust: "1.88"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

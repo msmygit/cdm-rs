@@ -107,7 +107,7 @@ Operationally this imposes real costs on users:
 | S1 | Every SIT case in the Java repo (`SIT/smoke`, `SIT/features`, `SIT/regression` — 19 cases) passes against cdm-rs with an equivalent harness and identical counter assertions. |
 | S2 | A `cdm.properties` file written for Java CDM 6.x runs unmodified under cdm-rs (compatibility loader). |
 | S3 | Throughput ≥ 2× Java CDM on the same single node for the `PERF/perf-iot` workload, at ≤ 25% of the resident memory. |
-| S4 | `cargo test --workspace` covers ≥ 85% of lines (`cargo-llvm-cov`), enforced in CI. |
+| S4 | `cargo test --workspace` covers ≥ 85% of lines (`cargo-llvm-cov`) at v1.0. CI enforces a **ratchet**: the floor is whatever the codebase currently clears, raised by the PR that raises the coverage and never lowered. Repository automation (`xtask`) has its own tests but is excluded from the product figure. |
 | S5 | The OpenAPI document validates against the 3.1 meta-schema, and the MCP tool list and A2A agent card are generated from it with zero hand-written duplication. |
 
 ---

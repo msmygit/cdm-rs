@@ -1,0 +1,4 @@
+# `cargo xtask <task>` is the repository's automation entry point (OPS-024). Without this
+# alias the CI invocations and the documented developer commands would not resolve.
+[alias]
+xtask = "run --package xtask --quiet --"

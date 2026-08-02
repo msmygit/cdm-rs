@@ -170,7 +170,9 @@ the commands say so in their own output.
 ## Definition of done (per PR)
 
 1. Requirement IDs listed in the `Implements:` trailer and in `docs/TRACEABILITY.md`.
-2. Unit tests for every branch; ≥ 90% line coverage for the touched crate.
+2. Unit tests for every branch; ≥ 90% line coverage for the touched crate. If the change raises
+   workspace coverage, raise `COVERAGE_FLOOR` in `.github/workflows/coverage.yml` to match — the
+   ratchet only ever tightens (`S4`).
 3. Integration test where the change touches a cluster.
 4. Rustdoc on every new public item; `#![deny(missing_docs)]` satisfied.
 5. Generated artefacts regenerated (`cargo xtask openapi`, `check-generated` green).
