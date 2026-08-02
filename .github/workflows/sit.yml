@@ -1,0 +1,27 @@
+name: SIT parity
+
+# NOTE: the ported SIT cases are delivered by PR #32. Until then this workflow is
+# manual-dispatch only. Restore the `pull_request` and `push` triggers in PR #32.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sit-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sit:
+    # TST-003 / success criterion S1: all 19 ported Java SIT cases must pass with
+    # byte-identical counter assertions.
+    name: Java SIT parity suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask sit
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: sit-output
+          path: tests/sit/**/output/

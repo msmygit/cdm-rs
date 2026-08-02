@@ -1,0 +1,169 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"                                           # scylla 1.7 and time 0.3.55 require 1.88
+license = "Apache-2.0"
+repository = "https://github.com/msmygit/cdm-rs"
+homepage = "https://github.com/msmygit/cdm-rs"
+authors = ["cdm-rs contributors"]
+keywords = ["cassandra", "migration", "scylla", "astra", "cql"]
+categories = ["database", "command-line-utilities"]
+
+# Single version catalog for the whole workspace (OPS-001). Member crates inherit with
+# `foo.workspace = true` and declare only what they actually use — `cargo machete` in CI
+# fails on any dependency a crate does not reference, so entries here that no member uses
+# yet are simply not resolved into Cargo.lock.
+[workspace.dependencies]
+# --- internal ---------------------------------------------------------------
+cdm-core = { path = "crates/cdm-core", version = "0.1.0" }
+cdm-config = { path = "crates/cdm-config", version = "0.1.0" }
+cdm-codec = { path = "crates/cdm-codec", version = "0.1.0" }
+cdm-cql = { path = "crates/cdm-cql", version = "0.1.0" }
+cdm-feature = { path = "crates/cdm-feature", version = "0.1.0" }
+cdm-track = { path = "crates/cdm-track", version = "0.1.0" }
+cdm-cluster = { path = "crates/cdm-cluster", version = "0.1.0" }
+cdm-metrics = { path = "crates/cdm-metrics", version = "0.1.0" }
+cdm-engine = { path = "crates/cdm-engine", version = "0.1.0" }
+cdm-service = { path = "crates/cdm-service", version = "0.1.0" }
+cdm-api = { path = "crates/cdm-api", version = "0.1.0" }
+cdm-mcp = { path = "crates/cdm-mcp", version = "0.1.0" }
+cdm-a2a = { path = "crates/cdm-a2a", version = "0.1.0" }
+cdm-ui = { path = "crates/cdm-ui", version = "0.1.0" }
+cdm-testkit = { path = "crates/cdm-testkit", version = "0.1.0" }
+
+# --- CQL driver (CON-000, ADR-0002) -----------------------------------------
+scylla = { version = "1", features = [
+    "rustls-023",
+    "chrono-04",
+    "num-bigint-04",
+    "bigdecimal-04",
+    "metrics",
+] }
+
+# --- async runtime ----------------------------------------------------------
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+
+# --- serialization / config -------------------------------------------------
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+figment = { version = "0.10", features = ["toml", "yaml", "json", "env"] }
+schemars = "1"
+
+# --- errors / diagnostics ---------------------------------------------------
+thiserror = "2"
+anyhow = "1"
+
+# --- observability ----------------------------------------------------------
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+opentelemetry = "0.32"
+opentelemetry_sdk = "0.32"
+opentelemetry-otlp = "0.32"
+
+# --- HTTP / API -------------------------------------------------------------
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust-embed = "8"
+
+# --- crypto / TLS -----------------------------------------------------------
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+webpki-roots = "0.26"
+zeroize = { version = "1", features = ["derive"] }
+
+# --- CLI --------------------------------------------------------------------
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4"
+ratatui = "0.30"
+crossterm = "0.29"
+indicatif = "0.17"
+owo-colors = "4"
+
+# --- data types -------------------------------------------------------------
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+num-bigint = "0.4"
+bigdecimal = "0.4"
+bytes = "1"
+smallvec = "1"
+indexmap = { version = "2", features = ["serde"] }
+regex = "1"
+zip = "2"
+
+# --- utilities --------------------------------------------------------------
+governor = "0.7"
+parking_lot = "0.12"
+rand = "0.8"
+strsim = "0.11"
+humantime-serde = "1"
+num_cpus = "1"
+
+# --- dev / test -------------------------------------------------------------
+proptest = "1"
+insta = { version = "1", features = ["yaml", "json"] }
+rstest = "0.26"
+testcontainers = "0.27"
+testcontainers-modules = "0.15"
+criterion = { version = "0.8", features = ["html_reports"] }
+pretty_assertions = "1"
+tempfile = "3"
+
+# Lints applied uniformly to every crate via `[lints] workspace = true` (OPS-001, ERR-004, SEC-031).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# ERR-004: no panicking paths outside tests.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+indexing_slicing = "warn"
+# Pragmatic relaxations of `pedantic`.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Our rustdoc is prose-heavy and full of product names — OpenAPI, MCP, A2A, Cassandra,
+# Astra, ScyllaDB, Prometheus. Backticking every one of them makes the docs harder to
+# read, and the lint cannot distinguish a product name from an identifier.
+doc_markdown = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"  # ENG-013 catches panics at the range boundary
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+[profile.dist]
+inherits = "release"
+lto = "fat"

@@ -1,0 +1,44 @@
+name: Coverage
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: coverage-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: llvm-cov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # Success criterion S4 is >= 85% line coverage at v1.0. The gate here is a ratchet:
+      # it enforces the floor the codebase actually clears today and is raised by the PR
+      # that raises the coverage, never lowered. `xtask` is repository automation rather
+      # than shipped code, so it is measured separately by its own unit tests, not counted
+      # against the product's figure.
+      - name: Measure coverage
+        run: |
+          cargo llvm-cov --workspace --all-features \
+            --ignore-filename-regex 'xtask/' \
+            --lcov --output-path lcov.info \
+            --fail-under-lines "${COVERAGE_FLOOR}"
+        env:
+          COVERAGE_FLOOR: "70"
+      - name: Report coverage
+        if: always()
+        run: cargo llvm-cov report --summary-only --ignore-filename-regex 'xtask/'
+      - uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false

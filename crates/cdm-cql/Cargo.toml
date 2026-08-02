@@ -1,0 +1,18 @@
+[package]
+name = "cdm-cql"
+description = "Driver layer: connections, TLS/Astra, schema introspection, statements. The only crate that depends on `scylla`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

@@ -1,0 +1,16 @@
+# Default owner for everything in the repository.
+*                       @msmygit
+
+# Specification and architecture changes require an explicit review.
+/docs/SPEC.md           @msmygit
+/docs/ARCHITECTURE.md   @msmygit
+/docs/TRACEABILITY.md   @msmygit
+/docs/adr/              @msmygit
+
+# Interface contracts.
+/api/                   @msmygit
+/schema/                @msmygit
+
+# CI, release and supply-chain configuration.
+/.github/               @msmygit
+/deny.toml              @msmygit

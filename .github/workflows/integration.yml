@@ -1,0 +1,37 @@
+name: Integration
+
+# NOTE: the integration suite is delivered by PR #16 (cdm-testkit). Until then this
+# workflow is manual-dispatch only, so it does not report a permanent false failure on
+# every pull request. Restore the `pull_request` and `push` triggers in PR #16.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: integration-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: ${{ matrix.engine }} ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # TST-002: both dialects are mandatory — the driver is Scylla-first and
+        # Cassandra-compatible, so testing one would let divergences through.
+        include:
+          - engine: cassandra
+            version: "4.1"
+          - engine: cassandra
+            version: "5.0"
+          - engine: scylladb
+            version: "latest"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run integration suite
+        env:
+          CDM_IT_ENGINE: ${{ matrix.engine }}
+          CDM_IT_VERSION: ${{ matrix.version }}
+        run: cargo xtask it

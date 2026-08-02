@@ -1,0 +1,29 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build and publish documentation site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook
+      - run: cargo doc --workspace --no-deps --all-features
+      - run: mdbook build docs/book
+      - run: cp -r target/doc docs/book/book/api
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/book/book
+      - uses: actions/deploy-pages@v4

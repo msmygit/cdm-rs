@@ -1,0 +1,26 @@
+name: Benchmarks
+
+# NOTE: the benchmark suite is delivered by PR #55. Restore the nightly schedule then.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    # TST-060 / NFR-004: hot-path regressions over 10% fail the build.
+    name: Criterion + macro benchmark
+    if: github.event_name != 'pull_request' || github.event.label.name == 'bench'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo bench --workspace -- --output-format bencher | tee bench.txt
+      - uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: cargo
+          output-file-path: bench.txt
+          fail-on-alert: true
+          alert-threshold: "110%"
+          github-token: ${{ secrets.GITHUB_TOKEN }}

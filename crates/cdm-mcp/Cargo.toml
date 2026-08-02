@@ -1,0 +1,18 @@
+[package]
+name = "cdm-mcp"
+description = "Model Context Protocol server; tools generated from the OpenAPI document."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

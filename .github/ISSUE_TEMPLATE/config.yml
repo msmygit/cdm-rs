@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Specification
+    url: https://github.com/msmygit/cdm-rs/blob/main/docs/SPEC.md
+    about: The normative description of every behaviour, by requirement ID.
+  - name: Migrating from Java CDM
+    url: https://github.com/msmygit/cdm-rs/blob/main/docs/MIGRATION_FROM_JAVA.md
+    about: Every intentional behavioural difference and how to restore the old behaviour.

@@ -1,0 +1,7 @@
+[files]
+extend-exclude = ["CHANGELOG.md", "docs/generated/", "*.lock"]
+
+[default.extend-words]
+# Domain vocabulary the spell-checker does not know.
+ND = "ND"
+datastax = "datastax"

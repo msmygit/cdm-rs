@@ -1,0 +1,109 @@
+# Pre-commit hooks (OPS-003). Install with:
+#   pipx install pre-commit && pre-commit install --install-hooks -t pre-commit -t commit-msg
+# Contributors who prefer no Python dependency can run:
+#   cargo xtask install-hooks
+default_install_hook_types: [pre-commit, commit-msg]
+fail_fast: false
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.29.4
+    hooks:
+      - id: typos
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.23.1
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert]
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.44.0
+    hooks:
+      - id: markdownlint
+        args: [--config, .markdownlint.yaml]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: [--strict, -c, .yamllint.yaml]
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+
+  # Local Rust hooks. These run against the workspace, not per-file.
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy -D warnings
+        entry: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: taplo-fmt
+        name: taplo fmt --check
+        entry: taplo fmt --check
+        language: system
+        types: [toml]
+        pass_filenames: false
+
+      - id: cargo-deny
+        name: cargo deny check
+        entry: cargo deny check
+        language: system
+        files: '(Cargo\.(toml|lock)|deny\.toml)$'
+        pass_filenames: false
+
+      - id: cargo-machete
+        name: cargo machete (unused dependencies)
+        entry: cargo machete
+        language: system
+        files: 'Cargo\.toml$'
+        pass_filenames: false
+
+      # OPS-011: every requirement ID is specified, traced and tested.
+      - id: check-traceability
+        name: requirement traceability
+        entry: cargo xtask check-traceability
+        language: system
+        files: '(docs/(SPEC|TRACEABILITY)\.md|\.rs)$'
+        pass_filenames: false
+
+      # OPS-012: generated artefacts are never stale.
+      - id: check-generated
+        name: generated artefacts are current
+        entry: bash -c 'cargo xtask openapi --check && cargo xtask docs --check'
+        language: system
+        files: '(crates/.*\.rs|api/.*|schema/.*|docs/generated/.*)$'
+        pass_filenames: false

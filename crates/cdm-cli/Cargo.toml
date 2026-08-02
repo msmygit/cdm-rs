@@ -1,0 +1,22 @@
+[package]
+name = "cdm-cli"
+description = "The `cdm` binary: argument parsing, output rendering, exit codes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "cdm"
+path = "src/main.rs"
+
+[dependencies]
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

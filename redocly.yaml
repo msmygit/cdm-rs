@@ -1,0 +1,19 @@
+# Contract linting for api/openapi.yaml (API-001).
+#
+# We validate against the OpenAPI 3.1 meta-schema and check that every $ref resolves.
+# The wider "recommended" ruleset is a style opinion that our spec does not adopt, and
+# enabling it would mean the linter, rather than docs/SPEC.md, defining the contract.
+# Style rules can be added deliberately later, each with a reason.
+extends:
+  - minimal
+
+# Note: structural conformance to the OpenAPI meta-schema is always enforced by Redocly
+# and is not a named rule, so it is not listed here.
+rules:
+  no-unresolved-refs: error
+  no-identical-paths: error
+  no-ambiguous-paths: error
+  operation-operationId-unique: error
+  operation-operationId: error
+  path-declaration-must-exist: error
+  no-invalid-media-type-examples: error

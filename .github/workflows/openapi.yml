@@ -1,0 +1,41 @@
+name: OpenAPI
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "api/**"
+      - "schema/**"
+  workflow_dispatch:
+
+jobs:
+  contract:
+    name: Spec generation, lint and breaking-change gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # API-002 / OPS-012: the checked-in document must equal freshly generated output.
+      - name: Regenerate and diff
+        run: cargo xtask openapi --check
+
+      # Redocly runs headless. The Swagger Editor action drives Chromium, which needs a
+      # sandbox the GitHub runners do not provide, so it cannot be used here.
+      - name: Validate and lint the contract
+        run: npx --yes @redocly/cli@latest lint api/openapi.yaml --format=stylish
+        # Ruleset is pinned in redocly.yaml; see the comment there.
+
+      # API-008: breaking changes require an explicit version bump. Skipped when the base
+      # branch has no contract yet, which is the case only for the PR that introduces it.
+      - name: Breaking-change gate
+        run: |
+          if ! git show "origin/${{ github.base_ref }}:api/openapi.yaml" > /tmp/base-openapi.yaml 2>/dev/null; then
+            echo "::notice::base branch has no api/openapi.yaml yet; nothing to compare"
+            exit 0
+          fi
+          docker run --rm -v "$PWD:/w" -v /tmp:/tmp tufin/oasdiff breaking \
+            /tmp/base-openapi.yaml /w/api/openapi.yaml --fail-on ERR

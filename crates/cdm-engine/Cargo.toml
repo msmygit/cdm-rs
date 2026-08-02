@@ -1,0 +1,18 @@
+[package]
+name = "cdm-engine"
+description = "Scheduler, rate limiting, backpressure, failure isolation and the built-in jobs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.
