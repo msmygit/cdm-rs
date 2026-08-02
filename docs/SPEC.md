@@ -354,7 +354,7 @@ The following table is the **normative parity list**. It is generated from the J
 | `spark.cdm.perfops.consistency.read` | `perfops.consistency.read` | enum | `LOCAL_QUORUM` |
 | `spark.cdm.perfops.consistency.write` | `perfops.consistency.write` | enum | `LOCAL_QUORUM` |
 | `spark.cdm.perfops.fetchSizeInRows` | `perfops.fetch_size` | u32 | `1000` |
-| `spark.cdm.perfops.errorLimit` | `perfops.error_limit` | u64 | `0` (unlimited) |
+| `spark.cdm.perfops.errorLimit`&nbsp;† | `perfops.error_limit` | u64 | `0` (unlimited) |
 | — **[N]** | `perfops.workers` | u32 | `num_cpus` |
 | — **[N]** | `perfops.max_inflight_writes` | u32 | `2000` |
 | — **[N]** | `perfops.max_inflight_reads` | u32 | `256` |
@@ -364,6 +364,11 @@ The following table is the **normative parity list**. It is generated from the J
 | — **[N]** | `perfops.retry.initial_backoff` | duration | `100ms` |
 | — **[N]** | `perfops.retry.max_backoff` | duration | `10s` |
 | — **[N]** | `perfops.adaptive_ratelimit` | bool | `false` |
+
+† `spark.cdm.perfops.errorLimit` appears only as a commented-out line in Java's
+`src/resources/cdm-detailed.properties`. It is **not** in `KnownProperties` and is referenced
+nowhere in Java's source, so Java silently ignores it. cdm-rs accepts the alias and implements the
+behaviour (`ENG-009`); the parity baseline is "ignored", not "works differently".
 
 Accepted consistency levels **[P]**: `ANY, ONE, TWO, THREE, QUORUM, LOCAL_ONE, LOCAL_QUORUM,
 EACH_QUORUM, SERIAL, LOCAL_SERIAL, ALL` (case-insensitive). Unlike Java, an unrecognised value MUST
@@ -379,9 +384,16 @@ deliberate, documented behaviour change; `--compat-java` restores silent coercio
 | `spark.cdm.transform.custom.writetime.incrementBy` | `transform.custom_writetime_increment` | i64 (µs) | `0` |
 | `spark.cdm.transform.custom.ttl` | `transform.custom_ttl` | i32 (s) | `0` |
 | `spark.cdm.transform.codecs` | `transform.codecs` | list | — |
-| `spark.cdm.transform.codecs.timestamp.string.format` | `transform.codecs.timestamp_format` | string | `yyyyMMddHHmmss` |
-| `spark.cdm.transform.codecs.timestamp.string.zone` | `transform.codecs.timestamp_zone` | tz | `UTC` |
+| `spark.cdm.transform.codecs.timestamp.string.format` | `transform.codec_timestamp_format` | string | `yyyyMMddHHmmss` |
+| `spark.cdm.transform.codecs.timestamp.string.zone` | `transform.codec_timestamp_zone` | tz | `UTC` |
 | `spark.cdm.transform.map.remove.null.value` | `transform.map_remove_null_value` | bool | `false` |
+
+> **Correction.** Earlier drafts of this table gave the canonical names as
+> `transform.codecs.timestamp_format` and `transform.codecs.timestamp_zone`, nested beneath
+> `transform.codecs`. That is impossible in a typed struct tree (`CFG-001`): `transform.codecs`
+> cannot be both a list and an object. Java has no such problem because its keys are flat strings.
+> The canonical names are therefore siblings, and **both legacy aliases are unchanged**, so no
+> existing `.properties` file is affected.
 
 #### 3.5.9 Filters — **CFG-180**
 
@@ -411,6 +423,15 @@ deliberate, documented behaviour change; `--compat-java` restores silent coercio
 | `spark.cdm.feature.extractJson.overwrite` | `feature.extract_json.overwrite` | bool | `false` |
 | `spark.cdm.feature.extractJson.exclusive` | `feature.extract_json.exclusive` | bool | `false` |
 | `spark.cdm.feature.guardrail.colSizeInKB` | `feature.guardrail.column_size_kb` | f64 | `0` |
+
+**`feature.guardrail.column_size_kb` is a float, unlike Java.** Java types it as `NUMBER`, which it
+parses with `Long.parseLong`, so a fractional threshold such as `0.5` fails to parse and becomes
+`null` there. cdm-rs accepts a fraction, since `GRD-002` multiplies the value by 1000 to get bytes
+and a fraction is meaningful. Integral values behave identically.
+
+**`spark.cdm.feature.constantColumns.types` is deliberately not implemented.** It appears in Java's
+`cdm-detailed.properties` but is absent from `KnownProperties` and from Java's source, so it has
+never had an effect. Constant-column types are resolved from the target schema (`FEA-011`).
 
 #### 3.5.11 New cdm-rs sections — **CFG-200**
 

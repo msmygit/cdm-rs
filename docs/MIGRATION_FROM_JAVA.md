@@ -47,6 +47,10 @@ cdm config convert --from cdm.properties --to cdm.toml
 | 8 | Using an unregistered counter throws at runtime | Rejected at startup (`MET-003`) | Fail in seconds, not hours | — |
 | 9 | Configuration errors surface during execution | Three validation tiers before any data moves, all errors reported at once (`CFG-020`, `CFG-021`) | The most common operational complaint | — |
 | 10 | Distributed execution requires a Spark cluster | Built-in lease-based coordination (`DST-001`) | Removes the largest deployment dependency | run single-node |
+| 11 | A bundle and a host on the same side: bundle wins, host silently ignored | Tier-1 error naming which to drop (`CFG-041`) | A stale host from a previous migration must not look like live configuration | `--compat-java` |
+| 12 | `guardrail.colSizeInKB` is `Long.parseLong`, so `0.5` fails to parse and becomes `null` | accepts a fraction (`GRD-002`) | the threshold is multiplied by 1000 to get bytes, where a fraction is meaningful | — (integral values are identical) |
+| 13 | `blob` → `text`/`ascii` substitutes U+FFFD and writes the corruption through | validates and fails the row, counted as `ERROR` | a counted failure beats silent corruption | — |
+| 14 | Enabling `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` together: later registration silently wins | startup error naming both | which one won decided the on-disk format of every timestamp | — |
 | 11 | `blob` → `text`/`ascii` conversion replaces malformed bytes with U+FFFD and writes the replacement through | The row fails with a `TypeConversion` error and is counted as `ERROR` (`CDC-020`) | Java's `new String(bytes)` silently corrupts the value; a loud failure on one row beats a quiet corruption of it | — |
 | 12 | `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` both claim the `(TIMESTAMP, String)` pair; the later registration silently wins | Enabling both is a startup error naming both codecs (`CDC-030`, `PLG-010`) | Which codec wins decided the on-disk format of every timestamp; it should not depend on registration order | enable only one |
 
@@ -83,6 +87,17 @@ These are contractual, tested by the ported SIT suite and the nightly differenti
 | Diff output | `cdm_logs/cdm_diff.log` | same file, **plus** JSON/CSV/Parquet reports and an API |
 | Automation | parse `spark-submit` stdout | OpenAPI control plane, MCP, A2A |
 | Container | ~1 GB with JVM, Spark and Maven | distroless, binary only |
+
+## Properties Java documents but does not implement
+
+These appear in Java's `cdm-detailed.properties` but are absent from `KnownProperties` and from
+Java's source, so Java silently ignores them. cdm-rs accepts the legacy names, so no configuration
+breaks, but the behaviour differs because Java had none:
+
+| Property | Java | cdm-rs |
+|---|---|---|
+| `spark.cdm.perfops.errorLimit` | ignored | implemented (`ENG-009`): the run aborts once total errors exceed it |
+| `spark.cdm.feature.constantColumns.types` | ignored | not implemented; constant-column types come from the target schema (`FEA-011`) |
 
 ## Known caveats carried over
 
