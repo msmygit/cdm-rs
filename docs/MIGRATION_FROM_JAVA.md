@@ -51,6 +51,8 @@ cdm config convert --from cdm.properties --to cdm.toml
 | 12 | `guardrail.colSizeInKB` is `Long.parseLong`, so `0.5` fails to parse and becomes `null` | accepts a fraction (`GRD-002`) | the threshold is multiplied by 1000 to get bytes, where a fraction is meaningful | — (integral values are identical) |
 | 13 | `blob` → `text`/`ascii` substitutes U+FFFD and writes the corruption through | validates and fails the row, counted as `ERROR` | a counted failure beats silent corruption | — |
 | 14 | Enabling `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` together: later registration silently wins | startup error naming both | which one won decided the on-disk format of every timestamp | — |
+| 15 | The migrate flush threshold is unreachable, so every write for a range is buffered until the range ends | the documented threshold works | peak memory scaled with range size and nothing could bound it; this is much of why Java needs `--driver-memory 25G` | — |
+| 16 | A failed **validate** range always records `ERROR: 0` | the real count of unaccounted rows | the counter exists to say how many rows were lost; Java reads it from committed counts that are still zero on the failure path | — |
 | 11 | `blob` → `text`/`ascii` conversion replaces malformed bytes with U+FFFD and writes the replacement through | The row fails with a `TypeConversion` error and is counted as `ERROR` (`CDC-020`) | Java's `new String(bytes)` silently corrupts the value; a loud failure on one row beats a quiet corruption of it | — |
 | 12 | `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` both claim the `(TIMESTAMP, String)` pair; the later registration silently wins | Enabling both is a startup error naming both codecs (`CDC-030`, `PLG-010`) | Which codec wins decided the on-disk format of every timestamp; it should not depend on registration order | enable only one |
 
@@ -87,6 +89,15 @@ These are contractual, tested by the ported SIT suite and the nightly differenti
 | Diff output | `cdm_logs/cdm_diff.log` | same file, **plus** JSON/CSV/Parquet reports and an API |
 | Automation | parse `spark-submit` stdout | OpenAPI control plane, MCP, A2A |
 | Container | ~1 GB with JVM, Spark and Maven | distroless, binary only |
+
+## Two Java bugs we do not reproduce
+
+Items 15 and 16 above are not design differences; they are defects, and `--compat-java` does **not**
+restore either. Reproducing an unbounded-memory bug or a permanently-zero error counter has no
+legitimate use, and both would defeat requirements cdm-rs is committed to (`NFR-003` bounded memory,
+`ENG-008` honest failure accounting).
+
+Everything else that differs remains restorable with `--compat-java`.
 
 ## Properties Java documents but does not implement
 

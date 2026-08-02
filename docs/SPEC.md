@@ -728,10 +728,16 @@ AIMD controller with configurable bounds.
 **ENG-007 [N]** — In-flight requests MUST be bounded by `perfops.max_inflight_reads` /
 `max_inflight_writes` semaphores so memory is bounded regardless of range size.
 
-**ENG-008 [P]** — Per-range failure handling: an error MUST NOT abort the run. The range is marked
+**ENG-008 [P+]** — Per-range failure handling: an error MUST NOT abort the run. The range is marked
 `FAIL`, `PARTITIONS_FAILED` is incremented, `ERROR` is incremented by
 `read − written − skipped` (migrate) or `read − valid − missing − mismatch − skipped` (validate),
 the error is logged with the range bounds, and the worker proceeds to the next range.
+
+All terms MUST be read at the **interim** level. `DiffJobSession` reads them at the committed level
+on the failure path, where `flush()` has not yet run, so every term is `0` and **Java's `ERROR` is
+always incremented by exactly `0` for a failed validate range** — the counter that exists to say how
+many rows were lost reports none. `CopyJobSession` gets this right for migrate. cdm-rs uses interim
+counts for both. `--compat-java` does not restore the bug.
 
 **ENG-009 [P+]** — `perfops.error_limit > 0` MUST abort the run once total `ERROR` exceeds it,
 draining in-flight work cleanly. *(Documented in Java's properties file but not implemented there;
@@ -764,9 +770,20 @@ without losing the plan, driven by `POST /v1/runs/{id}:pause`.
 **MIG-003 [P]** — A record whose bind produces no statement (e.g. all-null exploded map) MUST
 increment `SKIPPED`.
 
-**MIG-004 [P]** — Writes MUST be issued asynchronously with bounded concurrency, and flushed when
+**MIG-004 [P+]** — Writes MUST be issued asynchronously with bounded concurrency, and flushed when
 `UNFLUSHED >= flush_threshold` where
 `flush_threshold = min(fetch_size, max(batch_size * 10, 100))`.
+
+> **Java's threshold is unreachable.** `CopyJobSession` compares the **committed** `UNFLUSHED`
+> against the threshold, but `UNFLUSHED` is only ever incremented at the **interim** level and is
+> reset before each flush, so the committed value is permanently `0`. Java therefore flushes exactly
+> once, at the end of each range, buffering every write for the range in memory. That is a
+> significant part of why Java CDM documents `--driver-memory 25G`.
+>
+> cdm-rs compares the interim count, so the threshold works as documented. This is required for
+> `NFR-003` — with Java's behaviour, peak memory scales with range size and no configuration can
+> bound it. `--compat-java` does **not** restore the unreachable comparison; reproducing an
+> unbounded-memory bug has no legitimate use.
 
 **MIG-005 [P]** — On flush, `WRITE` MUST be incremented by the number of successfully written rows.
 A flush failure MUST fail the whole range (`ENG-008`).
@@ -1221,8 +1238,13 @@ Using an unregistered counter MUST be a compile-time or startup error, never a r
 **MET-003 [P+]** (Java throws at runtime).
 
 **MET-004 [P]** — The interim/committed two-level accounting MUST be preserved: per-range interim
-counts are folded into totals on range completion, and the interim values are what appear in
-per-range `run_info`.
+counts are folded into totals on range completion.
+
+Per-range `run_info` MUST be rendered from the **committed** counts, after the flush — Java calls
+`flush()` and then the non-interim `getMetrics()`. The numeric values are the same either way for a
+per-range counter, but the interim rendering additionally includes `Unflushed`, which Java never
+writes to `cdm_run_details.run_info`. Rendering the interim form would therefore break
+`COMPAT-004`.
 
 **MET-005 [P]** — The metrics string format MUST be reproduced exactly:
 `Read: 10; Write: 9; Skipped: 1` (title-cased counter names, `; ` separated, `UNFLUSHED` omitted
