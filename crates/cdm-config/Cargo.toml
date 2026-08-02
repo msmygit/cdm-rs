@@ -14,18 +14,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-cdm-core.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-serde_yaml.workspace = true
-toml.workspace = true
-figment.workspace = true
-schemars.workspace = true
-thiserror.workspace = true
-regex.workspace = true
-strsim.workspace = true
-humantime-serde.workspace = true
-zeroize.workspace = true
-tracing.workspace = true
-chrono.workspace = true
-num_cpus.workspace = true
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

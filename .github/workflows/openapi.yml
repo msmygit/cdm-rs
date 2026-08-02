@@ -28,9 +28,13 @@ jobs:
         with:
           definition-file: api/openapi.yaml
 
-      # API-008: breaking changes require an explicit version bump.
+      # API-008: breaking changes require an explicit version bump. Skipped when the base
+      # branch has no contract yet, which is the case only for the PR that introduces it.
       - name: Breaking-change gate
         run: |
-          git show origin/${{ github.base_ref }}:api/openapi.yaml > /tmp/base-openapi.yaml || exit 0
+          if ! git show "origin/${{ github.base_ref }}:api/openapi.yaml" > /tmp/base-openapi.yaml 2>/dev/null; then
+            echo "::notice::base branch has no api/openapi.yaml yet; nothing to compare"
+            exit 0
+          fi
           docker run --rm -v "$PWD:/w" -v /tmp:/tmp tufin/oasdiff breaking \
             /tmp/base-openapi.yaml /w/api/openapi.yaml --fail-on ERR

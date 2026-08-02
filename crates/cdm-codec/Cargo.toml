@@ -14,21 +14,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-cdm-core.workspace = true
-serde.workspace = true
-thiserror.workspace = true
-chrono.workspace = true
-chrono-tz.workspace = true
-num-bigint.workspace = true
-bigdecimal.workspace = true
-bytes.workspace = true
-uuid.workspace = true
-regex.workspace = true
-tracing.workspace = true
-smallvec.workspace = true
-
-[dev-dependencies]
-proptest.workspace = true
-insta.workspace = true
-rstest.workspace = true
-pretty_assertions.workspace = true
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

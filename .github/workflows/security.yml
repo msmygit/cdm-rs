@@ -22,7 +22,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit,cargo-deny
-      - run: cargo audit --deny warnings
+      # Fail on vulnerabilities. Deliberately NOT `--deny warnings`: that also fails on
+      # `unmaintained` and `unsound` notices for transitive dependencies, which can appear
+      # overnight through no change of ours and would block every PR. Those categories are
+      # handled by `cargo deny check advisories`, which has a reviewable ignore list.
+      - run: cargo audit
       - run: cargo deny check
 
   secrets:

@@ -415,6 +415,16 @@ test, fails CI.
 | `MCP-005` <sup>N</sup> | Destructive or long-running tools (`submit_run`, `cancel_run`) MUST be annotated with MCP tool hints (`destructiveHint`,… | `cdm-mcp` | `mcp_005_*` | #45 |
 | `MCP-006` <sup>N</sup> | Tool outputs MUST be structured content matching the OpenAPI response schema, not prose | `cdm-mcp` | `mcp_006_*` | #45 |
 
+### A2A
+
+| ID | Requirement | Home | Verified by | PR |
+|---|---|---|---|---|
+| `A2A-001` <sup>N</sup> | An Agent Card is served at `/.well-known/agent-card.json`, generated from the same OpenAPI document | `cdm-a2a` | `a2a_001_*` | #46 |
+| `A2A-002` <sup>N</sup> | Declared skills: plan-migration, run-migration, validate-migration, explain-discrepancies, tune-configuration | `cdm-a2a` | `a2a_002_*` | #46 |
+| `A2A-003` <sup>N</sup> | A2A tasks map onto the run lifecycle, with streaming updates backed by the `MET-030` event stream | `cdm-a2a` | `a2a_003_*` | #46 |
+| `A2A-004` <sup>N</sup> | Authentication schemes in the agent card match those enforced by the API | `cdm-a2a` | `a2a_004_*` | #46 |
+| `A2A-005` <sup>N</sup> | The adapter contains no business logic; a conformance test asserts parity with REST and MCP | `cdm-a2a` | `a2a_005_*` | #46 |
+
 ### UI
 
 | ID | Requirement | Home | Verified by | PR |

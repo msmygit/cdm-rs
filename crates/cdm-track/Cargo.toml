@@ -14,15 +14,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-cdm-core.workspace = true
-cdm-config.workspace = true
-cdm-cql.workspace = true
-tokio.workspace = true
-async-trait.workspace = true
-serde.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-chrono.workspace = true
-
-[dev-dependencies]
-rstest.workspace = true
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

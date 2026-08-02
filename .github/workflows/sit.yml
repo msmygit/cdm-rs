@@ -1,9 +1,8 @@
 name: SIT parity
 
+# NOTE: the ported SIT cases are delivered by PR #32. Until then this workflow is
+# manual-dispatch only. Restore the `pull_request` and `push` triggers in PR #32.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

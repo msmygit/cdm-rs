@@ -1,8 +1,7 @@
 name: Differential vs Java CDM
 
+# NOTE: the differential harness is delivered by PR #34. Restore the nightly schedule then.
 on:
-  schedule:
-    - cron: "0 6 * * *"
   workflow_dispatch:
 
 jobs:

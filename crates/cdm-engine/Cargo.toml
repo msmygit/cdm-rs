@@ -14,29 +14,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-cdm-core.workspace = true
-cdm-config.workspace = true
-cdm-codec.workspace = true
-cdm-cql.workspace = true
-cdm-feature.workspace = true
-cdm-track.workspace = true
-cdm-cluster.workspace = true
-cdm-metrics.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
-futures.workspace = true
-async-trait.workspace = true
-serde.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-governor.workspace = true
-rand.workspace = true
-num-bigint.workspace = true
-smallvec.workspace = true
-parking_lot.workspace = true
-num_cpus.workspace = true
-
-[dev-dependencies]
-rstest.workspace = true
-proptest.workspace = true
-pretty_assertions.workspace = true
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

@@ -1,8 +1,7 @@
 name: Benchmarks
 
+# NOTE: the benchmark suite is delivered by PR #55. Restore the nightly schedule then.
 on:
-  schedule:
-    - cron: "0 4 * * *"
   pull_request:
     types: [labeled]
   workflow_dispatch:

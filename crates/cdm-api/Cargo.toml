@@ -14,26 +14,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-cdm-core.workspace = true
-cdm-config.workspace = true
-cdm-service.workspace = true
-cdm-ui.workspace = true
-cdm-a2a.workspace = true
-tokio.workspace = true
-axum.workspace = true
-tower.workspace = true
-tower-http.workspace = true
-utoipa.workspace = true
-utoipa-swagger-ui.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-rustls.workspace = true
-futures.workspace = true
-tokio-stream.workspace = true
-chrono.workspace = true
-uuid.workspace = true
-
-[dev-dependencies]
-rstest.workspace = true
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

@@ -14,5 +14,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-rust-embed.workspace = true
-thiserror.workspace = true
+# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
+# catalog in the workspace Cargo.toml.

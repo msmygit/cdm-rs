@@ -32,7 +32,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 
 | PR | Title | Implements |
 |---|---|---|
-| #4 | `feat(config): typed config model with generated projections` | `CFG-001`..`CFG-003`, `CFG-100`..`CFG-200` |
+| #4 | `feat(config): typed config model with generated projections` | `CFG-001`..`CFG-003`, `CFG-100`..`CFG-200` — **also implements `cargo xtask docs` for real** |
 | #5 | `feat(config): layered loaders incl. Java .properties compatibility` | `CFG-010`..`CFG-013`, `CLI-002` |
 | #6 | `feat(config): three-tier validation with full diagnostic reporting` | `CFG-020`..`CFG-040`, `CFG-161` |
 | #7 | `feat(cql): connection building, TLS, keystores` | `CON-001`, `CON-002`, `CON-006`, `CON-007`, `CON-009`, `CON-010` |
@@ -49,7 +49,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | #13 | `feat(codec): Java date/decimal format translation` | `CDC-022` |
 | #14 | `feat(codec): UDT, tuple, collection and vector conversion` | `CDC-004`, `CDC-013`..`CDC-015`, `CDC-032` |
 | #15 | `feat(codec): zero-copy passthrough fast path` | `MIG-040`, `TST-030` |
-| #16 | `feat(testkit): containers, generators, counter assertions` | `TST-100`..`TST-102` |
+| #16 | `feat(testkit): containers, generators, counter assertions` | `TST-100`..`TST-102` — **also re-enables the `pull_request`/`push` triggers on `integration.yml`** |
 
 ## Phase 3 — Core engine and parity jobs
 
@@ -75,9 +75,9 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | #29 | `feat(feature): extract JSON` | `FEA-030`..`FEA-035` |
 | #30 | `feat(feature): TTL and writetime` | `FEA-040`..`FEA-046` |
 | #31 | `feat(feature): filter chain` | `FEA-050`..`FEA-054` |
-| #32 | `test(sit): port all 19 Java SIT cases` | `TST-003`, `S1` |
+| #32 | `test(sit): port all 19 Java SIT cases` | `TST-003`, `S1` — **also re-enables the `pull_request`/`push` triggers on `sit.yml`** |
 | #33 | `test: property, fault-injection and resume suites` | `TST-010`, `TST-040`, `TST-041` |
-| #34 | `test: differential harness against Java CDM` | `TST-020`, `COMPAT-003`, `COMPAT-004` |
+| #34 | `test: differential harness against Java CDM` | `TST-020`, `COMPAT-003`, `COMPAT-004` — **also restores the nightly schedule on `differential.yml`** |
 | #35 | `feat: --compat-java behaviour bundle + migration guide` | `COMPAT-001`, `COMPAT-002` |
 
 > **Milestone `v0.9.0-parity`** — cut after #35. Success criteria S1, S2, S4 must be met. This is the
@@ -98,7 +98,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | PR | Title | Implements |
 |---|---|---|
 | #41 | `feat(service): transport-agnostic CdmService facade` | `API-009`, `TST-050` groundwork |
-| #42 | `feat(api): axum control plane with generated OpenAPI 3.1` | `API-001`..`API-005`, `API-010` |
+| #42 | `feat(api): axum control plane with generated OpenAPI 3.1` | `API-001`..`API-005`, `API-010` — **also implements `cargo xtask openapi` generation and byte-for-byte drift checking** |
 | #43 | `feat(api): idempotency, pagination, versioning, SSE` | `API-006`..`API-008`, `VAL-014`, `MET-030` |
 | #44 | `feat(api): authentication, TLS, CORS` | `SEC-010`..`SEC-012` |
 | #45 | `feat(mcp): MCP server generated from the OpenAPI document` | `MCP-001`..`MCP-006` |
@@ -116,7 +116,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | #52 | `test(cluster): multi-node integration with node-death injection` | `DST-019`, `TST-042` |
 | #53 | `feat(engine): adaptive rate limiting and adaptive range sizing` | `ENG-006`, `TOK-008`, `TOK-010` |
 | #54 | `feat(plugins): runtime plugin loading and example plugin crates` | `PLG-011`, `PLG-012`, `SEC-020` |
-| #55 | `perf: benchmark suite and regression gates` | `TST-060`, `NFR-004` |
+| #55 | `perf: benchmark suite and regression gates` | `TST-060`, `NFR-004` — **also restores the nightly schedule on `bench.yml`** |
 | #56 | `chore(release): cross-compilation, signing, SBOM, container image` | `NFR-001`, `OPS-020`..`OPS-022`, `SEC-030` |
 | #57 | `docs: mdBook user guide, error catalogue, extending guide` | `ERR-003`, `PLG-012`, `NFR-006` |
 | #58 | `test: fuzzing targets` | `TST-080` |
@@ -145,6 +145,27 @@ Phases 5 and 7 are parallelisable once Phase 4 lands. Phase 6 depends on Phase 5
 stream that SSE and the UI consume.
 
 ---
+
+## CI gates that are deliberately dormant
+
+A workflow that cannot possibly pass is worse than no workflow: it trains reviewers to ignore red.
+Four workflows are therefore checked in but restricted to `workflow_dispatch` until the PR that
+gives them something to run. Each carries a comment naming that PR, and that PR is responsible for
+restoring the triggers.
+
+| Workflow | Dormant until | Reason |
+|---|---|---|
+| `integration.yml` | #16 | no test suite exists to run against containers |
+| `sit.yml` | #32 | no SIT cases are ported yet |
+| `differential.yml` | #34 | no differential harness exists |
+| `bench.yml` | #55 | no benchmarks exist |
+
+`cargo xtask openapi --check` and `cargo xtask docs --check` run on every PR from now on, but verify
+only what is honestly verifiable today — that the checked-in contract exists, declares OpenAPI 3.1
+and is marked generated. Byte-for-byte drift checking arrives with the generators in #4 and #42, and
+the commands say so in their own output.
+
+`cargo xtask check-traceability` is fully implemented as of PR #1 and gates every PR.
 
 ## Definition of done (per PR)
 
