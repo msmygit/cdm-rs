@@ -181,12 +181,37 @@ async fn start(engine: Engine) -> Option<Fixture> {
     };
 
     let port = container.get_host_port_ipv4(9042.tcp()).await.ok()?;
-    let session = SessionBuilder::new()
-        .known_node(format!("127.0.0.1:{port}"))
-        .connection_timeout(Duration::from_secs(30))
-        .build()
-        .await
-        .expect("the container reported ready, so connecting must succeed");
+
+    // Do not trust the log line alone. On Cassandra 4.1 and 5.0 "Startup complete" is written
+    // before the native transport binds, so connecting immediately gets ECONNREFUSED. Poll until
+    // a trivial query succeeds. 3.11 and 4.0 happen to log it late enough to work either way,
+    // which is exactly the kind of version difference the matrix exists to catch.
+    let deadline = std::time::Instant::now() + Duration::from_secs(180);
+    let session = loop {
+        let attempt = SessionBuilder::new()
+            .known_node(format!("127.0.0.1:{port}"))
+            .connection_timeout(Duration::from_secs(10))
+            .build()
+            .await;
+
+        match attempt {
+            Ok(session) => match session
+                .query_unpaged("SELECT now() FROM system.local", &[])
+                .await
+            {
+                Ok(_) => break session,
+                Err(e) if std::time::Instant::now() < deadline => {
+                    eprintln!("waiting for CQL on {name}:{tag}: {e}");
+                }
+                Err(e) => panic!("{name}:{tag} never became queryable: {e}"),
+            },
+            Err(e) if std::time::Instant::now() < deadline => {
+                eprintln!("waiting for CQL on {name}:{tag}: {e}");
+            }
+            Err(e) => panic!("{name}:{tag} never accepted a connection: {e}"),
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    };
 
     session
         .query_unpaged(
