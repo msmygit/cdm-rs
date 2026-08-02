@@ -14,5 +14,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+scylla.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+testcontainers.workspace = true
+anyhow.workspace = true
+futures.workspace = true
