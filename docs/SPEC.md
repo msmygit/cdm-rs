@@ -243,6 +243,27 @@ column on origin MUST emit a warning about duplicate list entries on rerun (CASS
 **CFG-040 [N]** — `perfops.batch_size > 1` combined with a counter table, or with an active
 writetime filter, MUST emit a notice that batch size is being coerced to 1 (`MIG-021`).
 
+**CFG-041 [P+]** — A side MUST be configured with **either** a contact point (`connect.{side}.host`)
+**or** an Astra secure-connect-bundle (`connect.{side}.scb`), never both. Configuring both is a
+Tier-1 error naming which one to drop.
+
+*Rationale.* The secure-connect-bundle is an **Astra DB** mechanism. Self-managed Apache Cassandra,
+DSE, HCD and ScyllaDB are reached with `host`/`port`, and a self-managed cluster with client
+encryption uses `connect.{side}.tls.*` (`CFG-120`) — a different mechanism that is **not** a bundle.
+When both are present one of them silently does nothing and the operator cannot tell which. Java
+resolves this by letting the bundle win and ignoring the host; cdm-rs rejects it so that a stale
+host left from a previous migration cannot masquerade as configuration that matters.
+`--compat-java` restores the silent precedence, downgraded to a notice.
+
+*Known limitation.* Tier 1 sees the resolved configuration, not the provenance of each value, so
+"the operator set a host" is approximated by "the host differs from its default". Setting `host`
+explicitly to `localhost` alongside a bundle is therefore not flagged.
+
+**CFG-042 [N]** — The property reference MUST state, for `connect.{side}.scb` and the whole
+`connect.{side}.astra.*` block, that they apply to Astra DB only and are ignored for self-managed
+clusters. The four connection modes of `CON-002` MUST be documented as a table of origin/target
+combinations, so that the common self-managed-to-self-managed case is visibly bundle-free.
+
 ### 3.5 Property registry (parity surface)
 
 The following table is the **normative parity list**. It is generated from the Java

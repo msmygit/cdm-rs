@@ -61,6 +61,9 @@ pub fn properties_markdown() -> String {
         if section != current_section {
             section.clone_into(&mut current_section);
             let _ = writeln!(out, "\n## `{section}`\n");
+            if let Some(note) = section_note(&section) {
+                let _ = writeln!(out, "{note}\n");
+            }
             out.push_str(
                 "| canonical | legacy | type | default | unit | stability | description |\n\
                  |---|---|---|---|---|---|---|\n",
@@ -80,6 +83,42 @@ pub fn properties_markdown() -> String {
     }
     out.push('\n');
     out
+}
+
+/// The connection-section preamble (`CFG-042`).
+///
+/// A raw string, because the escaped-newline form silently carries its source indentation into the
+/// rendered markdown.
+const CONNECT_NOTE: &str = r"Origin and target are configured **independently** (`CON-001`), and each side uses **either** a
+contact point **or** an Astra secure-connect-bundle — never both (`CFG-041`).
+
+| Origin → Target | Origin | Target |
+|---|---|---|
+| Cassandra → Cassandra | `connect.origin.host` | `connect.target.host` |
+| DSE → HCD | `connect.origin.host` | `connect.target.host` |
+| Cassandra/DSE → Astra | `connect.origin.host` | `connect.target.scb` or `connect.target.astra.database_id` |
+| Astra → Astra | `connect.origin.scb` | `connect.target.scb` |
+| Astra → Cassandra | `connect.origin.scb` | `connect.target.host` |
+
+**`connect.{side}.scb` and every `connect.{side}.astra.*` property apply to Astra DB only.** They
+are ignored for self-managed Apache Cassandra, DSE, HCD and ScyllaDB, which use
+`connect.{side}.host` and `connect.{side}.port`.
+
+**TLS to a self-managed cluster is not a bundle.** A cluster with client encryption uses
+`connect.{side}.tls.*` — truststore, keystore and cipher suites (`CFG-120`). That is a separate
+mechanism, unrelated to the Astra bundle. The one exception is `connect.{side}.tls.is_astra`, a
+Java compatibility path that synthesises a bundle from truststore material; new configurations
+should not use it.";
+
+/// Prose that a table of rows cannot convey, emitted above a section (`CFG-042`).
+///
+/// The connection section is the one place where a reader can reasonably misread the properties as
+/// a menu to pick from rather than two mutually exclusive styles, so it gets a note.
+fn section_note(section: &str) -> Option<&'static str> {
+    match section {
+        "connect" => Some(CONNECT_NOTE),
+        _ => None,
+    }
 }
 
 /// The top-level section a canonical name belongs to.
@@ -192,6 +231,45 @@ mod tests {
             is_current(&checked_in, &json_schema_document()),
             "schema/cdm-config.schema.json is stale; run `cargo xtask docs`"
         );
+    }
+
+    /// `CFG-042`: the reference must say plainly that the bundle is Astra-only.
+    ///
+    /// A row in a table cannot carry this, and it is the exact ambiguity that made the README's
+    /// quickstart read as though every migration needs a bundle.
+    #[test]
+    fn cfg_042_the_reference_scopes_the_bundle_to_astra() {
+        let markdown = properties_markdown();
+
+        assert!(
+            markdown.contains("apply to Astra DB only"),
+            "the connect section must scope `scb` and `astra.*` to Astra DB"
+        );
+        assert!(
+            markdown.contains("TLS to a self-managed cluster is not a bundle"),
+            "TLS and the bundle are separate mechanisms and must not be conflated"
+        );
+        assert!(
+            markdown.contains(
+                "| Cassandra → Cassandra | `connect.origin.host` | `connect.target.host` |"
+            ),
+            "the self-managed case must be visibly bundle-free"
+        );
+        assert!(
+            markdown.contains("never both (`CFG-041`)"),
+            "the note must point at the rule that enforces it"
+        );
+    }
+
+    /// The preamble must not carry its source indentation into the rendered markdown.
+    #[test]
+    fn cfg_042_the_section_note_is_not_indented() {
+        for line in CONNECT_NOTE.lines() {
+            assert!(
+                !line.starts_with(' '),
+                "indented line would render as a code block: {line:?}"
+            );
+        }
     }
 
     #[test]

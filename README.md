@@ -50,7 +50,8 @@ requirement in [`docs/SPEC.md`](docs/SPEC.md), traced to code and tests in
 
 ```bash
 # Generate a tuned configuration by introspecting your schema
-cdm config init --origin-host origin.example.com --target-scb ./secure-connect.zip \
+cdm config init --origin-host origin.example.com \
+                --target-host target.example.com \
                 --keyspace-table ks.tbl -o cdm.toml
 
 # See exactly what would happen — no data touched
@@ -67,6 +68,35 @@ cdm runs resume --config cdm.toml --auto
 
 # Serve the control plane, web config builder, metrics and MCP endpoint
 cdm serve --config cdm.toml --bind 0.0.0.0:8080
+```
+
+### Connecting to each side
+
+Origin and target are configured **independently**, and each picks one of two connection styles.
+A migration between self-managed clusters needs no bundle anywhere:
+
+| Origin → Target | Origin | Target |
+|---|---|---|
+| Cassandra → Cassandra | `--origin-host` | `--target-host` |
+| DSE → HCD | `--origin-host` | `--target-host` |
+| Cassandra/DSE → Astra | `--origin-host` | `--target-scb` or `--target-astra-database-id` |
+| Astra → Astra | `--origin-scb` | `--target-scb` |
+| Astra → Cassandra | `--origin-scb` | `--target-host` |
+
+Two things worth being explicit about, because they are easy to conflate:
+
+- **A secure-connect-bundle is Astra DB only.** Apache Cassandra, DSE, HCD and ScyllaDB use
+  `--{side}-host`. Setting both a host and a bundle for one side is rejected, naming which to drop.
+- **TLS to a self-managed cluster is not a bundle.** A cluster with client encryption uses
+  `connect.{side}.tls.*` — truststore, keystore, cipher suites. Different mechanism entirely.
+
+For Astra you can skip the zip: give it the database id and your token, and cdm-rs downloads the
+bundle through the DevOps API.
+
+```bash
+cdm migrate --config cdm.toml \
+            --target-astra-database-id "$ASTRA_DB_ID" \
+            --target-password "env:ASTRA_TOKEN"
 ```
 
 Existing Java configurations work unchanged:
