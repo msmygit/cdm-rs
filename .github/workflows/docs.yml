@@ -19,10 +19,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2.85.5
         with:
-          tool: mdbook
+          # mdbook-mermaid renders the ```mermaid blocks in docs/ARCHITECTURE.md and
+          # docs/ROADMAP.md; without it they would publish as unrendered code blocks.
+          tool: mdbook,mdbook-mermaid
       - run: cargo doc --workspace --no-deps --all-features
+      # Writes the mermaid runtime that book.toml lists in additional-js. It is a build
+      # artefact (2.6 MB of vendored JS), so it is gitignored rather than committed.
+      - run: mdbook-mermaid install docs/book
       - run: mdbook build docs/book
       - run: cp -r target/doc docs/book/book/api
+      # cargo doc does not emit a landing page for a workspace, so /api would 404.
+      # The book links crate-by-crate; this makes the bare directory work too.
+      - run: |
+          printf '%s\n' \
+            '<meta http-equiv="refresh" content="0; url=cdm_core/index.html">' \
+            > docs/book/book/api/index.html
       - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/book/book

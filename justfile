@@ -59,9 +59,21 @@ audit:
     cargo deny check
     cargo audit --deny warnings
 
-# Build the documentation site.
+# Build the rustdoc API reference.
 docs:
     cargo doc --workspace --no-deps --all-features --open
+
+# Build the mdBook site (OPS-010). `mdbook-mermaid install` writes the vendored mermaid
+# assets that book.toml references; they are build inputs, not sources, so they are
+# gitignored and regenerated here and in .github/workflows/docs.yml.
+book:
+    mdbook-mermaid install docs/book
+    mdbook build docs/book
+
+# Serve the mdBook site locally with live reload.
+book-serve:
+    mdbook-mermaid install docs/book
+    mdbook serve docs/book --open
 
 # Install git hooks without a Python dependency.
 hooks:
