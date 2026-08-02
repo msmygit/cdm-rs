@@ -20,6 +20,8 @@
 //! Scaffolding only. Implementation lands in the pull requests listed in
 //! [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
 
+pub mod raw;
+
 /// The version of this crate, as reported by `cdm version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

@@ -1050,6 +1050,18 @@ single-node runs remain byte-compatible with Java's schema.
 **TRK-012 [P]** — Statuses: `NOT_STARTED, STARTED, PASS, FAIL, DIFF, DIFF_CORRECTED, ENDED`.
 cdm-rs adds `INTERRUPTED` and `ABORTED` **[N]** for `run_info` rows only.
 
+**TRK-013 [P]** — `cdm_run_info.run_type` MUST be written as the exact upper-case job name
+`MIGRATE`, `VALIDATE` or `GUARDRAIL`. Java writes `jobType.toString()` over
+`enum JobType { MIGRATE, VALIDATE, GUARDRAIL }`
+(`src/main/java/com/datastax/cdm/job/IJobSessionFactory.java`), and the previous-run lookup in
+`TRK-030` filters on `run_type = ?`, so a different spelling would silently make every Java run
+invisible to cdm-rs and vice versa. This string is part of the `COMPAT-003` contract and MUST NOT
+be derived from a `Display` impl that is free to change.
+
+**TRK-014 [P]** — Likewise `cdm_run_info.status` and `cdm_run_details.status` MUST use the exact
+Java spellings of `TRK-012`, including the underscore in `NOT_STARTED` and `DIFF_CORRECTED`.
+A round-trip test over every variant is required (`COMPAT-003`).
+
 **TRK-020 [P]** — Run initialisation MUST: reject a `run_id` that already exists; insert the info row
 as `NOT_STARTED`; insert one details row per planned range as `NOT_STARTED`; then set the info row
 to `STARTED`.
@@ -1506,11 +1518,19 @@ microseconds since epoch (Cassandra semantics) and MUST be labelled as such.
 **TST-001** — **Unit tests** live beside the code (`#[cfg(test)]`) and MUST NOT require a cluster.
 Every public function with branching logic MUST be tested. Target ≥ 90% line coverage per crate.
 
-**TST-002** — **Integration tests** (`tests/`) MUST run against real clusters via `testcontainers`,
-matrixed over Cassandra 4.1, Cassandra 5.0, ScyllaDB (latest stable), and DSE/HCD where licensing
-permits. Both Cassandra and ScyllaDB are mandatory in the matrix because `scylla-rust-driver`
-(`CON-000`) is Scylla-first and Cassandra-compatible; testing only one dialect would let
-divergences through.
+**TST-002** — **Integration tests** (`tests/`) MUST run against real clusters via `testcontainers`.
+
+- **Every pull request**: Cassandra `3.11`, `4.0`, `4.1`, `5.0` (tags are `major.minor`, so the
+  matrix tracks the latest patch of each line rather than pinning to one that ages out). This is
+  the risk surface — it is what CDM migrates, and 3.11 exercises an older protocol.
+- **Nightly**: ScyllaDB, plus DSE/HCD where licensing permits. `scylla-rust-driver` (`CON-000`) was
+  chosen for its maturity in the Rust ecosystem, which makes ScyllaDB the driver's home turf and
+  the least likely target to regress. It remains a separate implementation whose token ownership
+  (tablets), LWT behaviour and collection `WRITETIME()` support diverge, so the support claimed in
+  `CON-000` MUST be exercised rather than assumed.
+
+A capability that only one engine implements MUST be version-gated and skipped elsewhere, never
+failed — `vector<t, n>` is Cassandra 5.0 only (`CDC-004`).
 
 **TST-003** — **End-to-end SIT parity tests**: every Java SIT case MUST be ported to a declarative
 Rust harness and MUST assert the identical counter block.
@@ -1695,7 +1715,7 @@ character-identical (`MET-005`, `MET-006`) so existing assertion tooling works u
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| R1 | `scylla-rust-driver` gaps: Astra SCB/SNI (its `cloud` feature targets Scylla Cloud bundles, whose layout differs from Astra's), `vector<T,N>` (Cassandra 5 / Astra type not in the Scylla type system), DSE geometry types, `DateRangeType`, and JKS keystore parsing. | Spike in PR #2, recorded in `ADR-0002`. Each gap has a defined fallback implemented inside `cdm-cql`: an Astra bundle reader + `AddressTranslator` + per-node SNI on top of the driver's rustls session (`CON-003`); `vector<>` handled via the driver's custom/`Unknown` type escape hatch with our own serde and a `CqlTypeInfo::Vector` (`CDC-004`); DSE geo + date-range as WKB codecs in `cdm-codec` (`CDC-003`); a pure-Rust JKS/PKCS12/PEM reader in `cdm-cql::tls` (`CON-006`). Upstream contributions raised where the fix belongs in the driver. |
+| R1 | `scylla-rust-driver` gaps. **Largely retired by the PR #2 spike**: raw-byte access, `UNSET` binding, full type coverage, paging and token-range scans are all confirmed against a live cluster, and `vector<T,N>` turned out to be native (`CqlValue::Vector`), not a gap. | Two gaps remain, each with a defined implementation inside `cdm-cql`: Astra SCB/SNI, since the driver's `cloud` feature targets Scylla Cloud bundles whose layout differs from Astra's (`CON-003`, `ADR-0009`); and DSE geometry + `DateRangeType` as WKB codecs in `cdm-codec` (`CDC-003`). JKS parsing (`CON-006`) is not a driver gap — nothing in Rust reads JKS — and is a self-contained reader. See `ADR-0002` for the evidence. |
 | R2 | Exact parity of Java `DecimalFormat`/`DateTimeFormatter` semantics (rounding, pattern letters). | Known-vector fixtures shared with the Java build; differential tests (`TST-020`). |
 | R3 | LWT-based lease coordination adds load to the target cluster. | Leases are per-range, not per-row; batch renewals; `cluster.enabled` is opt-in; SQLite/in-memory tracking stores available. |
 | R4 | Counter semantics under distributed reclaim are inherently unsafe. | Refuse reclaim, mark `FAIL`, require manual action (`DST-015`). |

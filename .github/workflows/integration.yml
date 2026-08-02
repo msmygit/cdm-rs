@@ -1,9 +1,12 @@
 name: Integration
 
-# NOTE: the integration suite is delivered by PR #16 (cdm-testkit). Until then this
-# workflow is manual-dispatch only, so it does not report a permanent false failure on
-# every pull request. Restore the `pull_request` and `push` triggers in PR #16.
 on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly adds ScyllaDB, which the per-PR matrix omits (TST-002, ADR-0002).
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -17,21 +20,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # TST-002: both dialects are mandatory — the driver is Scylla-first and
-        # Cassandra-compatible, so testing one would let divergences through.
+        # TST-002: Cassandra is the risk surface and runs on every PR. ScyllaDB is the
+        # driver's home turf and runs nightly — claimed support must still be exercised.
+        engine:
+          - cassandra:3.11
+          - cassandra:4.0
+          - cassandra:4.1
+          - cassandra:5.0
         include:
-          - engine: cassandra
-            version: "4.1"
-          - engine: cassandra
-            version: "5.0"
-          - engine: scylladb
-            version: "latest"
+          - engine: scylladb/scylla:6.2
+            nightly_only: true
     steps:
       - uses: actions/checkout@v4
+        if: ${{ !matrix.nightly_only || github.event_name != 'pull_request' }}
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !matrix.nightly_only || github.event_name != 'pull_request' }}
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !matrix.nightly_only || github.event_name != 'pull_request' }}
       - name: Run integration suite
+        if: ${{ !matrix.nightly_only || github.event_name != 'pull_request' }}
         env:
-          CDM_IT_ENGINE: ${{ matrix.engine }}
-          CDM_IT_VERSION: ${{ matrix.version }}
-        run: cargo xtask it
+          CDM_IT_ENGINES: ${{ matrix.engine }}
+        run: cargo test --workspace --all-features -- --ignored --test-threads=1

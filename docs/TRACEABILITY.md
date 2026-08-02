@@ -134,7 +134,7 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CON-000` <sup>N</sup> | The CQL driver MUST be [`scylla-rust-driver`](https://github.com/scylladb/scylla-rust-driver) (crate `scylla`), which is… | `cdm-cql` | `con_000_*` | #2 |
+| `CON-000` <sup>N</sup> | `scylla-rust-driver` is the sole CQL driver, confined to `cdm-cql` behind the core traits | `cdm-cql` | `con_000_*` | #2 |
 | `CON-001` <sup>P</sup> | cdm-rs MUST connect independently to origin and target with fully separate credentials, TLS material, consistency levels and… | `cdm-cql` | `con_001_*` | #7 |
 | `CON-002` <sup>P</sup> | Four connection modes MUST be supported per side, selected exactly as Java's `ConnectionFetcher` does: 1 | `cdm-cql` | `con_002_*` | #7 |
 | `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*` | #8 |
@@ -228,7 +228,7 @@ test, fails CI.
 | `MIG-030` <sup>P</sup> | Counter tables MUST use `UPDATE ks.tbl [USING TTL ? AND TIMESTAMP ?] SET c = c + ?, ... , <const> = <literal> WHERE <target… | `cdm-engine::jobs::migrate` | `mig_030_*` | #22 |
 | `MIG-031` <sup>P</sup> | The counter delta MUST be `origin_value − (current_target_value or 0)`, obtained by a rate-limited target SELECT by PK… | `cdm-engine::jobs::migrate` | `mig_031_*` | #22 |
 | `MIG-032` <sup>P</sup> | Counter migration MUST NOT be batched and MUST NOT be retried (`CON-012`) | `cdm-engine::jobs::migrate` | `mig_032_*` | #22 |
-| `MIG-040` <sup>N</sup> | When origin and target column types are identical and no feature transforms the column, the raw serialized bytes MUST be… | `cdm-engine::jobs::migrate` | `mig_040_*` | #15 |
+| `MIG-040` <sup>N</sup> | Identical origin/target types pass through as raw bytes with no deserialize/reserialize | `cdm-cql::raw` | `con_000_raw_column_bytes_are_reachable`, `mig_040_*` | #2, #15 |
 | `MIG-041` <sup>N</sup> | `migrate --dry-run` MUST execute the full read + transform + bind pipeline and count everything, but issue no target writes,… | `cdm-engine::jobs::migrate` | `mig_041_*` | #21 |
 
 ### VAL
@@ -329,6 +329,8 @@ test, fails CI.
 | `TRK-010` <sup>P</sup> | Create `cdm_run_info` and `cdm_run_details` in the target keyspace with exactly the Java schema | `cdm-track` | `trk_010_*` | #25 |
 | `TRK-011` <sup>N</sup> | cdm-rs MUST additionally maintain, in the same keyspace, `cdm_run_leases` for distributed coordination (`DST-010`) | `cdm-track` | `trk_011_*` | #25 |
 | `TRK-012` <sup>P</sup> | Statuses: `NOT_STARTED, STARTED, PASS, FAIL, DIFF, DIFF_CORRECTED, ENDED` | `cdm-core::domain::run`, `cdm-track` | `trk_012_*` | #3, #25 |
+| `TRK-013` <sup>P</sup> | `cdm_run_info.run_type` is the exact upper-case job name `MIGRATE`/`VALIDATE`/`GUARDRAIL`, matching Java's `jobType.toString()` | `cdm-core` | `trk_013_*` | #3 |
+| `TRK-014` <sup>P</sup> | Run and range statuses use the exact Java spellings, underscores included | `cdm-core` | `trk_014_*` | #3 |
 | `TRK-020` <sup>P</sup> | Run initialisation MUST: reject a `run_id` that already exists; insert the info row as `NOT_STARTED`; insert one details row… | `cdm-track` | `trk_020_*` | #25 |
 | `TRK-021` <sup>P</sup> | Each range MUST be updated to `STARTED` (setting `start_time`) when work begins and to its terminal status with the metrics… | `cdm-track` | `trk_021_*` | #25 |
 | `TRK-022` <sup>P</sup> | On run completion the info row MUST be updated with `end_time`, the aggregate metrics string, and status `ENDED` | `cdm-track` | `trk_022_*` | #25 |
