@@ -9,11 +9,32 @@ Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the J
 
 ## `connect`
 
+Origin and target are configured **independently** (`CON-001`), and each side uses **either** a
+contact point **or** an Astra secure-connect-bundle — never both (`CFG-041`).
+
+| Origin → Target | Origin | Target |
+|---|---|---|
+| Cassandra → Cassandra | `connect.origin.host` | `connect.target.host` |
+| DSE → HCD | `connect.origin.host` | `connect.target.host` |
+| Cassandra/DSE → Astra | `connect.origin.host` | `connect.target.scb` or `connect.target.astra.database_id` |
+| Astra → Astra | `connect.origin.scb` | `connect.target.scb` |
+| Astra → Cassandra | `connect.origin.scb` | `connect.target.host` |
+
+**`connect.{side}.scb` and every `connect.{side}.astra.*` property apply to Astra DB only.** They
+are ignored for self-managed Apache Cassandra, DSE, HCD and ScyllaDB, which use
+`connect.{side}.host` and `connect.{side}.port`.
+
+**TLS to a self-managed cluster is not a bundle.** A cluster with client encryption uses
+`connect.{side}.tls.*` — truststore, keystore and cipher suites (`CFG-120`). That is a separate
+mechanism, unrelated to the Astra bundle. The one exception is `connect.{side}.tls.is_astra`, a
+Java compatibility path that synthesises a bundle from truststore material; new configurations
+should not use it.
+
 | canonical | legacy | type | default | unit | stability | description |
 |---|---|---|---|---|---|---|
 | `connect.origin.host` | `spark.cdm.connect.origin.host` | string | `localhost` | — | stable | Contact point host name or IP address. |
 | `connect.origin.port` | `spark.cdm.connect.origin.port` | integer | `9042` | — | stable | Native transport port. |
-| `connect.origin.scb` | `spark.cdm.connect.origin.scb` | path | — | — | stable | Path to an Astra secure-connect-bundle zip. |
+| `connect.origin.scb` | `spark.cdm.connect.origin.scb` | path | — | — | stable | Path to an Astra DB secure-connect-bundle zip. |
 | `connect.origin.username` | `spark.cdm.connect.origin.username` | string | `cassandra` | — | stable | Username, or the literal `token` when authenticating to Astra. |
 | `connect.origin.password` | `spark.cdm.connect.origin.password` | secret | `***` | — | stable | Password, or the Astra token. |
 | `connect.origin.astra.database_id` | `spark.cdm.connect.origin.astra.database.id` | uuid | — | — | stable | The Astra database UUID, used to download a bundle through the DevOps API. |
@@ -32,7 +53,7 @@ Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the J
 | `connect.origin.tls.keystore.password` | `spark.cdm.connect.origin.tls.keyStore.password` | secret | — | — | stable | Password protecting the key store. |
 | `connect.target.host` | `spark.cdm.connect.target.host` | string | `localhost` | — | stable | Contact point host name or IP address. |
 | `connect.target.port` | `spark.cdm.connect.target.port` | integer | `9042` | — | stable | Native transport port. |
-| `connect.target.scb` | `spark.cdm.connect.target.scb` | path | — | — | stable | Path to an Astra secure-connect-bundle zip. |
+| `connect.target.scb` | `spark.cdm.connect.target.scb` | path | — | — | stable | Path to an Astra DB secure-connect-bundle zip. |
 | `connect.target.username` | `spark.cdm.connect.target.username` | string | `cassandra` | — | stable | Username, or the literal `token` when authenticating to Astra. |
 | `connect.target.password` | `spark.cdm.connect.target.password` | secret | `***` | — | stable | Password, or the Astra token. |
 | `connect.target.astra.database_id` | `spark.cdm.connect.target.astra.database.id` | uuid | — | — | stable | The Astra database UUID, used to download a bundle through the DevOps API. |

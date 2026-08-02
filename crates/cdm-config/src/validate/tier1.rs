@@ -17,10 +17,11 @@ use super::{error, notice, parse_keyspace_table, warning, ValidationOptions};
 use crate::model::{CdmConfig, SideConnect};
 
 /// Runs every Tier-1 check.
-pub(super) fn check(config: &CdmConfig, _options: ValidationOptions) -> Vec<Diagnostic> {
+pub(super) fn check(config: &CdmConfig, options: ValidationOptions) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     required_properties(config, &mut out);
     connections(config, &mut out);
+    exclusive_connection_modes(config, options, &mut out);
     ranges(config, &mut out);
     well_formed_values(config, &mut out);
     out
@@ -62,6 +63,79 @@ fn required_properties(config: &CdmConfig, out: &mut Vec<Diagnostic>) {
                 .with_suggestion("leave it unset to default to the origin table"),
             );
         }
+    }
+}
+
+/// `CFG-041`: a side is reached by a contact point or by an Astra bundle, never both.
+///
+/// The secure-connect-bundle is an Astra DB mechanism. Self-managed Apache Cassandra, DSE, HCD and
+/// ScyllaDB are reached with `host`/`port`, and a self-managed cluster with client encryption uses
+/// the `tls` section — which is a different thing entirely, not a bundle. Configuring both a
+/// bundle and a contact point for one side means one of them is silently doing nothing, and the
+/// operator cannot tell which.
+///
+/// Java resolves the ambiguity by letting the bundle win and ignoring the host. cdm-rs rejects it,
+/// so a stale host left over from a previous migration cannot masquerade as configuration that
+/// matters. `--compat-java` restores the silent precedence.
+///
+/// # Limitation
+///
+/// Tier 1 sees only the resolved configuration, not where each value came from, so "the operator
+/// set a host" is approximated by "the host differs from its default". Setting `host` explicitly
+/// to `localhost` alongside a bundle is therefore not flagged. Threading provenance into
+/// validation would close that gap; it is not worth the API churn for a case that is both rare and
+/// harmless.
+fn exclusive_connection_modes(
+    config: &CdmConfig,
+    options: ValidationOptions,
+    out: &mut Vec<Diagnostic>,
+) {
+    let default_host = SideConnect::default().host;
+
+    for (side, connect) in [
+        ("origin", &config.connect.origin),
+        ("target", &config.connect.target),
+    ] {
+        let configured_bundle = connect
+            .scb
+            .as_ref()
+            .is_some_and(|path| !path.as_os_str().is_empty());
+        if !configured_bundle {
+            continue;
+        }
+
+        let host = connect.host.trim();
+        if host.is_empty() || host == default_host {
+            continue;
+        }
+
+        let diagnostic = if options.compat_java {
+            notice(
+                &format!("connect.{side}.scb"),
+                format!(
+                    "the {side} side has both a secure-connect-bundle and a host; the bundle wins \
+                     and `connect.{side}.host` is ignored"
+                ),
+                "CFG-041",
+            )
+        } else {
+            error(
+                &format!("connect.{side}.scb"),
+                format!("the {side} side is configured for both Astra and a self-managed cluster"),
+                "CFG-041",
+            )
+        }
+        .with_detail(format!(
+            "`connect.{side}.scb` is an Astra DB bundle, but `connect.{side}.host` is set to \
+             `{host}`. Only one of them takes effect, and which is not obvious from the config."
+        ))
+        .with_suggestion(format!(
+            "migrating to or from Astra: drop `connect.{side}.host`. Migrating a self-managed \
+             cluster (Cassandra, DSE, HCD, ScyllaDB): drop `connect.{side}.scb`, and use \
+             `connect.{side}.tls.*` if the cluster needs client encryption"
+        ));
+
+        out.push(diagnostic);
     }
 }
 
@@ -347,6 +421,121 @@ fn well_formed_values(config: &CdmConfig, out: &mut Vec<Diagnostic>) {
     clippy::panic
 )]
 mod tests {
+
+    /// A self-managed migration needs no bundle anywhere, and must not be nagged about one.
+    #[test]
+    fn cfg_041_a_self_managed_migration_is_clean() {
+        let mut config = CdmConfig::default();
+        config.schema.origin.keyspace_table = Some("ks.tbl".to_owned());
+        config.connect.origin.host = "origin.example.com".to_owned();
+        config.connect.target.host = "target.example.com".to_owned();
+
+        let report = check(&config, ValidationOptions::default());
+        assert!(
+            !report.iter().any(|d| d.rule.as_deref() == Some("CFG-041")),
+            "no bundle is configured, so CFG-041 has nothing to say: {report:?}"
+        );
+    }
+
+    /// Cassandra to Astra: a bundle on the target, a host on the origin. The common case.
+    #[test]
+    fn cfg_041_a_bundle_on_one_side_and_a_host_on_the_other_is_clean() {
+        let mut config = CdmConfig::default();
+        config.schema.origin.keyspace_table = Some("ks.tbl".to_owned());
+        config.connect.origin.host = "origin.example.com".to_owned();
+        config.connect.target.scb = Some(PathBuf::from("/tmp/secure-connect-db.zip"));
+
+        let report = check(&config, ValidationOptions::default());
+        assert!(
+            !report.iter().any(|d| d.rule.as_deref() == Some("CFG-041")),
+            "each side has exactly one connection mode: {report:?}"
+        );
+    }
+
+    /// A bundle alongside the *default* host is how every Astra config looks, and must be clean.
+    #[test]
+    fn cfg_041_a_bundle_with_the_default_host_is_clean() {
+        let mut config = CdmConfig::default();
+        config.schema.origin.keyspace_table = Some("ks.tbl".to_owned());
+        config.connect.origin.scb = Some(PathBuf::from("/tmp/secure-connect-origin.zip"));
+        config.connect.target.scb = Some(PathBuf::from("/tmp/secure-connect-target.zip"));
+
+        let report = check(&config, ValidationOptions::default());
+        assert!(
+            !report.iter().any(|d| d.rule.as_deref() == Some("CFG-041")),
+            "an untouched host is not a second connection mode: {report:?}"
+        );
+    }
+
+    #[test]
+    fn cfg_041_a_bundle_and_an_explicit_host_on_one_side_is_rejected() {
+        let mut config = CdmConfig::default();
+        config.schema.origin.keyspace_table = Some("ks.tbl".to_owned());
+        config.connect.origin.host = "leftover.example.com".to_owned();
+        config.connect.origin.scb = Some(PathBuf::from("/tmp/secure-connect-db.zip"));
+
+        let report = check(&config, ValidationOptions::default());
+        let found: Vec<_> = report
+            .iter()
+            .filter(|d| d.rule.as_deref() == Some("CFG-041"))
+            .collect();
+
+        assert_eq!(found.len(), 1, "one side is ambiguous, so one diagnostic");
+        let diagnostic = found[0];
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.location.as_deref(), Some("connect.origin.scb"));
+
+        // The message has to tell the operator which one to delete, or it is just a complaint.
+        let suggestion = diagnostic.suggestion.as_deref().unwrap_or_default();
+        assert!(suggestion.contains("connect.origin.host"), "{suggestion}");
+        assert!(suggestion.contains("connect.origin.scb"), "{suggestion}");
+        assert!(
+            diagnostic
+                .detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("leftover.example.com"),
+            "the detail names the host that is being ignored"
+        );
+    }
+
+    /// Both sides ambiguous produces one diagnostic each, never a fail-fast (`CFG-021`).
+    #[test]
+    fn cfg_041_both_sides_are_reported() {
+        let mut config = CdmConfig::default();
+        config.schema.origin.keyspace_table = Some("ks.tbl".to_owned());
+        config.connect.origin.host = "a.example.com".to_owned();
+        config.connect.origin.scb = Some(PathBuf::from("/tmp/a.zip"));
+        config.connect.target.host = "b.example.com".to_owned();
+        config.connect.target.scb = Some(PathBuf::from("/tmp/b.zip"));
+
+        let report = check(&config, ValidationOptions::default());
+        assert_eq!(
+            report
+                .iter()
+                .filter(|d| d.rule.as_deref() == Some("CFG-041"))
+                .count(),
+            2
+        );
+    }
+
+    /// `--compat-java` restores Java's silent precedence, downgraded to a notice.
+    #[test]
+    fn cfg_041_compat_java_downgrades_to_a_notice() {
+        let mut config = CdmConfig::default();
+        config.schema.origin.keyspace_table = Some("ks.tbl".to_owned());
+        config.connect.origin.host = "leftover.example.com".to_owned();
+        config.connect.origin.scb = Some(PathBuf::from("/tmp/secure-connect-db.zip"));
+
+        let report = check(&config, ValidationOptions { compat_java: true });
+        let diagnostic = report
+            .iter()
+            .find(|d| d.rule.as_deref() == Some("CFG-041"))
+            .expect("still reported, just not fatal");
+        assert_eq!(diagnostic.severity, Severity::Info);
+    }
+    use std::path::PathBuf;
+
     use super::*;
     use crate::secret::Secret;
     use cdm_core::Severity;

@@ -2,7 +2,7 @@
   "$defs": {
     "Astra": {
       "additionalProperties": false,
-      "description": "Astra DevOps / secure-connect-bundle auto-download (`CFG-110`).",
+      "description": "Astra DevOps / secure-connect-bundle auto-download (`CFG-110`).\n\n**Astra DB only.** Every property in this section is ignored for self-managed Apache\nCassandra, DSE, HCD and ScyllaDB.",
       "properties": {
         "custom_domain": {
           "default": null,
@@ -1005,7 +1005,7 @@
         },
         "host": {
           "default": "localhost",
-          "description": "Contact point host name or IP address.\n\nIgnored when a secure-connect-bundle is configured. Either this or\n[`scb`](SideConnect::scb) must be non-empty (`CFG-024`).",
+          "description": "Contact point host name or IP address.\n\nThis is the normal way to reach Apache Cassandra, DSE, HCD and ScyllaDB. Either\nthis or [`scb`](SideConnect::scb) must be set for the side, and setting both is an\nerror (`CFG-024`, `CFG-041`).",
           "type": "string"
         },
         "password": {
@@ -1023,7 +1023,7 @@
         },
         "scb": {
           "default": null,
-          "description": "Path to an Astra secure-connect-bundle zip.\n\nTakes precedence over [`host`](SideConnect::host) and\n[`port`](SideConnect::port) (`CON-020`).",
+          "description": "Path to an Astra DB secure-connect-bundle zip.\n\n**Astra DB only.** Self-managed Apache Cassandra, DSE, HCD and ScyllaDB use\n[`host`](SideConnect::host) and [`port`](SideConnect::port); a cluster with client\nencryption uses the `tls` section, which is a separate mechanism and not a bundle.\n\nSet this or [`host`](SideConnect::host) for the side, never both (`CFG-041`). For\nAstra you can skip the file entirely and set\n[`astra.database_id`](Astra::database_id) instead, which downloads the bundle\nthrough the DevOps API (`CON-004`).",
           "type": [
             "string",
             "null"
@@ -1048,7 +1048,7 @@
               "type": "JKS"
             }
           },
-          "description": "TLS settings for a non-Astra cluster (`CFG-120`)."
+          "description": "TLS settings for a self-managed cluster with client encryption (`CFG-120`).\n\nThis is how you reach an OSS Cassandra, DSE or HCD cluster over TLS — truststore,\nkeystore and cipher suites. It is unrelated to the Astra secure-connect-bundle."
         },
         "username": {
           "default": "cassandra",

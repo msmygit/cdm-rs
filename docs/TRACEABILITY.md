@@ -117,6 +117,8 @@ test, fails CI.
 | `CFG-038` <sup>P</sup> | `column.names.to.target` entries MUST be `origin:target` pairs referencing columns that exist on their respective sides | `cdm-config` | `cfg_038_*` | #4, #5, #6 |
 | `CFG-039` <sup>P+</sup> | `transform.custom.writetime.incrementBy == 0` combined with an unfrozen `list` column on origin MUST emit a warning about… | `cdm-config` | `cfg_039_*` | #4, #5, #6 |
 | `CFG-040` <sup>N</sup> | `perfops.batch_size > 1` combined with a counter table, or with an active writetime filter, MUST emit a notice that batch size… | `cdm-config` | `cfg_040_*` | #4, #5, #6 |
+| `CFG-041` <sup>P+</sup> | A side is reached by a contact point or an Astra bundle, never both; a Tier-1 error names which to drop | `cdm-config` | `cfg_041_*` | #4, #5, #6 |
+| `CFG-042` <sup>N</sup> | The property reference states that `scb` and `astra.*` are Astra-only, and documents the four connection modes | `cdm-config` | `cfg_042_*` | #4, #5, #6 |
 | `CFG-100` | Property registry: connection properties (host, port, scb, username, password) for both sides | `cdm-config` | `cfg_100_*` | #4, #5, #6 |
 | `CFG-110` | Property registry: Astra DevOps / secure-connect-bundle auto-download properties | `cdm-config` | `cfg_110_*` | #4, #5, #6 |
 | `CFG-120` | Property registry: TLS properties per side (truststore, keystore, cipher suites, isAstra) | `cdm-config` | `cfg_120_*` | #4, #5, #6 |

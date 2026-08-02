@@ -105,8 +105,9 @@ cdm_properties! {
         fields {
             /// Contact point host name or IP address.
             ///
-            /// Ignored when a secure-connect-bundle is configured. Either this or
-            /// [`scb`](SideConnect::scb) must be non-empty (`CFG-024`).
+            /// This is the normal way to reach Apache Cassandra, DSE, HCD and ScyllaDB. Either
+            /// this or [`scb`](SideConnect::scb) must be set for the side, and setting both is an
+            /// error (`CFG-024`, `CFG-041`).
             #[cdm(legacy = ["spark.cdm.connect.{side}.host"], example = "10.0.0.1")]
             pub host: String = "localhost".to_owned(),
 
@@ -114,10 +115,16 @@ cdm_properties! {
             #[cdm(legacy = ["spark.cdm.connect.{side}.port"])]
             pub port: u16 = 9042,
 
-            /// Path to an Astra secure-connect-bundle zip.
+            /// Path to an Astra DB secure-connect-bundle zip.
             ///
-            /// Takes precedence over [`host`](SideConnect::host) and
-            /// [`port`](SideConnect::port) (`CON-020`).
+            /// **Astra DB only.** Self-managed Apache Cassandra, DSE, HCD and ScyllaDB use
+            /// [`host`](SideConnect::host) and [`port`](SideConnect::port); a cluster with client
+            /// encryption uses the `tls` section, which is a separate mechanism and not a bundle.
+            ///
+            /// Set this or [`host`](SideConnect::host) for the side, never both (`CFG-041`). For
+            /// Astra you can skip the file entirely and set
+            /// [`astra.database_id`](Astra::database_id) instead, which downloads the bundle
+            /// through the DevOps API (`CON-004`).
             #[cdm(
                 legacy = ["spark.cdm.connect.{side}.scb"],
                 example = "file:///home/cdm/secure-connect-db.zip",
@@ -139,7 +146,10 @@ cdm_properties! {
             #[cdm()]
             pub astra: Astra,
 
-            /// TLS settings for a non-Astra cluster (`CFG-120`).
+            /// TLS settings for a self-managed cluster with client encryption (`CFG-120`).
+            ///
+            /// This is how you reach an OSS Cassandra, DSE or HCD cluster over TLS — truststore,
+            /// keystore and cipher suites. It is unrelated to the Astra secure-connect-bundle.
             #[cdm()]
             pub tls: Tls
         }
@@ -148,6 +158,9 @@ cdm_properties! {
 
 cdm_properties! {
     /// Astra DevOps / secure-connect-bundle auto-download (`CFG-110`).
+    ///
+    /// **Astra DB only.** Every property in this section is ignored for self-managed Apache
+    /// Cassandra, DSE, HCD and ScyllaDB.
     pub struct Astra {
         fields {
             /// The Astra database UUID, used to download a bundle through the DevOps API.
