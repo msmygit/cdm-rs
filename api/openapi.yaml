@@ -52,7 +52,8 @@ tags:
 
 security:
   - bearerAuth: []
-  - {}   # SEC-010: `none` is permitted on loopback binds only.
+  - mutualTLS: []
+  - {} # SEC-010: `none` is permitted on loopback binds only.
 
 paths:
   /v1/health:
@@ -395,7 +396,7 @@ components:
         location:
           type: string
           description: The configuration key or source location at fault.
-        value: { description: The offending value, secrets redacted. }
+        value: { description: "The offending value, with secrets redacted." }
         rule: { type: string }
         suggestion: { type: string }
         docsUrl: { type: string, format: uri }
@@ -419,7 +420,7 @@ components:
       type: object
       required: [config]
       properties:
-        config: { description: A configuration document (CFG-001). }
+        config: { description: "A configuration document (CFG-001)." }
         tier:
           type: string
           enum: [syntactic, semantic, schema]
@@ -477,8 +478,12 @@ components:
       properties:
         rangeCount: { type: integer }
         partitioner: { type: string }
-        tokenMin: { type: string, description: Decimal string; may exceed int64 for RandomPartitioner. }
-        tokenMax: { type: string }
+        tokenMin:
+          type: string
+          description: "Decimal string: may exceed int64 for the RandomPartitioner."
+        tokenMax:
+          type: string
+          description: Decimal string, as for `tokenMin`.
         estimatedRows: { type: integer, format: int64 }
         estimatedDurationSeconds: { type: integer }
         estimatedPeakMemoryBytes: { type: integer, format: int64 }
@@ -562,7 +567,7 @@ components:
                   type: object
                   properties:
                     name: { type: string }
-                    origin: { description: Redactable via validate.report.redact_values (SEC-002). }
+                    origin: { description: "Redactable via validate.report.redact_values (SEC-002)." }
                     target: {}
         nextCursor: { type: string }
 

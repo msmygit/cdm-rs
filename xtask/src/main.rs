@@ -107,24 +107,40 @@ fn openapi(check: bool) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
 
     anyhow::ensure!(
-        text.contains("openapi: 3.1"),
-        "{} does not declare `openapi: 3.1`",
-        path.display()
-    );
-    anyhow::ensure!(
         text.contains("GENERATED FILE"),
         "{} must carry the generated-file banner",
         path.display()
     );
+
+    // Parse rather than grep. A prose description inside a YAML flow mapping silently
+    // becomes a second key if it contains a comma, which is invalid OpenAPI that a
+    // substring check would happily wave through.
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("{} is not valid YAML: {e}", path.display()))?;
+
+    let version = doc.get("openapi").and_then(serde_yaml::Value::as_str);
+    anyhow::ensure!(
+        version.is_some_and(|v| v.starts_with("3.1")),
+        "{} declares `openapi: {:?}`, expected 3.1.x",
+        path.display(),
+        version.unwrap_or("<missing>")
+    );
+
+    let paths = doc
+        .get("paths")
+        .and_then(serde_yaml::Value::as_mapping)
+        .ok_or_else(|| anyhow::anyhow!("{} has no `paths` object", path.display()))?;
+    anyhow::ensure!(!paths.is_empty(), "{} declares no paths", path.display());
 
     anyhow::ensure!(
         check,
         "the OpenAPI generator is delivered by PR #42; see docs/ROADMAP.md"
     );
     println!(
-        "openapi --check: {} is present and declares OpenAPI 3.1.\n\
+        "openapi --check: {} parses, declares OpenAPI 3.1 and defines {} paths.\n\
          note: byte-for-byte regeneration checking arrives with the generator in PR #42.",
-        path.display()
+        path.display(),
+        paths.len()
     );
     Ok(())
 }

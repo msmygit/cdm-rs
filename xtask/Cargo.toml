@@ -16,3 +16,4 @@ workspace = true
 anyhow.workspace = true
 clap.workspace = true
 regex.workspace = true
+serde_yaml.workspace = true

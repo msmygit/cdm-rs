@@ -7,8 +7,9 @@
 extends:
   - minimal
 
+# Note: structural conformance to the OpenAPI meta-schema is always enforced by Redocly
+# and is not a named rule, so it is not listed here.
 rules:
-  spec: error
   no-unresolved-refs: error
   no-identical-paths: error
   no-ambiguous-paths: error
