@@ -166,6 +166,9 @@ async fn dump_logs(container: &ContainerAsync<GenericImage>, name: &str, tag: &s
     }
 }
 
+/// The CQL port, published on the host unchanged so the address the node advertises is reachable.
+const CQL_PORT: u16 = 9042;
+
 /// Rows seeded for the token-range scan. Large enough to span several pages at the page size
 /// used below, small enough to insert quickly on a cold container.
 const ROWS: i32 = 500;
@@ -180,16 +183,34 @@ struct Fixture {
 /// Starts `engine` and connects, or returns `None` when no container runtime is available.
 async fn start(engine: Engine) -> Option<Fixture> {
     let (name, tag) = engine.image();
+
+    // A containerised node advertises its bridge address (172.17.0.x) in `system.local`. The
+    // driver honours that when building its connection pool, so the control connection succeeds
+    // on the mapped port and every pool connection is then refused — the host cannot route to the
+    // bridge network. Cassandra 3.11 and 4.0 happened to survive it; 4.1 and 5.0 did not, which is
+    // why only half the matrix failed.
+    //
+    // Publishing on a fixed port and telling the node to advertise 127.0.0.1 makes the address it
+    // reports one the host can actually reach. A fixed port is safe here because the suite runs
+    // single-threaded and each container is dropped before the next starts.
     let image = GenericImage::new(name, tag)
         .with_wait_for(WaitFor::message_on_stdout(engine.ready_message()))
-        .with_startup_timeout(Duration::from_secs(300));
+        .with_startup_timeout(Duration::from_secs(300))
+        .with_mapped_port(CQL_PORT, CQL_PORT.tcp());
 
     // Do NOT set HEAP_NEWSIZE. Cassandra 4.1 and 5.0 default to G1GC, where a new-size setting is
     // invalid and aborts startup; 3.11 and 4.0 default to CMS and tolerate it. Tuning the heap
     // here bought nothing and silently broke half the matrix, so the images keep their defaults.
     let image = match engine.flavour {
-        Flavour::Cassandra => image,
-        Flavour::Scylla => image.with_cmd(["--smp", "1", "--skip-wait-for-gossip-to-settle", "0"]),
+        Flavour::Cassandra => image.with_env_var("CASSANDRA_BROADCAST_RPC_ADDRESS", "127.0.0.1"),
+        Flavour::Scylla => image.with_cmd([
+            "--smp",
+            "1",
+            "--skip-wait-for-gossip-to-settle",
+            "0",
+            "--broadcast-rpc-address",
+            "127.0.0.1",
+        ]),
     };
 
     let container = match image.start().await {
@@ -200,7 +221,7 @@ async fn start(engine: Engine) -> Option<Fixture> {
         }
     };
 
-    let port = container.get_host_port_ipv4(9042.tcp()).await.ok()?;
+    let port = container.get_host_port_ipv4(CQL_PORT.tcp()).await.ok()?;
 
     // Do not trust the log line alone. On Cassandra 4.1 and 5.0 "Startup complete" is written
     // before the native transport binds, so connecting immediately gets ECONNREFUSED. Poll until
