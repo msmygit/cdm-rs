@@ -30,7 +30,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.85.5
         with:
           tool: cross
       - run: cross build --profile dist --target ${{ matrix.target }} --bin cdm
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.85.5
         with:
           tool: git-cliff,cargo-cyclonedx,cosign
       - name: Generate changelog
