@@ -140,7 +140,7 @@ test, fails CI.
 | `CON-001` <sup>P</sup> | cdm-rs MUST connect independently to origin and target with fully separate credentials, TLS material, consistency levels and… | `cdm-cql` | `con_001_*` | #7 |
 | `CON-002` <sup>P</sup> | Four connection modes MUST be supported per side, selected exactly as Java's `ConnectionFetcher` does: 1 | `cdm-cql` | `con_002_*` | #7 |
 | `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*` | #8 |
-| `CON-004` <sup>P</sup> | When `astra.database_id` is set and no SCB path is given, the bundle MUST be downloaded from the Astra DevOps API (`POST… | `cdm-cql` | `con_004_*` | #8 |
+| `CON-004` <sup>P</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain | `cdm-cql` | `con_004_*` | #8 |
 | `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*` | #8 |
 | `CON-006` <sup>P</sup> | Truststores/keystores MUST be readable in `JKS`, `PKCS12` and `PEM` formats | `cdm-cql` | `con_006_*` | #7 |
 | `CON-007` <sup>P</sup> | `tls.cipher_suites` MUST be honoured | `cdm-cql` | `con_007_*` | #7 |
@@ -208,7 +208,7 @@ test, fails CI.
 | `ENG-011` <sup>N</sup> | Every range's processing MUST be wrapped in a `tracing` span carrying `run_id`, `range_min`, `range_max`, `node_id`, so all… | `cdm-engine` | `eng_011_*` | #20 |
 | `ENG-012` <sup>P</sup> | . **ENG-013 [N]** — Panics inside a worker MUST be caught at the range boundary, converted to a range failure, and MUST NOT… | `cdm-engine` | `eng_012_*` | #20 |
 | `ENG-013` <sup>N</sup> | Panics inside a worker MUST be caught at the range boundary, converted to a range failure, and MUST NOT poison the run | `cdm-engine` | `eng_013_*` | #20 |
-| `ENG-014` <sup>N</sup> | The engine MUST expose a `Pause`/`Resume` control that stops issuing new work without losing the plan, driven by `POST… | `cdm-engine` | `eng_014_*` | #26 |
+| `ENG-014` <sup>N</sup> | A pause/resume control stops issuing new work without losing the plan | `cdm-engine` | `eng_014_*` | #26 |
 
 ### MIG
 
@@ -219,7 +219,7 @@ test, fails CI.
 | `MIG-003` <sup>P</sup> | A record whose bind produces no statement (e.g | `cdm-engine::jobs::migrate` | `mig_003_*` | #21 |
 | `MIG-004` <sup>P</sup> | Writes MUST be issued asynchronously with bounded concurrency, and flushed when `UNFLUSHED >= flush_threshold` where… | `cdm-engine::jobs::migrate` | `mig_004_*` | #21 |
 | `MIG-005` <sup>P</sup> | On flush, `WRITE` MUST be incremented by the number of successfully written rows | `cdm-engine::jobs::migrate` | `mig_005_*` | #21 |
-| `MIG-010` <sup>P</sup> | INSERT statement shape: `INSERT INTO ks.tbl (bind_cols..., const_cols...) VALUES (?, ..., <const literals>) [USING TTL ? [AND]… | `cdm-engine::jobs::migrate` | `mig_010_*` | #18 |
+| `MIG-010` <sup>P</sup> | INSERT shape: mapped columns bound, constant columns inlined as literals, optional USING TTL and TIMESTAMP | `cdm-engine::jobs::migrate` | `mig_010_*` | #18 |
 | `MIG-011` <sup>P</sup> | Bind order MUST be: mapped/derived columns in target-column order, then TTL, then writetime | `cdm-engine::jobs::migrate` | `mig_011_*` | #18 |
 | `MIG-012` <sup>P</sup> | A `null` value, or an **empty collection**, MUST be bound as `UNSET` rather than `null`, to avoid creating tombstones | `cdm-engine::jobs::migrate` | `mig_012_*` | #18 |
 | `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-engine::jobs::migrate` | `mig_013_*` | #18 |
@@ -227,7 +227,7 @@ test, fails CI.
 | `MIG-020` <sup>P</sup> | Batching: when `batch_size > 1`, writes MUST be accumulated into an `UNLOGGED` batch and executed when the batch reaches… | `cdm-engine::jobs::migrate` | `mig_020_*` | #21 |
 | `MIG-021` <sup>P</sup> | `batch_size` MUST be coerced to 1 when the table is a counter table, when a writetime filter is active, or when the configured… | `cdm-engine::jobs::migrate` | `mig_021_*` | #21 |
 | `MIG-022` <sup>N</sup> | Batches SHOULD be grouped by partition key so that a batch never spans partitions (single-partition batches are the only… | `cdm-engine::jobs::migrate` | `mig_022_*` | #21 |
-| `MIG-030` <sup>P</sup> | Counter tables MUST use `UPDATE ks.tbl [USING TTL ? AND TIMESTAMP ?] SET c = c + ?, ... , <const> = <literal> WHERE <target… | `cdm-engine::jobs::migrate` | `mig_030_*` | #22 |
+| `MIG-030` <sup>P</sup> | Counter tables use UPDATE with `SET c = c + ?`, TTL/writetime bound first, then non-key columns, then the primary-key where-clause | `cdm-engine::jobs::migrate` | `mig_030_*` | #22 |
 | `MIG-031` <sup>P</sup> | The counter delta MUST be `origin_value − (current_target_value or 0)`, obtained by a rate-limited target SELECT by PK… | `cdm-engine::jobs::migrate` | `mig_031_*` | #22 |
 | `MIG-032` <sup>P</sup> | Counter migration MUST NOT be batched and MUST NOT be retried (`CON-012`) | `cdm-engine::jobs::migrate` | `mig_032_*` | #22 |
 | `MIG-040` <sup>N</sup> | Identical origin/target types pass through as raw bytes with no deserialize/reserialize | `cdm-cql::raw` | `con_000_raw_column_bytes_are_reachable`, `mig_040_*` | #2, #15 |
@@ -239,13 +239,13 @@ test, fails CI.
 |---|---|---|---|---|
 | `VAL-001` <sup>P</sup> | For each origin row: build the target PK, apply filters, then issue an asynchronous target SELECT by PK; buffer records and… | `cdm-engine::jobs::validate` | `val_001_*` | #23 |
 | `VAL-002` <sup>P</sup> | Missing target row → increment `MISSING`, log at ERROR: `Missing target row found for key: <pk>` | `cdm-engine::jobs::validate` | `val_002_*` | #23 |
-| `VAL-003` <sup>P</sup> | `autocorrect.missing = true` → synchronously upsert the record, increment `CORRECTED_MISSING`, log `Inserted missing row in… | `cdm-engine::jobs::validate` | `val_003_*` | #23 |
+| `VAL-003` <sup>P</sup> | `autocorrect.missing` upserts the record synchronously, increments CORRECTED_MISSING and logs the insertion | `cdm-engine::jobs::validate` | `val_003_*` | #23 |
 | `VAL-004` <sup>P</sup> | For counter tables, a missing row MUST NOT be auto-corrected unless `autocorrect.missing_counter = true`; otherwise log and… | `cdm-engine::jobs::validate` | `val_004_*` | #23 |
 | `VAL-005` <sup>P</sup> | Column comparison MUST convert the target value into the origin's type space and compare for equality | `cdm-engine::jobs::validate` | `val_005_*` | #23 |
 | `VAL-006` <sup>P</sup> | A mismatch MUST increment `MISMATCH` and log at ERROR: `Mismatch row found for key: <pk> Mismatch: <detail>` where detail… | `cdm-engine::jobs::validate` | `val_006_*` | #23 |
 | `VAL-007` <sup>P</sup> | `autocorrect.mismatch = true` → upsert the record, increment `CORRECTED_MISMATCH`, log `Corrected mismatch row in target: <pk>` | `cdm-engine::jobs::validate` | `val_007_*` | #23 |
 | `VAL-008` <sup>P</sup> | A fully-matching record increments `VALID` | `cdm-engine::jobs::validate` | `val_008_*` | #23 |
-| `VAL-009` <sup>P</sup> | Per-column comparison errors MUST be captured into the mismatch detail rather than failing the range, in the form `Target… | `cdm-engine::jobs::validate` | `val_009_*` | #23 |
+| `VAL-009` <sup>P</sup> | Per-column comparison errors are captured into the mismatch detail rather than failing the range | `cdm-engine::jobs::validate` | `val_009_*` | #23 |
 | `VAL-010` <sup>P</sup> | Validation MUST never delete data from the target | `cdm-engine::jobs::validate` | `val_010_*` | #23 |
 | `VAL-011` <sup>P</sup> | With `feature.extract_json` active and `overwrite = false`, an already-populated target extract column MUST be skipped rather… | `cdm-engine::jobs::validate` | `val_011_*` | #23 |
 | `VAL-012` <sup>P</sup> | The diff logger MUST write to a dedicated sink (`logging.diff_file`, default `cdm_logs/cdm_diff.log`) at ERROR level, separate… | `cdm-engine::jobs::validate` | `val_012_*` | #23 |
@@ -295,7 +295,7 @@ test, fails CI.
 | `FEA-052` <sup>P</sup> | `filter.column.name` + `filter.column.value` MUST skip rows where the named text column equals the value, compared… | `cdm-feature` | `fea_052_*` | #31 |
 | `FEA-053` <sup>P</sup> | `filter.token.min` / `.max` bound the planned ring segment (`TOK-002`) | `cdm-feature` | `fea_053_*` | #31 |
 | `FEA-054` <sup>N</sup> | Filters MUST be composable and pluggable (`PLG-003`); a filter chain evaluates in declaration order and short-circuits | `cdm-feature` | `fea_054_*` | #31 |
-| `FEA-060` <sup>P</sup> | The origin range select MUST be `SELECT <projection> FROM ks.tbl WHERE TOKEN(<pk>) >= ? AND TOKEN(<pk>) <= ? <where> ALLOW… | `cdm-feature` | `fea_060_*` | #18 |
+| `FEA-060` <sup>P</sup> | The origin range select bounds TOKEN(pk) between two bind values, with the optional CQL filter appended | `cdm-feature` | `fea_060_*` | #18 |
 | `FEA-061` <sup>P+</sup> | `ALLOW FILTERING` MUST be omitted when no `filter.cql_where` is configured, since a pure token-range scan does not require it | `cdm-feature` | `fea_061_*` | #18 |
 | `FEA-062` <sup>N</sup> | The generated CQL for every statement MUST be logged once at startup and exposed at `GET /v1/runs/{id}/statements` | `cdm-feature` | `fea_062_*` | #18 |
 
@@ -303,7 +303,7 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CDC-001` <sup>P</sup> | All CQL primitive types MUST be supported: `ascii, bigint, blob, boolean, counter, date, decimal, double, duration, float,… | `cdm-codec` | `cdc_001_*` | #11, #12, #13, #14 |
+| `CDC-001` <sup>P</sup> | Every CQL primitive type is supported: ascii through varint | `cdm-codec` | `cdc_001_*` | #11, #12, #13, #14 |
 | `CDC-002` <sup>P</sup> | Collection types `list<T>`, `set<T>`, `map<K,V>`, `tuple<...>`, user-defined types and `vector<T, N>` MUST be supported,… | `cdm-codec` | `cdc_002_*` | #11, #12, #13, #14 |
 | `CDC-003` <sup>P</sup> | DSE geometry types `PointType`, `LineStringType`, `PolygonType` and `DateRangeType` MUST be supported (WKB encoding) | `cdm-codec` | `cdc_003_*` | #11, #12, #13, #14 |
 | `CDC-004` <sup>N</sup> | `vector<float, N>` MUST be first-class: read, written, validated, and comparable with exact bit equality | `cdm-codec` | `cdc_004_*` | #11, #12, #13, #14 |
@@ -366,7 +366,7 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `MET-001` <sup>P</sup> | The following counters MUST exist with exactly these semantics: `READ, WRITE, MISMATCH, CORRECTED_MISMATCH, MISSING,… | `cdm-metrics` | `met_001_*` | #19 |
+| `MET-001` <sup>P</sup> | The thirteen counters exist with exactly the Java semantics, from READ through PARTITIONS_FAILED | `cdm-metrics` | `met_001_*` | #19 |
 | `MET-002` <sup>P</sup> | Per-job counter registration must match Java exactly for migrate, validate and guardrail | `cdm-metrics` | `met_002_*` | #19 |
 | `MET-003` <sup>P+</sup> | Using an unregistered counter MUST be a compile-time or startup error, never a runtime surprise (Java throws at runtime) | `cdm-metrics` | `met_003_*` | #19 |
 | `MET-004` <sup>P</sup> | The interim/committed two-level accounting MUST be preserved: per-range interim counts are folded into totals on range… | `cdm-metrics` | `met_004_*` | #19 |
@@ -374,7 +374,7 @@ test, fails CI.
 | `MET-006` <sup>P</sup> | The final metrics block must be printed in the Java format so existing assertion tooling keeps working | `cdm-metrics` | `met_006_*` | #19 |
 | `MET-010` <sup>N</sup> | In addition to counters, the following MUST be recorded: rows/sec (origin and target, 1s/10s/60s EWMA), bytes/sec, request… | `cdm-metrics` | `met_010_*` | #36 |
 | `MET-011` <sup>N</sup> | Progress MUST be computable as `ranges_completed / ranges_total`, refined by `system.size_estimates` row estimates, with an… | `cdm-metrics` | `met_011_*` | #36 |
-| `MET-020` <sup>N</sup> | A Prometheus endpoint MUST be exposed at `GET /metrics` with metric names prefixed `cdm_` and labels `{run_id, job, side,… | `cdm-metrics` | `met_020_*` | #37 |
+| `MET-020` <sup>N</sup> | A Prometheus endpoint exposes `cdm_`-prefixed metrics, labelled by run, job, side, node, keyspace and table, with no per-range or per-key cardinality | `cdm-metrics` | `met_020_*` | #37 |
 | `MET-021` <sup>N</sup> | OpenTelemetry OTLP export of metrics **and** traces MUST be supported, configured by `metrics.otlp.endpoint` | `cdm-metrics` | `met_021_*` | #37 |
 | `MET-030` <sup>N</sup> | A structured event stream MUST be emitted (`RunStarted`, `RangeStarted`, `RangeCompleted`, `Discrepancy`, `Warning`, `Error`,… | `cdm-metrics` | `met_030_*` | #38 |
 | `MET-031` <sup>N</sup> | An interactive terminal UI (`cdm migrate --tui`) MUST show live throughput, progress bar, ETA, per-node status in cluster… | `cdm-metrics` | `met_031_*` | #39 |
@@ -386,7 +386,7 @@ test, fails CI.
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
 | `CLI-001` <sup>N</sup> | A single `cdm` binary with subcommands: migrate, validate, guardrail, plan, runs, config, schema, connect, codecs, cluster, serve, mcp, completions, version | `cdm-cli` | `cli_001_*` | #10 |
-| `CLI-002` <sup>P</sup> | Java invocation shapes MUST be accepted for a smooth transition: `--properties-file <file>` and `--conf… | `cdm-cli` | `cli_002_*` | #5 |
+| `CLI-002` <sup>P</sup> | Java invocation shapes are accepted on every job subcommand, including a properties file and Spark-style conf overrides | `cdm-cli` | `cli_002_*` | #5 |
 | `CLI-003` <sup>N</sup> | `cdm config convert --from cdm.properties --to cdm.toml` MUST translate a Java config to canonical form, annotating deprecated… | `cdm-cli` | `cli_003_*` | #10 |
 | `CLI-004` <sup>N</sup> | Exit codes MUST be meaningful and documented: `0` success · `1` completed with failures/discrepancies · `2` configuration… | `cdm-cli` | `cli_004_*` | #10 |
 | `CLI-005` <sup>N</sup> | `--output json` MUST render machine-readable output for every non-streaming command | `cdm-cli` | `cli_005_*` | #10 |
@@ -433,7 +433,7 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `UI-001` <sup>N</sup> | The Config Builder MUST be reimplemented as a static web app embedded in the binary (`rust-embed`) and served at `/ui` by `cdm… | `cdm-ui` | `ui_001_*` | #47 |
+| `UI-001` <sup>N</sup> | The Config Builder is a static web app embedded in the binary and served at `/ui`, needing no Node.js at runtime | `cdm-ui` | `ui_001_*` | #47 |
 | `UI-002` <sup>N</sup> | It MUST drive the same API as every other client: `POST /v1/config/validate`, `/v1/config/generate`, `GET /v1/schema` | `cdm-ui` | `ui_002_*` | #47 |
 | `UI-003` <sup>P</sup> | Feature parity with the React `cdm-config-builder`: CQL DDL paste-and-parse, sectioned form (connection, schema, performance,… | `cdm-ui` | `ui_003_*` | #47 |
 | `UI-004` <sup>P</sup> | The best-practice rules engine MUST be preserved and MUST live **server-side** so CLI, API and UI share it: table size GB →… | `cdm-config` | `ui_004_*` | #4, #5, #6 |
@@ -485,7 +485,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `NFR-001` | Static binary for `linux-x86_64` (gnu + musl), `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64` | `workspace` | `nfr_001_*` | #56 |
 | `NFR-002` | Cold start to first row read MUST be < 2 seconds for a single-table run | `workspace` | `nfr_002_*` | #55 |
-| `NFR-003` | Memory MUST be bounded and configurable: steady-state RSS MUST NOT exceed `~200 MB + (max_inflight_reads +… | `workspace` | `nfr_003_*` | #55 |
+| `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace` | `nfr_003_*` | #55 |
 | `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace` | `nfr_004_*` | #55 |
 | `NFR-005` | MSRV MUST be an explicitly declared, tested Rust version, bumped only in a minor release, and stated in `Cargo.toml`… | `workspace` | `nfr_005_*` | #57 |
 | `NFR-006` | Every public item in every crate MUST have rustdoc; `#![deny(missing_docs)]` on all library crates | `workspace` | `nfr_006_*` | #57 |
@@ -511,7 +511,7 @@ test, fails CI.
 | `TST-060` | **Benchmarks**: `criterion` micro-benchmarks for the hot path (bind, convert, compare) and a reproducible macro-benchmark… | `cdm-testkit / tests` | `tst_060_*` | #49 |
 | `TST-070` | **Snapshot tests** (`insta`) for CLI output, generated CQL, generated config files, error messages, and the OpenAPI document | `cdm-testkit / tests` | `tst_070_*` | #10 |
 | `TST-080` | **Fuzzing** (`cargo-fuzz`) of the properties parser, the CQL identifier quoter, the JSON extractor, and the Java date-pattern… | `cdm-testkit / tests` | `tst_080_*` | #58 |
-| `TST-090` | **Doc tests**: every rustdoc example MUST compile and run; `docs/` code blocks MUST be extracted and compiled by `xtask… | `cdm-testkit / tests` | `tst_090_*` | #57 |
+| `TST-090` | Every rustdoc example compiles and runs, and code blocks in `docs/` are extracted and compiled | `cdm-testkit / tests` | `tst_090_*` | #57 |
 | `TST-100` | A `cdm-testkit` crate MUST provide: containerised origin/target fixtures, a schema and data generator covering all CQL types,… | `cdm-testkit / tests` | `tst_100_*` | #16 |
 | `TST-101` | Test data generation MUST be deterministic and seeded; failures MUST print the seed | `cdm-testkit / tests` | `tst_101_*` | #16 |
 | `TST-102` | Integration tests MUST be runnable locally with one command (`cargo xtask it`) and MUST skip (not fail) with a clear message… | `cdm-testkit / tests` | `tst_102_*` | #16 |
@@ -521,7 +521,7 @@ test, fails CI.
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
 | `OPS-001` | Cargo workspace with resolver v2, shared `[workspace.dependencies]`, and `[workspace.lints]` applied to every crate (DRY) | `.github, xtask` | `ops_001_*` | #1 |
-| `OPS-002` | `rustfmt.toml` and `clippy.toml` checked in; `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D… | `.github, xtask` | `ops_002_*` | #1 |
+| `OPS-002` | Formatting and lint configuration is checked in, and both gate every pull request | `.github, xtask` | `ops_002_*` | #1 |
 | `OPS-003` | Pre-commit hooks: fmt, clippy, unused deps, typos, cargo-deny, taplo, yamllint, markdownlint, shellcheck, commit-msg, gitleaks, traceability, generated-artefact freshness | `.github, xtask` | `ops_003_*` | #1 |
 | `OPS-004` | **Conventional Commits** MUST be enforced | `.github, xtask` | `ops_004_*` | #1 |
 | `OPS-010` | The GitHub Actions workflow set: ci, integration, sit, coverage, security, bench, differential, openapi, docs, release, container; the published site is `docs/book` | `.github, docs/book, xtask` | `ops_010_*` | #1 |
