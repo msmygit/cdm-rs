@@ -13,6 +13,14 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# ARCHITECTURE §3: `cdm-engine` depends on `cdm-config` and `cdm-core` for the planner. It does
+# *not* need `cdm-cql` for it — the cluster facts the planner uses arrive through the
+# `planner::ClusterTopology` trait, exactly as `cdm-config` takes a `SchemaProvider`.
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+cdm-config.workspace = true
+cdm-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true

@@ -663,11 +663,12 @@ fail with a clear error.
 *exactly*, including its edge cases:
 
 ```text
+if coverage_percent < 1 or coverage_percent > 100 { coverage_percent = 100 }   // Java's clamp
 partition_size = (max - min) / num_parts;  if partition_size == 0 { partition_size = 100_000 }
 cur_max = min
-loop {
-    cur_min  = cur_max
-    new_max  = cur_min + partition_size
+while cur_max <= max {                                 // the guard, not `exhausted`, ends the
+    cur_min  = cur_max                                 // common case where the last range ends
+    new_max  = cur_min + partition_size                // exactly on `max`
     exhausted = new_max < cur_max || new_max > max      // overflow or past end
     if exhausted { new_max = max }
     cur_max  = new_max
@@ -677,6 +678,11 @@ loop {
     cur_max += 1
 }
 ```
+
+Both marked lines are load-bearing and were missing from earlier revisions of this section: without
+the `while` guard the splitter emits a spurious inverted range past `max` (Java CDM's own unit test,
+`min = 1, max = 100, num_parts = 10`, is the witness), and without the clamp a configured coverage
+of `0` would mean *no* coverage where Java means *full* coverage.
 
 All arithmetic MUST be performed in `i128` (Murmur3) or arbitrary precision (Random) to avoid the
 overflow the Java code defends against. — **TOK-004 [P]**

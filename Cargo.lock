@@ -448,6 +448,13 @@ dependencies = [
 [[package]]
 name = "cdm-engine"
 version = "0.1.0"
+dependencies = [
+ "cdm-config",
+ "cdm-core",
+ "proptest",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "cdm-feature"

@@ -187,9 +187,9 @@ test, fails CI.
 | `TOK-005` <sup>P</sup> | `filter.token_coverage_percent` < 100 MUST shrink each emitted range from its lower bound, producing a deterministic random… | `cdm-engine::planner` | `tok_005_*` | #17 |
 | `TOK-006` <sup>P</sup> | The emitted range list MUST be shuffled (Java shuffles twice) before scheduling, to spread load across replicas | `cdm-engine::planner` | `tok_006_*` | #17 |
 | `TOK-007` <sup>N</sup> | . **TOK-008 [N]** — An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership… | `cdm-engine::planner` | `tok_007_*` | #17 |
-| `TOK-008` <sup>N</sup> | An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership boundaries so every… | `cdm-engine::planner` | `tok_008_*` | #53 |
+| `TOK-008` <sup>N</sup> | An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership boundaries so every… | `cdm-engine::planner` | `tok_008_*` | #17, #53 |
 | `TOK-009` <sup>N</sup> | `cdm plan` MUST emit the computed plan (range count, span histogram, estimated rows from `system.size_estimates`, estimated… | `cdm-engine::planner` | `tok_009_*` | #17 |
-| `TOK-010` <sup>N</sup> | Ranges SHOULD be sized adaptively when `plan.strategy = adaptive`: begin at `num_parts`, and dynamically subdivide any range… | `cdm-engine::planner` | `tok_010_*` | #53 |
+| `TOK-010` <sup>N</sup> | Ranges SHOULD be sized adaptively when `plan.strategy = adaptive`: begin at `num_parts`, and dynamically subdivide any range… | `cdm-engine::planner` | `tok_010_*` | #17, #53 |
 
 ### ENG
 
@@ -339,7 +339,7 @@ test, fails CI.
 | `TRK-030` <sup>P</sup> | `track_run.auto_rerun = true` MUST select the most recent run for `(table_name, run_type)` and adopt it as the previous run… | `cdm-track` | `trk_030_*` | #25 |
 | `TRK-031` <sup>P</sup> | Resuming from a previous run MUST re-plan only ranges whose status is in `{NOT_STARTED, STARTED, FAIL, DIFF}`, shuffled | `cdm-track` | `trk_031_*` | #25 |
 | `TRK-032` <sup>P</sup> | If the previous run's info row is missing or `NOT_STARTED`, resumption MUST fall back to a fresh full plan (Java's… | `cdm-track` | `trk_032_*` | #25 |
-| `TRK-033` <sup>P</sup> | `track_run.rerun_multiplier > 1` MUST subdivide each pending range into that many sub-ranges at 100% coverage, to break up… | `cdm-track` | `trk_033_*` | #25 |
+| `TRK-033` <sup>P</sup> | `track_run.rerun_multiplier > 1` MUST subdivide each pending range into that many sub-ranges at 100% coverage, to break up… | `cdm-track`, `cdm-engine::planner` | `trk_033_*` | #17, #25 |
 | `TRK-034` <sup>N</sup> | `cdm runs list\|show\|resume\|cancel` MUST provide first-class run management, and `GET /v1/runs`, `GET /v1/runs/{id}` the API… | `cdm-track` | `trk_034_*` | #25 |
 | `TRK-035` <sup>N</sup> | Tracking writes MUST be batched and asynchronous with a bounded queue, so tracking never becomes the throughput bottleneck; on… | `cdm-track` | `trk_035_*` | #25 |
 | `TRK-036` <sup>N</sup> | Tracking MUST be storable in a pluggable backend (`TrackingStore` trait): the Cassandra target keyspace (default,… | `cdm-track` | `trk_036_*` | #25 |
@@ -485,7 +485,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `NFR-001` | Static binary for `linux-x86_64` (gnu + musl), `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64` | `workspace` | `nfr_001_*` | #56 |
 | `NFR-002` | Cold start to first row read MUST be < 2 seconds for a single-table run | `workspace` | `nfr_002_*` | #55 |
-| `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace` | `nfr_003_*` | #55 |
+| `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace`, `cdm-engine::planner::report` | `nfr_003_*` | #17, #55 |
 | `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace` | `nfr_004_*` | #55 |
 | `NFR-005` | MSRV MUST be an explicitly declared, tested Rust version, bumped only in a minor release, and stated in `Cargo.toml`… | `workspace` | `nfr_005_*` | #57 |
 | `NFR-006` | Every public item in every crate MUST have rustdoc; `#![deny(missing_docs)]` on all library crates | `workspace` | `nfr_006_*` | #57 |
