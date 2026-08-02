@@ -72,6 +72,19 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  book:
+    name: mdBook site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2.85.5
+        with:
+          tool: mdbook,mdbook-mermaid
+      # docs.yml only runs on push to main, so without this the site can break in a PR and
+      # only surface after the merge — which is exactly how it broke the first time.
+      - run: mdbook-mermaid install docs/book
+      - run: mdbook build docs/book
+
   features:
     name: Feature powerset
     runs-on: ubuntu-latest

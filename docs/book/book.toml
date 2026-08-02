@@ -1,0 +1,33 @@
+[book]
+title = "cdm-rs"
+description = "A Rust reimplementation of the Cassandra Data Migrator — no JVM, no Spark, no functionality lost."
+authors = ["cdm-rs contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+# Every chapter in SUMMARY.md is a stub that `{{#include}}`s a document from the
+# repository. A missing file is a bug in the stub tree, not something to paper over.
+create-missing = false
+
+# Renders the ```mermaid blocks in docs/ARCHITECTURE.md and docs/ROADMAP.md as diagrams.
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/msmygit/cdm-rs"
+site-url = "/cdm-rs/"
+# Written by `mdbook-mermaid install docs/book` (`just book`); gitignored, not committed.
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+# README.md links to files that are not chapters. Send those to the repository rather
+# than 404, instead of editing the source document to suit the book.
+[output.html.redirect]
+"/LICENSE" = "https://github.com/msmygit/cdm-rs/blob/main/LICENSE"
+
+[output.html.fold]
+enable = true
+level = 1

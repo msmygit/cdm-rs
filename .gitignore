@@ -2,6 +2,13 @@
 **/*.rs.bk
 *.pdb
 
+# mdBook output (docs/book/book.toml sets build-dir = "book") and the mermaid runtime
+# that `mdbook-mermaid install` vendors into the book root. Both are build artefacts;
+# `just book` and the Docs workflow regenerate them.
+/docs/book/book/
+/docs/book/mermaid.min.js
+/docs/book/mermaid-init.js
+
 # Local run artefacts
 /cdm_logs/
 /reports/

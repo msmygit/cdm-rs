@@ -524,7 +524,7 @@ test, fails CI.
 | `OPS-002` | `rustfmt.toml` and `clippy.toml` checked in; `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D… | `.github, xtask` | `ops_002_*` | #1 |
 | `OPS-003` | Pre-commit hooks: fmt, clippy, unused deps, typos, cargo-deny, taplo, yamllint, markdownlint, shellcheck, commit-msg, gitleaks, traceability, generated-artefact freshness | `.github, xtask` | `ops_003_*` | #1 |
 | `OPS-004` | **Conventional Commits** MUST be enforced | `.github, xtask` | `ops_004_*` | #1 |
-| `OPS-010` | The GitHub Actions workflow set: ci, integration, sit, coverage, security, bench, differential, openapi, docs, release, container | `.github, xtask` | `ops_010_*` | #1 |
+| `OPS-010` | The GitHub Actions workflow set: ci, integration, sit, coverage, security, bench, differential, openapi, docs, release, container; the published site is `docs/book` | `.github, docs/book, xtask` | `ops_010_*` | #1 |
 | `OPS-011` | A CI job MUST verify traceability: every `REQ-ID` in `SPEC.md` appears in `TRACEABILITY.md`; every ID in `TRACEABILITY.md`… | `.github, xtask` | `ops_011_*` | #1 |
 | `OPS-012` | A CI job MUST verify that generated artefacts (`api/openapi.yaml`, `schema/cdm-config.schema.json`,… | `.github, xtask` | `ops_012_*` | #1 |
 | `OPS-020` | Releases MUST publish: signed binaries for all `NFR-001` targets, checksums, a CycloneDX SBOM, a multi-arch container image,… | `.github, xtask` | `ops_020_*` | #56 |

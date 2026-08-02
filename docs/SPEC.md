@@ -1671,7 +1671,7 @@ that installs native git hooks for contributors who prefer no Python):
 
 | Workflow | Trigger | Contents |
 |---|---|---|
-| `ci.yml` | PR, push `main` | fmt, clippy, build, unit tests, doc build, MSRV check, feature-powerset check (`cargo hack`) |
+| `ci.yml` | PR, push `main` | fmt, clippy, build, unit tests, doc build, mdBook build, MSRV check, feature-powerset check (`cargo hack`) |
 | `integration.yml` | PR, push `main`, nightly | testcontainers matrix over Cassandra 4.1/5.0 × Rust stable/MSRV |
 | `sit.yml` | PR, push `main` | the ported SIT parity suite |
 | `coverage.yml` | PR | `cargo-llvm-cov`, upload, fail below threshold (`S4`) |
@@ -1679,7 +1679,7 @@ that installs native git hooks for contributors who prefer no Python):
 | `bench.yml` | nightly, `bench` label | criterion + macro benchmark, regression gate |
 | `differential.yml` | nightly | Java-vs-Rust differential suite (`TST-020`) |
 | `openapi.yml` | PR | regenerate spec, diff check, `oasdiff` breaking-change gate, schemathesis |
-| `docs.yml` | push `main` | build and publish rustdoc + mdBook site |
+| `docs.yml` | push `main` | build and publish rustdoc + mdBook site (`docs/book`, whose chapters `{{#include}}` the repository's documents rather than copying them) |
 | `release.yml` | tag `v*` | cross-compile all targets, sign, SBOM, GitHub Release, crates.io publish, container image |
 | `container.yml` | push `main`, tag | multi-arch (amd64/arm64) distroless image |
 
