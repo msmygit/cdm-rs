@@ -6,7 +6,8 @@
 //! 2. every ID in `TRACEABILITY.md` is declared in `SPEC.md` (no phantom requirements);
 //! 3. no ID is declared twice in either document;
 //! 4. every ID cited by a test exists in `SPEC.md` (no orphaned citations);
-//! 5. every cross-reference to an ID from anywhere in `docs/` resolves.
+//! 5. no matrix row has an unterminated code span, which would silently swallow the rest of the
+//!    cell when the document is rendered.
 //!
 //! The "every done requirement has a citing test" half of `OPS-011` needs a status field to be
 //! meaningful. It arrives with `docs/traceability.toml` once the first requirements are actually
@@ -68,6 +69,7 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
     }
 
     problems.extend(orphaned_test_citations(root, &declared_set)?);
+    problems.extend(unbalanced_code_spans(&matrix));
 
     if problems.is_empty() {
         println!(
@@ -143,6 +145,27 @@ fn orphaned_test_citations(
         }
     }
     Ok(problems)
+}
+
+/// Matrix rows whose backticks do not pair up.
+///
+/// The generator that first produced this file truncated long summaries to a fixed width, which
+/// could cut a row in the middle of a code span. An unterminated backtick makes the rest of the
+/// cell parse as an HTML tag, so `<pk>` and `<const>` silently vanish when the document is
+/// rendered — invisible in a diff, obvious on the published site. Fifteen rows shipped that way.
+fn unbalanced_code_spans(matrix: &str) -> Vec<String> {
+    matrix
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .filter(|line| line.matches('`').count() % 2 != 0)
+        .map(|line| {
+            let id = line.split('`').nth(1).unwrap_or("<unknown>");
+            format!(
+                "{id} has an unterminated code span; the rest of the cell will render as an HTML \
+                 tag rather than text"
+            )
+        })
+        .collect()
 }
 
 fn rust_sources(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
@@ -222,6 +245,21 @@ mod tests {
     fn ops_011_unknown_domains_are_rejected_by_the_grammar() {
         // `MIGR` is not a domain; a typo like this must not be silently accepted.
         assert!(declared_ids("**MIGR-001 [P]** — a").unwrap().is_empty());
+    }
+
+    #[test]
+    fn ops_011_an_unterminated_code_span_is_reported() {
+        let matrix =
+            "| `MIG-030` | uses `SET c = c + ?`, then `<target… | `cdm-engine` | x | #22 |";
+        let problems = unbalanced_code_spans(matrix);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("MIG-030"), "{problems:?}");
+    }
+
+    #[test]
+    fn ops_011_balanced_rows_are_accepted() {
+        let matrix = "| `MIG-030` | uses `SET c = c + ?` on the target | `cdm-engine` | x | #22 |";
+        assert!(unbalanced_code_spans(matrix).is_empty());
     }
 
     #[test]
