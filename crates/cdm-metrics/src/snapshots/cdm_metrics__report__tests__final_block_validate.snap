@@ -1,0 +1,17 @@
+---
+source: crates/cdm-metrics/src/report.rs
+expression: "validate.final_block(Some(RunId::from_raw(1_712_345_678_901_234)))"
+---
+################################################################################################
+RunId: 1712345678901234
+Final Read Record Count: 7
+Final Mismatch Record Count: 0
+Final Corrected Mismatch Record Count: 0
+Final Missing Record Count: 0
+Final Corrected Missing Record Count: 0
+Final Valid Record Count: 7
+Final Skipped Record Count: 0
+Final Error Record Count: 0
+Final Partitions Passed: 1
+Final Partitions Failed: 0
+################################################################################################
