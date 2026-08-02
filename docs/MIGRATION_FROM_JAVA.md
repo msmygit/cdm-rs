@@ -47,8 +47,11 @@ cdm config convert --from cdm.properties --to cdm.toml
 | 8 | Using an unregistered counter throws at runtime | Rejected at startup (`MET-003`) | Fail in seconds, not hours | — |
 | 9 | Configuration errors surface during execution | Three validation tiers before any data moves, all errors reported at once (`CFG-020`, `CFG-021`) | The most common operational complaint | — |
 | 10 | Distributed execution requires a Spark cluster | Built-in lease-based coordination (`DST-001`) | Removes the largest deployment dependency | run single-node |
+| 11 | `blob` → `text`/`ascii` conversion replaces malformed bytes with U+FFFD and writes the replacement through | The row fails with a `TypeConversion` error and is counted as `ERROR` (`CDC-020`) | Java's `new String(bytes)` silently corrupts the value; a loud failure on one row beats a quiet corruption of it | — |
+| 12 | `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` both claim the `(TIMESTAMP, String)` pair; the later registration silently wins | Enabling both is a startup error naming both codecs (`CDC-030`, `PLG-010`) | Which codec wins decided the on-disk format of every timestamp; it should not depend on registration order | enable only one |
 
-`--compat-java` enables items 1, 2, 3 and 6 together (`COMPAT-001`).
+`--compat-java` enables items 1, 2, 3 and 6 together, and additionally restores Java's
+unconverted tuple elements (item 4) (`COMPAT-001`, `CDC-015`).
 
 ## What is unchanged, and guaranteed to stay so
 

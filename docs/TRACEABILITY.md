@@ -301,23 +301,23 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CDC-001` <sup>P</sup> | All CQL primitive types MUST be supported: `ascii, bigint, blob, boolean, counter, date, decimal, double, duration, float,… | `cdm-codec` | `cdc_001_*` | #11 |
-| `CDC-002` <sup>P</sup> | Collection types `list<T>`, `set<T>`, `map<K,V>`, `tuple<...>`, user-defined types and `vector<T, N>` MUST be supported,… | `cdm-codec` | `cdc_002_*` | #11 |
-| `CDC-003` <sup>P</sup> | DSE geometry types `PointType`, `LineStringType`, `PolygonType` and `DateRangeType` MUST be supported (WKB encoding) | `cdm-codec` | `cdc_003_*` | #11 |
-| `CDC-004` <sup>N</sup> | `vector<float, N>` MUST be first-class: read, written, validated, and comparable with exact bit equality | `cdm-codec` | `cdc_004_*` | #14 |
-| `CDC-010` <sup>P</sup> | A **conversion plan** MUST be computed once per column pair at startup, not per row | `cdm-codec` | `cdc_010_*` | #11 |
-| `CDC-011` <sup>P</sup> | Identical origin/target types → `Passthrough` | `cdm-codec` | `cdc_011_*` | #11 |
-| `CDC-012` <sup>P</sup> | Collection-to-same-kind-collection conversion MUST recurse into element types | `cdm-codec` | `cdc_012_*` | #11 |
-| `CDC-013` <sup>P</sup> | UDT-to-UDT conversion MUST proceed field-by-field and requires equal field counts | `cdm-codec` | `cdc_013_*` | #14 |
-| `CDC-014` <sup>P+</sup> | Unlike Java, UDT field conversion MUST match by **name** when field names are equal-as-sets, falling back to positional… | `cdm-codec` | `cdc_014_*` | #14 |
-| `CDC-015` <sup>P+</sup> | Tuple element conversion MUST be implemented | `cdm-codec` | `cdc_015_*` | #14 |
-| `CDC-016` <sup>P</sup> | An `Unsupported` plan MUST pass the value through unchanged and MUST log a warning naming the column and both types, once per… | `cdm-codec` | `cdc_016_*` | #11 |
-| `CDC-020` <sup>P</sup> | The named codec set (INT_STRING, DOUBLE_STRING, BIGINT_STRING, DECIMAL_STRING, BIGINT_BIGINTEGER, STRING_BLOB, ASCII_BLOB, TIMESTAMP_STRING_MILLIS, TIMESTAMP_STRING_FORMAT, DSE geo) with exact Java semantics | `cdm-codec` | `cdc_020_*` | #12 |
-| `CDC-021` <sup>P</sup> | An empty `timestamp_format`, or an unparseable timezone, MUST be a Tier-1 configuration error | `cdm-codec` | `cdc_021_*` | #12 |
-| `CDC-022` <sup>P</sup> | Java `SimpleDateFormat`/`DateTimeFormatter` patterns (e.g | `cdm-codec` | `cdc_022_*` | #13 |
-| `CDC-030` <sup>N</sup> | Codecs MUST be pluggable: `CodecPlugin` registers `(from_type, to_type) → Converter` pairs into the registry, and third-party… | `cdm-codec` | `cdc_030_*` | #12 |
-| `CDC-031` <sup>N</sup> | `cdm codecs list` MUST print all registered codecs and the type pairs they serve; `GET /v1/codecs` MUST return the same | `cdm-codec` | `cdc_031_*` | #12 |
-| `CDC-032` <sup>N</sup> | Every codec MUST have a round-trip property test (`TST-031`) | `cdm-codec` | `cdc_032_*` | #14 |
+| `CDC-001` <sup>P</sup> | All CQL primitive types MUST be supported: `ascii, bigint, blob, boolean, counter, date, decimal, double, duration, float,… | `cdm-codec` | `cdc_001_*` | #11, #12, #13, #14 |
+| `CDC-002` <sup>P</sup> | Collection types `list<T>`, `set<T>`, `map<K,V>`, `tuple<...>`, user-defined types and `vector<T, N>` MUST be supported,… | `cdm-codec` | `cdc_002_*` | #11, #12, #13, #14 |
+| `CDC-003` <sup>P</sup> | DSE geometry types `PointType`, `LineStringType`, `PolygonType` and `DateRangeType` MUST be supported (WKB encoding) | `cdm-codec` | `cdc_003_*` | #11, #12, #13, #14 |
+| `CDC-004` <sup>N</sup> | `vector<float, N>` MUST be first-class: read, written, validated, and comparable with exact bit equality | `cdm-codec` | `cdc_004_*` | #11, #12, #13, #14 |
+| `CDC-010` <sup>P</sup> | A **conversion plan** MUST be computed once per column pair at startup, not per row | `cdm-codec` | `cdc_010_*` | #11, #12, #13, #14 |
+| `CDC-011` <sup>P</sup> | Identical origin/target types → `Passthrough` | `cdm-codec` | `cdc_011_*` | #11, #12, #13, #14 |
+| `CDC-012` <sup>P</sup> | Collection-to-same-kind-collection conversion MUST recurse into element types | `cdm-codec` | `cdc_012_*` | #11, #12, #13, #14 |
+| `CDC-013` <sup>P</sup> | UDT-to-UDT conversion MUST proceed field-by-field and requires equal field counts | `cdm-codec` | `cdc_013_*` | #11, #12, #13, #14 |
+| `CDC-014` <sup>P+</sup> | Unlike Java, UDT field conversion MUST match by **name** when field names are equal-as-sets, falling back to positional… | `cdm-codec` | `cdc_014_*` | #11, #12, #13, #14 |
+| `CDC-015` <sup>P+</sup> | Tuple element conversion MUST be implemented | `cdm-codec` | `cdc_015_*` | #11, #12, #13, #14 |
+| `CDC-016` <sup>P</sup> | An `Unsupported` plan MUST pass the value through unchanged and MUST log a warning naming the column and both types, once per… | `cdm-codec` | `cdc_016_*` | #11, #12, #13, #14 |
+| `CDC-020` <sup>P</sup> | The named codec set (INT_STRING, DOUBLE_STRING, BIGINT_STRING, DECIMAL_STRING, BIGINT_BIGINTEGER, STRING_BLOB, ASCII_BLOB, TIMESTAMP_STRING_MILLIS, TIMESTAMP_STRING_FORMAT, DSE geo) with exact Java semantics | `cdm-codec` | `cdc_020_*` | #11, #12, #13, #14 |
+| `CDC-021` <sup>P</sup> | An empty `timestamp_format`, or an unparseable timezone, MUST be a Tier-1 configuration error | `cdm-codec` | `cdc_021_*` | #11, #12, #13, #14 |
+| `CDC-022` <sup>P</sup> | Java `SimpleDateFormat`/`DateTimeFormatter` patterns (e.g | `cdm-codec` | `cdc_022_*` | #11, #12, #13, #14 |
+| `CDC-030` <sup>N</sup> | Codecs MUST be pluggable: `CodecPlugin` registers `(from_type, to_type) → Converter` pairs into the registry, and third-party… | `cdm-codec` | `cdc_030_*` | #11, #12, #13, #14 |
+| `CDC-031` <sup>N</sup> | `cdm codecs list` MUST print all registered codecs and the type pairs they serve; `GET /v1/codecs` MUST return the same | `cdm-codec` | `cdc_031_*` | #11, #12, #13, #14 |
+| `CDC-032` <sup>N</sup> | Every codec MUST have a round-trip property test (`TST-031`) | `cdm-codec` | `cdc_032_*` | #11, #12, #13, #14 |
 
 ### TRK
 
