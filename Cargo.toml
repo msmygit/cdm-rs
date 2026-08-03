@@ -83,7 +83,6 @@ rust-embed = "8"
 
 # --- crypto / TLS -----------------------------------------------------------
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "0.26"
 zeroize = { version = "1", features = ["derive"] }

@@ -6,6 +6,7 @@
 //! rather than assuming a layout.
 
 use cdm_core::{CdmError, Side};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::errors::{tls_error, tls_error_from};
@@ -13,18 +14,26 @@ use crate::tls::Identity;
 
 /// Every certificate in a PEM file, in file order.
 pub fn certificates(side: Side, bytes: &[u8]) -> Result<Vec<CertificateDer<'static>>, CdmError> {
-    let mut reader = std::io::BufReader::new(bytes);
-    rustls_pemfile::certs(&mut reader)
+    CertificateDer::pem_slice_iter(bytes)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| tls_error_from(side, "the PEM file contains a malformed certificate", e))
 }
 
 /// The first private key in a PEM file, in PKCS#8, PKCS#1 or SEC1 encoding.
 pub fn private_key(side: Side, bytes: &[u8]) -> Result<PrivateKeyDer<'static>, CdmError> {
-    let mut reader = std::io::BufReader::new(bytes);
-    rustls_pemfile::private_key(&mut reader)
-        .map_err(|e| tls_error_from(side, "the PEM file contains a malformed private key", e))?
-        .ok_or_else(|| tls_error(side, "the PEM file contains no private key"))
+    // `from_pem_slice` returns `NoItemsFound` when the file holds no key at all, which is a
+    // distinct situation from a malformed one and deserves its own message.
+    match PrivateKeyDer::from_pem_slice(bytes) {
+        Ok(key) => Ok(key),
+        Err(rustls::pki_types::pem::Error::NoItemsFound) => {
+            Err(tls_error(side, "the PEM file contains no private key"))
+        }
+        Err(e) => Err(tls_error_from(
+            side,
+            "the PEM file contains a malformed private key",
+            e,
+        )),
+    }
 }
 
 /// A certificate chain and its key, read from one PEM file.

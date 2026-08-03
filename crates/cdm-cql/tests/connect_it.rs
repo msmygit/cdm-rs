@@ -92,6 +92,15 @@ async fn start() -> Option<Fixture> {
 
     let container = match image.start().await {
         Ok(container) => container,
+        // `TST-102` says skip when there is no container runtime — not when there is one and the
+        // port is taken. That second case means another test binary (`driver_spike` binds the
+        // same port) or a leftover container holds 9042, and skipping it would report a green
+        // suite that never ran, which is worse than no suite at all.
+        Err(e) if e.to_string().contains("port is already allocated") => panic!(
+            "host port {CQL_PORT} is already in use, so this suite cannot run: {e}\n\
+             Both this binary and driver_spike bind it: run them one at a time, and check for a \
+             leftover container with `docker ps`."
+        ),
         Err(e) => {
             eprintln!(
                 "skipping: cannot start cassandra:{tag} ({e}). Is a container runtime running?"

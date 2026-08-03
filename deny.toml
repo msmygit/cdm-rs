@@ -22,6 +22,10 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "MPL-2.0",
+    # webpki-roots ships the Mozilla CA certificate store. CDLA-Permissive-2.0 is a data licence
+    # covering that certificate set, not code, and it places no restriction on distributing the
+    # binary. A TLS client needs a root store; refusing this licence would mean shipping without one.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 

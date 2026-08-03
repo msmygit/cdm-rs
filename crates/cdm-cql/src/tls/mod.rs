@@ -6,7 +6,7 @@
 //!
 //! | Format | Reader | Notes |
 //! |---|---|---|
-//! | `PEM` | [`pem`] | `rustls-pemfile`; certificates and PKCS#1/PKCS#8/SEC1 keys |
+//! | `PEM` | [`pem`] | `rustls-pki-types`; certificates and PKCS#1/PKCS#8/SEC1 keys |
 //! | `PKCS12` | [`pkcs12`] | `p12-keystore`; PBES1 and PBES2 protected bags |
 //! | `JKS` | [`jks`] | ours, pure Rust: JKS/JCEKS magic, SHA-1 keyed digest, PKCS#8 extraction |
 //!
