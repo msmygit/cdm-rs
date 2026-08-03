@@ -1,0 +1,288 @@
+//! Rate limiters and in-flight semaphores, the two things that bound a run (`ENG-004`,
+//! `ENG-005`, `ENG-007`, `NFR-003`).
+//!
+//! [`RuntimeLimits`] is the whole of the scheduler's back pressure, in one shareable object:
+//!
+//! | Limit | Mechanism | Setting | Requirement |
+//! |---|---|---|---|
+//! | Origin rows read per second | [`RateLimiter`] | `perfops.ratelimit.origin` | `ENG-004` |
+//! | Target rows written per second | [`RateLimiter`] | `perfops.ratelimit.target` | `ENG-004` |
+//! | Concurrent origin reads | [`Semaphore`] | `perfops.max_inflight_reads` | `ENG-007` |
+//! | Concurrent target writes | [`Semaphore`] | `perfops.max_inflight_writes` | `ENG-007` |
+//!
+//! The rate limiters bound *throughput*; the semaphores bound *memory*. They are not
+//! interchangeable, which is why `ENG-007` exists separately from `ENG-005`: a rate limit says
+//! nothing about how many pages are resident at once, and it is the resident pages that decide
+//! whether the process fits in its RSS budget. `NFR-003` states that budget as
+//! `~200 MB + (max_inflight_reads + max_inflight_writes) × average_row_size × 2`, and it holds
+//! only because every read and every write passes through one of these semaphores first.
+//!
+//! Both semaphores are shared by every worker, so the bound is on the run, not on the worker: a
+//! run with 64 workers and `max_inflight_reads = 256` has at most 256 reads outstanding, not
+//! 16 384.
+
+use std::sync::Arc;
+
+use cdm_core::{CdmError, ErrorKind};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+use crate::scheduler::ratelimit::RateLimiter;
+use crate::scheduler::settings::SchedulerSettings;
+
+/// A claim on one in-flight slot, held for as long as the request is outstanding (`ENG-007`).
+///
+/// Dropping it returns the slot. There is nothing to call and nothing to forget: a request that
+/// panics or is cancelled releases its slot with the rest of its stack.
+#[derive(Debug)]
+pub struct InflightPermit {
+    _permit: OwnedSemaphorePermit,
+}
+
+/// The rate limiters and in-flight semaphores of one run (`ENG-004`, `ENG-005`, `ENG-007`).
+#[derive(Debug)]
+pub struct RuntimeLimits {
+    origin_rate: RateLimiter,
+    target_rate: RateLimiter,
+    reads: Arc<Semaphore>,
+    writes: Arc<Semaphore>,
+}
+
+impl RuntimeLimits {
+    /// Builds the limits a settings object describes.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Config`] if either in-flight bound is zero, which would deadlock the run, or
+    /// larger than [`Semaphore::MAX_PERMITS`].
+    pub fn new(settings: &SchedulerSettings) -> Result<Self, CdmError> {
+        Ok(Self {
+            origin_rate: RateLimiter::new(settings.origin_rows_per_second()),
+            target_rate: RateLimiter::new(settings.target_rows_per_second()),
+            reads: semaphore("perfops.max_inflight_reads", settings.max_inflight_reads())?,
+            writes: semaphore(
+                "perfops.max_inflight_writes",
+                settings.max_inflight_writes(),
+            )?,
+        })
+    }
+
+    /// The origin read limiter, in rows per second (`ENG-004`).
+    #[must_use]
+    pub const fn origin_rate(&self) -> &RateLimiter {
+        &self.origin_rate
+    }
+
+    /// The target write limiter, in rows per second (`ENG-004`).
+    #[must_use]
+    pub const fn target_rate(&self) -> &RateLimiter {
+        &self.target_rate
+    }
+
+    /// Waits until `rows` more rows may be read from the origin (`ENG-004`, `ENG-005`).
+    pub async fn acquire_read_rows(&self, rows: u32) {
+        self.origin_rate.acquire(rows).await;
+    }
+
+    /// Waits until `rows` more rows may be written to the target (`ENG-004`, `ENG-005`).
+    pub async fn acquire_write_rows(&self, rows: u32) {
+        self.target_rate.acquire(rows).await;
+    }
+
+    /// Claims one in-flight origin read slot (`ENG-007`).
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Internal`] if the semaphore has been closed, which the scheduler never does.
+    pub async fn read_slot(&self) -> Result<InflightPermit, CdmError> {
+        acquire(&self.reads, "read").await
+    }
+
+    /// Claims one in-flight target write slot (`ENG-007`).
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Internal`] if the semaphore has been closed, which the scheduler never does.
+    pub async fn write_slot(&self) -> Result<InflightPermit, CdmError> {
+        acquire(&self.writes, "write").await
+    }
+
+    /// How many origin reads may still be started before a caller has to wait.
+    #[must_use]
+    pub fn available_read_slots(&self) -> usize {
+        self.reads.available_permits()
+    }
+
+    /// How many target writes may still be started before a caller has to wait.
+    #[must_use]
+    pub fn available_write_slots(&self) -> usize {
+        self.writes.available_permits()
+    }
+}
+
+/// Builds one bounded semaphore from a checked bound.
+fn semaphore(setting: &str, permits: u32) -> Result<Arc<Semaphore>, CdmError> {
+    check_permits(setting, usize::try_from(permits).unwrap_or(usize::MAX))
+        .map(Semaphore::new)
+        .map(Arc::new)
+}
+
+/// Rejects the two in-flight bounds that cannot work.
+///
+/// The upper bound only bites on a 32-bit target, where [`Semaphore::MAX_PERMITS`] is smaller
+/// than `u32::MAX`; on a 64-bit one no `u32` can reach it. It is checked regardless, because the
+/// alternative on the platforms where it *can* happen is a panic from inside the runtime.
+fn check_permits(setting: &str, permits: usize) -> Result<usize, CdmError> {
+    if permits == 0 {
+        return Err(CdmError::new(
+            ErrorKind::Config,
+            format!("{setting} must be at least 1; a bound of 0 would stall every worker"),
+        )
+        .with_context(|ctx| ctx.with_config_key(setting)));
+    }
+    if permits > Semaphore::MAX_PERMITS {
+        return Err(CdmError::new(
+            ErrorKind::Config,
+            format!(
+                "{setting} must not exceed {}, the runtime's maximum",
+                Semaphore::MAX_PERMITS
+            ),
+        )
+        .with_context(|ctx| ctx.with_config_key(setting)));
+    }
+    Ok(permits)
+}
+
+/// Acquires one permit, converting the only failure the runtime can report.
+async fn acquire(semaphore: &Arc<Semaphore>, side: &str) -> Result<InflightPermit, CdmError> {
+    Arc::clone(semaphore)
+        .acquire_owned()
+        .await
+        .map(|permit| InflightPermit { _permit: permit })
+        .map_err(|_closed| {
+            CdmError::new(
+                ErrorKind::Internal,
+                format!("the in-flight {side} semaphore was closed while the run was still going"),
+            )
+        })
+}
+
+// Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
+// (ERR-004) exists to protect production paths, not test bodies.
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    fn settings() -> SchedulerSettings {
+        SchedulerSettings::default()
+    }
+
+    #[tokio::test]
+    async fn eng_007_in_flight_reads_are_bounded_by_the_semaphore() {
+        let limits = Arc::new(
+            RuntimeLimits::new(&settings().with_max_inflight_reads(4).with_ratelimits(0, 0))
+                .unwrap(),
+        );
+
+        let peak = Arc::new(AtomicUsize::new(0));
+        let live = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..64 {
+            let limits = Arc::clone(&limits);
+            let peak = Arc::clone(&peak);
+            let live = Arc::clone(&live);
+            handles.push(tokio::spawn(async move {
+                let permit = limits.read_slot().await.unwrap();
+                let now = live.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(now, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                live.fetch_sub(1, Ordering::SeqCst);
+                drop(permit);
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        assert!(peak.load(Ordering::SeqCst) <= 4, "{peak:?}");
+        assert_eq!(limits.available_read_slots(), 4);
+    }
+
+    #[tokio::test]
+    async fn eng_007_in_flight_writes_are_bounded_independently_of_reads() {
+        let limits = RuntimeLimits::new(
+            &settings()
+                .with_max_inflight_reads(1)
+                .with_max_inflight_writes(3),
+        )
+        .unwrap();
+        let _read = limits.read_slot().await.unwrap();
+        assert_eq!(limits.available_read_slots(), 0);
+        // The write side is untouched by an exhausted read side.
+        assert_eq!(limits.available_write_slots(), 3);
+        let _write = limits.write_slot().await.unwrap();
+        assert_eq!(limits.available_write_slots(), 2);
+    }
+
+    #[tokio::test]
+    async fn eng_007_a_permit_is_returned_when_it_is_dropped() {
+        let limits = RuntimeLimits::new(&settings().with_max_inflight_reads(1)).unwrap();
+        {
+            let _permit = limits.read_slot().await.unwrap();
+            assert_eq!(limits.available_read_slots(), 0);
+        }
+        assert_eq!(limits.available_read_slots(), 1);
+    }
+
+    #[test]
+    fn eng_007_a_zero_in_flight_bound_is_rejected_at_startup() {
+        let err = RuntimeLimits::new(&settings().with_max_inflight_reads(0)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Config);
+        assert!(err.message().contains("max_inflight_reads"), "{err}");
+
+        let err = RuntimeLimits::new(&settings().with_max_inflight_writes(0)).unwrap_err();
+        assert!(err.message().contains("max_inflight_writes"), "{err}");
+    }
+
+    #[test]
+    fn eng_007_an_in_flight_bound_above_the_runtime_maximum_is_rejected() {
+        let err =
+            check_permits("perfops.max_inflight_reads", Semaphore::MAX_PERMITS + 1).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Config);
+        assert!(err.message().contains("maximum"), "{err}");
+
+        // On a 64-bit target no `u32` can reach the runtime's maximum, so the largest bound the
+        // configuration can express is accepted.
+        assert!(check_permits("perfops.max_inflight_reads", Semaphore::MAX_PERMITS).is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eng_004_the_read_and_write_rates_come_from_their_own_settings() {
+        let limits = RuntimeLimits::new(&settings().with_ratelimits(10, 20)).unwrap();
+        assert_eq!(limits.origin_rate().rows_per_second(), 10);
+        assert_eq!(limits.target_rate().rows_per_second(), 20);
+
+        let started = tokio::time::Instant::now();
+        limits.acquire_read_rows(20).await;
+        assert_eq!(started.elapsed(), std::time::Duration::from_secs(1));
+
+        // Twenty writes is exactly the write side's one-second burst, so it does not wait.
+        let before = tokio::time::Instant::now();
+        limits.acquire_write_rows(20).await;
+        assert_eq!(before.elapsed(), std::time::Duration::ZERO);
+    }
+
+    #[tokio::test]
+    async fn eng_007_a_closed_semaphore_is_reported_rather_than_panicking() {
+        let closed = Arc::new(Semaphore::new(1));
+        closed.close();
+        let err = acquire(&closed, "read").await.unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::Internal);
+    }
+}

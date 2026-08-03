@@ -460,11 +460,18 @@ dependencies = [
 name = "cdm-engine"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "cdm-config",
  "cdm-core",
+ "cdm-metrics",
+ "futures",
+ "parking_lot",
  "proptest",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

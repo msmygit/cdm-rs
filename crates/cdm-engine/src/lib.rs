@@ -11,22 +11,39 @@
 //! for the full matrix:
 //!
 //! - `TOK-001`..`TOK-010` — [`planner`], the token-range planner
-//! - `ENG-001`
+//! - `ENG-001`..`ENG-014` — [`scheduler`], the work-stealing execution engine
 //! - `MIG-001`
 //! - `VAL-001`
 //! - `GRD-001`
 //!
+//! # How the two halves fit together
+//!
+//! [`planner`] decides *what* to process: it splits the ring into token ranges and shuffles them
+//! into a [`TokenPlan`], deterministically and with no I/O. [`scheduler`] decides *how*: it runs
+//! that plan across `perfops.workers` Tokio tasks, paces them, bounds their memory, isolates
+//! their failures and accounts for them.
+//!
+//! Neither half knows what a row is. The whole of the job surface is
+//! [`scheduler::RangeProcessor`] — "given a range, process it and report
+//! counters" — which migrate (`MIG`), validate (`VAL`) and guardrail (`GRD`) implement in
+//! PRs #21–#24.
+//!
 //! # Status
 //!
-//! The planner is implemented. The scheduler and the built-in jobs land in the pull requests
+//! The planner and the scheduler are implemented. The built-in jobs land in the pull requests
 //! listed in [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
 
 pub mod planner;
+pub mod scheduler;
 
 pub use planner::{
     subdivide_for_rerun, ClusterTopology, InMemoryTopology, MemoryEnvelope, Partitioner,
     PlanReport, PlanStrategy, PlannedRange, Planner, PlannerSettings, RingSegment, SizeEstimate,
     SpanBucket, TokenPlan,
+};
+pub use scheduler::{
+    NoopObserver, RangeContext, RangeObserver, RangeOutcome, RangeProcessor, RangeVerdict,
+    RateLimiter, RunControl, RunReport, RuntimeLimits, Scheduler, SchedulerSettings, StopReason,
 };
 
 /// The version of this crate, as reported by `cdm version`.
@@ -62,6 +79,11 @@ mod tests {
                 for entry in std::fs::read_dir(&path).unwrap() {
                     stack.push(entry.unwrap().path());
                 }
+                continue;
+            }
+            // A `tests.rs` is a `#[cfg(test)] mod tests;` in its own file: it never carries the
+            // in-file marker this sweep splits on, and every line of it is a test body.
+            if path.file_stem().is_some_and(|stem| stem == "tests") {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();

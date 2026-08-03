@@ -13,14 +13,26 @@ categories.workspace = true
 [lints]
 workspace = true
 
-# ARCHITECTURE §3: `cdm-engine` depends on `cdm-config` and `cdm-core` for the planner. It does
-# *not* need `cdm-cql` for it — the cluster facts the planner uses arrive through the
-# `planner::ClusterTopology` trait, exactly as `cdm-config` takes a `SchemaProvider`.
+# ARCHITECTURE §3: `cdm-engine` depends on `cdm-config`, `cdm-core` and `cdm-metrics`. It does
+# *not* need `cdm-cql`, for the planner or for the scheduler — the cluster facts the planner uses
+# arrive through the `planner::ClusterTopology` trait, exactly as `cdm-config` takes a
+# `SchemaProvider`, and everything the scheduler asks of a cluster it asks through the
+# `scheduler::RangeProcessor` trait that the jobs of PRs #21–#24 implement.
 [dependencies]
+async-trait.workspace = true
 cdm-config.workspace = true
 cdm-core.workspace = true
+cdm-metrics.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "signal", "sync", "time"] }
+tokio-util.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 serde_json.workspace = true
+# `test-util` is what makes the rate-limit and shutdown tests deterministic: it pauses the
+# runtime clock so elapsed time is a function of the program, not of the CI machine's load.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
