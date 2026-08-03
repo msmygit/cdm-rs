@@ -53,14 +53,41 @@ cdm config convert --from cdm.properties --to cdm.toml
 | 14 | Enabling `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` together: later registration silently wins | startup error naming both | which one won decided the on-disk format of every timestamp | — |
 | 15 | The migrate flush threshold is unreachable, so every write for a range is buffered until the range ends | the documented threshold works | peak memory scaled with range size and nothing could bound it; this is much of why Java needs `--driver-memory 25G` | — |
 | 16 | A failed **validate** range always records `ERROR: 0` | the real count of unaccounted rows | the counter exists to say how many rows were lost; Java reads it from committed counts that are still zero on the failure path | — |
-| 11 | `blob` → `text`/`ascii` conversion replaces malformed bytes with U+FFFD and writes the replacement through | The row fails with a `TypeConversion` error and is counted as `ERROR` (`CDC-020`) | Java's `new String(bytes)` silently corrupts the value; a loud failure on one row beats a quiet corruption of it | — |
-| 12 | `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` both claim the `(TIMESTAMP, String)` pair; the later registration silently wins | Enabling both is a startup error naming both codecs (`CDC-030`, `PLG-010`) | Which codec wins decided the on-disk format of every timestamp; it should not depend on registration order | enable only one |
-| 13 | The plan is shuffled with an unseeded `Collections.shuffle`, so range order cannot be reproduced | The double shuffle is seeded from the run id, so replanning a run yields identical order (`TOK-006`, `TOK-007`) | An irreproducible work order makes a failed run impossible to reason about; the *set* of ranges, and every range's bounds, are unchanged | — |
-| 14 | `filter.token.min` / `.max` outside the partitioner's ring are planned as given, and quietly match no row | Rejected before the run starts (`TOK-002`) | A bound outside the ring silently migrates less data than asked for, which surfaces only as a validation failure later | — |
-| 15 | `perfops.numParts` is unbounded; an absurd value exhausts the heap partway through planning | Values above 50,000,000 are refused up front (`TOK-003`, `NFR-003`) | The plan is held in memory for the whole run, and `NFR-003` forbids a configuration that grows memory without bound | — |
+| 17 | The Astra bundle is downloaded only when **both** `astra.database.id` and `astra.scb.region` are set, and a download failure is logged and ignored | `database_id` alone triggers the download, and a failure stops the run (`CON-004`) | Falling through to `localhost:9042` because a token expired is how a migration silently runs against the wrong cluster | set the bundle path explicitly |
+| 18 | `truststore` + `isAstra` writes a synthetic bundle zip (`config.json`, `identity.jks`, `trustStore.jks`) into the working directory | The same material is held in memory; nothing is written to disk (`CON-002`, `SEC-001`) | A private key left on disk with no cleanup, for a file only the Spark connector ever wanted | — |
+| 19 | `tls.enabledAlgorithms` defaults to `TLS_RSA_WITH_AES_128_CBC_SHA,TLS_RSA_WITH_AES_256_CBC_SHA`, and JSSE silently drops a suite it cannot offer | The default is read as "no preference" and the TLS backend chooses; an **explicitly** named suite the backend cannot offer is a startup error listing what it can (`CON-007`) | rustls implements no static-RSA suite — they have no forward secrecy and TLS 1.3 removed them — so honouring that default literally would make TLS unusable, and silently ignoring a pinned suite is how operators come to believe in ciphers that were never offered | name a supported suite |
+| 20 | The Java driver supports the Astra secure-connect-bundle natively, including SNI routing | The single-endpoint fallback is used (`CON-026`), because `scylla-rust-driver` cannot set a per-connection TLS `server_name` | See [Astra connectivity](#astra-connectivity) | — |
 
 `--compat-java` enables items 1, 2, 3 and 6 together, and additionally restores Java's
 unconverted tuple elements (item 4) (`COMPAT-001`, `CDC-015`).
+
+## Astra connectivity
+
+Astra publishes no node addresses. Every CQL connection goes to one SNI proxy endpoint, and the
+node it lands on is chosen by the TLS `server_name` of that connection — the target node's host id.
+The Java driver sets that name per connection. `scylla-rust-driver` 1.7 cannot:
+
+- a session takes **one** TLS context, and the per-endpoint hook (`TlsProvider`) is private, with a
+  single `GlobalContext` variant;
+- with the `rustls-023` backend the driver derives the name itself, as
+  `ServerName::IpAddress(node_address.ip())`, and rustls sends no SNI extension for an IP name, so
+  the proxy receives nothing to route on.
+
+cdm-rs therefore uses the connection method DataStax documents for drivers without bundle support
+(`CON-026`): one mutual-TLS connection to the host from `config.json`, on the port from `cqlshrc`,
+with a warning at startup (`CON-027`). Everything else about Astra behaves as in Java CDM — the
+DevOps API download (`CON-004`), the bundle contents (`CON-020`), and both credential spellings
+(`CON-028`).
+
+**What it costs.** Token-aware routing and per-node load balancing are lost: every request is
+coordinated by whichever node the proxy picks, adding a hop. Throughput against Astra will be
+materially lower than against a self-managed cluster reached directly. Nothing is *incorrect* —
+Cassandra coordinates the request either way.
+
+**What to do about it.** Nothing, today. The gap is a missing driver hook; it is raised upstream,
+and the SNI path in `cdm-cql::astra::strategy` is written and tested up to the point where the hook
+would plug in. When it lands, `driver_supports_per_connection_sni()` becomes a real capability check
+and the strategy switches with no configuration change.
 
 ## What is unchanged, and guaranteed to stay so
 

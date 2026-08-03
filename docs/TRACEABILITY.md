@@ -137,36 +137,36 @@ test, fails CI.
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
 | `CON-000` <sup>N</sup> | `scylla-rust-driver` is the sole CQL driver, confined to `cdm-cql` behind the core traits | `cdm-cql` | `con_000_*` | #2 |
-| `CON-001` <sup>P</sup> | cdm-rs MUST connect independently to origin and target with fully separate credentials, TLS material, consistency levels and… | `cdm-cql` | `con_001_*` | #7 |
-| `CON-002` <sup>P</sup> | Four connection modes MUST be supported per side, selected exactly as Java's `ConnectionFetcher` does: 1 | `cdm-cql` | `con_002_*` | #7 |
-| `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*` | #8 |
-| `CON-004` <sup>P</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain | `cdm-cql` | `con_004_*` | #8 |
-| `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*` | #8 |
-| `CON-006` <sup>P</sup> | Truststores/keystores MUST be readable in `JKS`, `PKCS12` and `PEM` formats | `cdm-cql` | `con_006_*` | #7 |
-| `CON-007` <sup>P</sup> | `tls.cipher_suites` MUST be honoured | `cdm-cql` | `con_007_*` | #7 |
+| `CON-001` <sup>P</sup> | cdm-rs MUST connect independently to origin and target with fully separate credentials, TLS material, consistency levels and… | `cdm-cql` | `con_001_*` | #7, #8, #9 |
+| `CON-002` <sup>P</sup> | Four connection modes MUST be supported per side, selected exactly as Java's `ConnectionFetcher` does: 1 | `cdm-cql` | `con_002_*` | #7, #8, #9 |
+| `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*` | #7, #8, #9 |
+| `CON-004` <sup>P</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain | `cdm-cql` | `con_004_*` | #7, #8, #9 |
+| `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*` | #7, #8, #9 |
+| `CON-006` <sup>P</sup> | Truststores/keystores MUST be readable in `JKS`, `PKCS12` and `PEM` formats | `cdm-cql` | `con_006_*` | #7, #8, #9 |
+| `CON-007` <sup>P</sup> | `tls.cipher_suites` MUST be honoured | `cdm-cql` | `con_007_*` | #7, #8, #9 |
 | `CON-008` <sup>N</sup> | `cdm connect test --side origin\|target\|both` MUST perform a full connect, report negotiated protocol version, TLS version… | `cdm-cql` | `con_008_*` | #10 |
-| `CON-009` <sup>N</sup> | Connections MUST use a token-aware, DC-aware, latency-aware load-balancing policy by default, with… | `cdm-cql` | `con_009_*` | #7 |
-| `CON-010` <sup>N</sup> | Speculative execution MUST be configurable per side and disabled by default for target writes | `cdm-cql` | `con_010_*` | #7 |
+| `CON-009` <sup>N</sup> | Connections MUST use a token-aware, DC-aware, latency-aware load-balancing policy by default, with… | `cdm-cql` | `con_009_*` | #7, #8, #9 |
+| `CON-010` <sup>N</sup> | Speculative execution MUST be configurable per side and disabled by default for target writes | `cdm-cql` | `con_010_*` | #7, #8, #9 |
 | `CON-011` <sup>P+</sup> | Retry policy: idempotent reads retry on timeout/unavailable up to `perfops.retry.max_attempts` with exponential backoff and jitter | `cdm-cql` | `con_011_*` | #22 |
 | `CON-012` <sup>P+</sup> | . **CON-013 [N]** — Origin and target compatibility MUST be probed at startup: protocol version, whether `WRITETIME`/`TTL` on… | `cdm-cql` | `con_012_*` | #22 |
-| `CON-013` <sup>N</sup> | Origin and target compatibility MUST be probed at startup: protocol version, whether `WRITETIME`/`TTL` on collections is… | `cdm-cql` | `con_013_*` | #9 |
-| `CON-020` <sup>N</sup> | The bundle zip is read in memory; PEM members are used and the JKS/PFX members ignored | `cdm-cql` | `con_020_*` | #8 |
-| `CON-021` <sup>N</sup> | `config.json` is parsed leniently, with a named Tier-1 diagnostic for each missing required field | `cdm-cql` | `con_021_*` | #8 |
-| `CON-022` <sup>N</sup> | Primary strategy: mTLS to the metadata service, then per-connection SNI `server_name` = host id via the SNI proxy | `cdm-cql` | `con_022_*` | #8 |
-| `CON-023` <sup>N</sup> | Do not depend on the driver's Scylla-Cloud `cloud` feature for Astra; use its TLS/translator hooks or raise the gap upstream | `cdm-cql` | `con_023_*` | #8 |
-| `CON-024` <sup>N</sup> | Host-id → SNI mapping refreshes as topology changes, without a restart | `cdm-cql` | `con_024_*` | #8 |
-| `CON-025` <sup>N</sup> | Re-fetch the metadata response, rate-limited, when all connections fail | `cdm-cql` | `con_025_*` | #8 |
-| `CON-026` <sup>N</sup> | Fallback strategy: single-endpoint mTLS using the host from `config.json` and the port from `cqlshrc` | `cdm-cql` | `con_026_*` | #8 |
-| `CON-027` <sup>N</sup> | The fallback warns prominently that token-aware routing is lost | `cdm-cql` | `con_027_*` | #8 |
-| `CON-028` <sup>N</sup> | Accept both Astra auth spellings, and detect an `AstraCS:` token supplied as the username | `cdm-cql` | `con_028_*` | #8 |
+| `CON-013` <sup>N</sup> | Origin and target compatibility MUST be probed at startup: protocol version, whether `WRITETIME`/`TTL` on collections is… | `cdm-cql` | `con_013_*` | #7, #8, #9 |
+| `CON-020` <sup>N</sup> | The bundle zip is read in memory; PEM members are used and the JKS/PFX members ignored | `cdm-cql` | `con_020_*` | #7, #8, #9 |
+| `CON-021` <sup>N</sup> | `config.json` is parsed leniently, with a named Tier-1 diagnostic for each missing required field | `cdm-cql` | `con_021_*` | #7, #8, #9 |
+| `CON-022` <sup>N</sup> | Primary strategy: mTLS to the metadata service, then per-connection SNI `server_name` = host id via the SNI proxy | `cdm-cql` | `con_022_*` | #7, #8, #9 |
+| `CON-023` <sup>N</sup> | Do not depend on the driver's Scylla-Cloud `cloud` feature for Astra; use its TLS/translator hooks or raise the gap upstream | `cdm-cql` | `con_023_*` | #7, #8, #9 |
+| `CON-024` <sup>N</sup> | Host-id → SNI mapping refreshes as topology changes, without a restart | `cdm-cql` | `con_024_*` | #7, #8, #9 |
+| `CON-025` <sup>N</sup> | Re-fetch the metadata response, rate-limited, when all connections fail | `cdm-cql` | `con_025_*` | #7, #8, #9 |
+| `CON-026` <sup>N</sup> | Fallback strategy: single-endpoint mTLS using the host from `config.json` and the port from `cqlshrc` | `cdm-cql` | `con_026_*` | #7, #8, #9 |
+| `CON-027` <sup>N</sup> | The fallback warns prominently that token-aware routing is lost | `cdm-cql` | `con_027_*` | #7, #8, #9 |
+| `CON-028` <sup>N</sup> | Accept both Astra auth spellings, and detect an `AstraCS:` token supplied as the username | `cdm-cql` | `con_028_*` | #7, #8, #9 |
 | `CON-029` <sup>N</sup> | `cdm connect test` reports strategy, metadata URL, proxy address, local DC, host-id count and TLS parameters | `cdm-cql` | `con_029_*` | #10 |
 
 ### SCH
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `SCH-001` <sup>P</sup> | Origin and target table metadata MUST be introspected from `system_schema`: columns, CQL types (including UDTs, tuples,… | `cdm-cql` | `sch_001_*` | #9 |
-| `SCH-002` <sup>P</sup> | Quoted, mixed-case and special-character identifiers MUST be handled correctly on both read and write | `cdm-cql` | `sch_002_*` | #9 |
+| `SCH-001` <sup>P</sup> | Origin and target table metadata MUST be introspected from `system_schema`: columns, CQL types (including UDTs, tuples,… | `cdm-cql` | `sch_001_*` | #7, #8, #9 |
+| `SCH-002` <sup>P</sup> | Quoted, mixed-case and special-character identifiers MUST be handled correctly on both read and write | `cdm-cql` | `sch_002_*` | #7, #8, #9 |
 | `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql` | `sch_003_*` | #18 |
 | `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql` | `sch_004_*` | #18 |
 | `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql` | `sch_005_*` | #22 |
@@ -174,7 +174,7 @@ test, fails CI.
 | `SCH-007` <sup>P</sup> | Virtual projection columns `TTL(col)` and `WRITETIME(col)` MUST be appendable to the origin select and addressable by index | `cdm-cql` | `sch_007_*` | #18 |
 | `SCH-008` <sup>N</sup> | `cdm schema diff` MUST print a side-by-side origin/target schema comparison with per-column mapping, conversion plan… | `cdm-cql` | `sch_008_*` | #10 |
 | `SCH-009` <sup>N</sup> | Schema changes detected mid-run (via driver schema-agreement events) MUST abort the run with a distinct error kind rather than… | `cdm-cql` | `sch_009_*` | #18 |
-| `SCH-010` <sup>P</sup> | Materialized views MUST be rejected as a target with a clear message | `cdm-cql` | `sch_010_*` | #9 |
+| `SCH-010` <sup>P</sup> | Materialized views MUST be rejected as a target with a clear message | `cdm-cql` | `sch_010_*` | #7, #8, #9 |
 
 ### TOK
 
