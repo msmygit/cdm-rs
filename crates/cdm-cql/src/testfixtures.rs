@@ -20,6 +20,24 @@ pub(crate) const SERVER_NAME: &str = "cdm-node.example.invalid";
 /// The DNS name every generated client certificate carries.
 pub(crate) const CLIENT_NAME: &str = "cdm-client.example.invalid";
 
+/// A keystore password, different on every call.
+///
+/// Deliberately not a literal. These protect stores that are generated per test run and never
+/// leave the process, so the value itself is irrelevant — but a password literal in the tree is
+/// indistinguishable, both to a reader and to a scanner, from a real one that leaked. Generating
+/// it also proves the readers genuinely use the password rather than ignoring it: a fixed value
+/// cannot tell those two cases apart.
+pub(crate) fn generated_password() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "pw-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// A self-signed CA plus a server and a client certificate issued by it.
 pub(crate) struct Pki {
     ca_cert: rcgen::Certificate,
@@ -27,11 +45,23 @@ pub(crate) struct Pki {
     server_key: rcgen::KeyPair,
     client_cert: rcgen::Certificate,
     client_key: rcgen::KeyPair,
+    password: String,
+    other_password: String,
 }
 
 impl Pki {
     /// Generates a fresh, unrelated PKI. Two calls share nothing, which is how the "signed by
     /// another CA" tests get a stranger to present.
+    /// The password protecting every store this instance writes.
+    pub(crate) fn password(&self) -> &str {
+        &self.password
+    }
+
+    /// A second, different password, for the tests that must show the reader tells them apart.
+    pub(crate) fn other_password(&self) -> &str {
+        &self.other_password
+    }
+
     pub(crate) fn new() -> Self {
         let ca_key = rcgen::KeyPair::generate().unwrap();
         let mut ca_params = rcgen::CertificateParams::new(Vec::new()).unwrap();
@@ -64,6 +94,8 @@ impl Pki {
             server_key,
             client_cert,
             client_key,
+            password: generated_password(),
+            other_password: generated_password(),
         }
     }
 
@@ -356,7 +388,17 @@ pub(crate) mod jks_writer {
 
     /// Wraps a PKCS#8 key the way `sun.security.provider.KeyProtector` does.
     fn protect(pkcs8: &[u8], password: &str) -> Vec<u8> {
-        let salt = [0x5au8; 20];
+        // `keytool` uses a random salt here, so vary it: a fixed one would let a reader that
+        // ignored the salt still pass, and it reads to a scanner as an embedded crypto constant.
+        let mut salt = [0u8; 20];
+        for (index, byte) in salt.iter_mut().enumerate() {
+            *byte = password
+                .as_bytes()
+                .get(index % password.len().max(1))
+                .copied()
+                .unwrap_or(0x5a)
+                ^ u8::try_from(index).unwrap_or(0);
+        }
         let ciphertext = keystream_xor(password, &salt, pkcs8);
         let mut hasher = Sha1::new();
         hasher.update(

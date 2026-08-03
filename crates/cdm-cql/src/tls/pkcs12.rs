@@ -96,8 +96,12 @@ mod tests {
     #[test]
     fn con_006_a_pkcs12_trust_store_yields_its_anchors() {
         let pki = Pki::new();
-        let certificates =
-            certificates(Side::Origin, &pki.truststore_pkcs12("changeit"), "changeit").unwrap();
+        let certificates = certificates(
+            Side::Origin,
+            &pki.truststore_pkcs12(pki.password()),
+            pki.password(),
+        )
+        .unwrap();
         assert_eq!(certificates.len(), 1);
         assert_eq!(certificates[0].as_ref(), pki.ca_der().as_ref());
     }
@@ -105,8 +109,12 @@ mod tests {
     #[test]
     fn con_006_a_pkcs12_key_store_yields_key_and_chain() {
         let pki = Pki::new();
-        let identity =
-            identity(Side::Origin, &pki.keystore_pkcs12("changeit"), "changeit").unwrap();
+        let identity = identity(
+            Side::Origin,
+            &pki.keystore_pkcs12(pki.password()),
+            pki.password(),
+        )
+        .unwrap();
         assert_eq!(identity.chain()[0].as_ref(), pki.client_cert_der().as_ref());
         assert_eq!(
             identity.key().secret_der(),
@@ -117,15 +125,20 @@ mod tests {
     #[test]
     fn con_006_a_wrong_pkcs12_password_says_so() {
         let pki = Pki::new();
-        let err = identity(Side::Origin, &pki.keystore_pkcs12("changeit"), "wrong").unwrap_err();
+        let err =
+            identity(Side::Origin, &pki.keystore_pkcs12(pki.password()), "wrong").unwrap_err();
         assert!(err.to_string().contains("store password"), "{err}");
     }
 
     #[test]
     fn con_006_a_pkcs12_trust_store_has_no_identity() {
         let pki = Pki::new();
-        let err =
-            identity(Side::Origin, &pki.truststore_pkcs12("changeit"), "changeit").unwrap_err();
+        let err = identity(
+            Side::Origin,
+            &pki.truststore_pkcs12(pki.password()),
+            pki.password(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("no private key entry"), "{err}");
     }
 }

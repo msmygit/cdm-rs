@@ -527,8 +527,8 @@ mod tests {
     #[test]
     fn con_006_a_jks_trust_store_round_trips() {
         let pki = Pki::new();
-        let store = pki.truststore_jks("changeit");
-        let parsed = parse(Side::Origin, &store, Some("changeit")).unwrap();
+        let store = pki.truststore_jks(pki.password());
+        let parsed = parse(Side::Origin, &store, Some(pki.password())).unwrap();
         assert!(!parsed.is_jceks());
         assert_eq!(parsed.entries().len(), 1);
         assert_eq!(parsed.entries()[0].alias(), "cdmca");
@@ -540,8 +540,8 @@ mod tests {
         let pki = Pki::new();
         let identity = identity(
             Side::Origin,
-            &pki.keystore_jks("changeit"),
-            Some("changeit"),
+            &pki.keystore_jks(pki.password()),
+            Some(pki.password()),
         )
         .unwrap();
         assert_eq!(identity.chain()[0].as_ref(), pki.client_cert_der().as_ref());
@@ -554,7 +554,12 @@ mod tests {
     #[test]
     fn con_006_a_wrong_jks_store_password_fails_the_integrity_check() {
         let pki = Pki::new();
-        let err = parse(Side::Origin, &pki.truststore_jks("changeit"), Some("wrong")).unwrap_err();
+        let err = parse(
+            Side::Origin,
+            &pki.truststore_jks(pki.password()),
+            Some("wrong"),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("integrity check failed"), "{err}");
     }
 
@@ -562,14 +567,14 @@ mod tests {
     fn con_006_a_jks_store_may_be_read_without_a_password() {
         // `keytool` and the JVM both allow it; there is then simply nothing to verify against.
         let pki = Pki::new();
-        let parsed = parse(Side::Origin, &pki.truststore_jks("changeit"), None).unwrap();
+        let parsed = parse(Side::Origin, &pki.truststore_jks(pki.password()), None).unwrap();
         assert_eq!(parsed.entries().len(), 1);
     }
 
     #[test]
     fn con_006_a_jks_key_store_needs_a_password_to_yield_its_key() {
         let pki = Pki::new();
-        let err = identity(Side::Origin, &pki.keystore_jks("changeit"), None).unwrap_err();
+        let err = identity(Side::Origin, &pki.keystore_jks(pki.password()), None).unwrap_err();
         assert!(err.to_string().contains("password is required"), "{err}");
     }
 
@@ -578,8 +583,8 @@ mod tests {
         let pki = Pki::new();
         let store = jks_writer::Writer::new(true)
             .trusted_certificate("cdmca", pki.ca_der().as_ref())
-            .finish("changeit");
-        let parsed = parse(Side::Origin, &store, Some("changeit")).unwrap();
+            .finish(pki.password());
+        let parsed = parse(Side::Origin, &store, Some(pki.password())).unwrap();
         assert!(parsed.is_jceks());
     }
 
@@ -597,7 +602,7 @@ mod tests {
     #[test]
     fn con_006_a_truncated_keystore_is_an_error_not_a_panic() {
         let pki = Pki::new();
-        let store = pki.truststore_jks("changeit");
+        let store = pki.truststore_jks(pki.password());
         for cut in [4, 8, 12, store.len() / 2] {
             let err = parse(Side::Origin, &store[..cut], None).unwrap_err();
             assert_eq!(err.kind(), cdm_core::ErrorKind::Tls);
@@ -606,10 +611,11 @@ mod tests {
 
     #[test]
     fn con_006_an_unknown_entry_tag_is_rejected() {
+        let pw = crate::testfixtures::generated_password();
         let store = jks_writer::Writer::new(false)
             .raw_entry(99, "weird", &[])
-            .finish("changeit");
-        let err = parse(Side::Origin, &store, Some("changeit")).unwrap_err();
+            .finish(pw.as_str());
+        let err = parse(Side::Origin, &store, Some(pw.as_str())).unwrap_err();
         assert!(
             err.to_string().contains("unknown Java keystore entry tag"),
             "{err}"
@@ -622,26 +628,28 @@ mod tests {
         let store = jks_writer::Writer::new(true)
             .secret_key("apikey", &[1, 2, 3, 4])
             .trusted_certificate("cdmca", pki.ca_der().as_ref())
-            .finish("changeit");
-        let parsed = parse(Side::Origin, &store, Some("changeit")).unwrap();
+            .finish(pki.password());
+        let parsed = parse(Side::Origin, &store, Some(pki.password())).unwrap();
         assert_eq!(parsed.certificates().len(), 1);
     }
 
     #[test]
     fn con_006_an_unsupported_store_version_is_rejected() {
-        let mut store = jks_writer::Writer::new(false).finish("changeit");
+        let pw = crate::testfixtures::generated_password();
+        let mut store = jks_writer::Writer::new(false).finish(pw.as_str());
         store[7] = 9;
-        let err = parse(Side::Origin, &store, Some("changeit")).unwrap_err();
+        let err = parse(Side::Origin, &store, Some(pw.as_str())).unwrap_err();
         assert!(err.to_string().contains("version 9"), "{err}");
     }
 
     #[test]
     fn con_006_the_key_protection_stream_is_its_own_inverse() {
+        let pw = crate::testfixtures::generated_password();
         let plaintext = b"a PKCS#8 blob, more or less, of some length beyond twenty bytes";
         let salt = [7u8; SHA1_LEN];
-        let ciphertext = keystream_xor("changeit", &salt, plaintext);
+        let ciphertext = keystream_xor(pw.as_str(), &salt, plaintext);
         assert_ne!(ciphertext, plaintext.to_vec());
-        assert_eq!(keystream_xor("changeit", &salt, &ciphertext), plaintext);
+        assert_eq!(keystream_xor(pw.as_str(), &salt, &ciphertext), plaintext);
     }
 
     #[test]

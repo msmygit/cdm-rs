@@ -412,15 +412,15 @@ mod tests {
         .unwrap();
         let from_p12 = parse_trust_store(
             Side::Origin,
-            &pki.truststore_pkcs12("secret"),
-            Some("secret"),
+            &pki.truststore_pkcs12(pki.other_password()),
+            Some(pki.other_password()),
             StoreFormat::Pkcs12,
         )
         .unwrap();
         let from_jks = parse_trust_store(
             Side::Origin,
-            &pki.truststore_jks("secret"),
-            Some("secret"),
+            &pki.truststore_jks(pki.other_password()),
+            Some(pki.other_password()),
             StoreFormat::Jks,
         )
         .unwrap();
@@ -444,15 +444,15 @@ mod tests {
         .unwrap();
         let from_p12 = parse_key_store(
             Side::Target,
-            &pki.keystore_pkcs12("secret"),
-            Some("secret"),
+            &pki.keystore_pkcs12(pki.other_password()),
+            Some(pki.other_password()),
             StoreFormat::Pkcs12,
         )
         .unwrap();
         let from_jks = parse_key_store(
             Side::Target,
-            &pki.keystore_jks("secret"),
-            Some("secret"),
+            &pki.keystore_jks(pki.other_password()),
+            Some(pki.other_password()),
             StoreFormat::Jks,
         )
         .unwrap();

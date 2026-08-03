@@ -553,17 +553,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let truststore = dir.path().join("ts.p12");
         let keystore = dir.path().join("ks.p12");
-        std::fs::write(&truststore, pki.truststore_pkcs12("changeit")).unwrap();
-        std::fs::write(&keystore, pki.keystore_pkcs12("changeit")).unwrap();
+        std::fs::write(&truststore, pki.truststore_pkcs12(pki.password())).unwrap();
+        std::fs::write(&keystore, pki.keystore_pkcs12(pki.password())).unwrap();
 
         let mut config = config();
         let tls = &mut config.connect.origin.tls;
         tls.enabled = true;
         tls.truststore.path = Some(truststore);
-        tls.truststore.password = Some(Secret::new("changeit"));
+        tls.truststore.password = Some(Secret::new(pki.password()));
         tls.truststore.store_type = cdm_config::types::TrustStoreType::Pkcs12;
         tls.keystore.path = Some(keystore);
-        tls.keystore.password = Some(Secret::new("changeit"));
+        tls.keystore.password = Some(Secret::new(pki.password()));
 
         let spec = tls_spec_from_stores(&config, Side::Origin).unwrap();
         assert_eq!(spec.trust.len(), 1);
@@ -580,12 +580,12 @@ mod tests {
         let pki = Pki::new();
         let dir = tempfile::tempdir().unwrap();
         let truststore = dir.path().join("ts.p12");
-        std::fs::write(&truststore, pki.truststore_pkcs12("changeit")).unwrap();
+        std::fs::write(&truststore, pki.truststore_pkcs12(pki.password())).unwrap();
 
         let mut config = config();
         config.connect.origin.tls.is_astra = true;
         config.connect.origin.tls.truststore.path = Some(truststore);
-        config.connect.origin.tls.truststore.password = Some(Secret::new("changeit"));
+        config.connect.origin.tls.truststore.password = Some(Secret::new(pki.password()));
         config.connect.origin.tls.truststore.store_type = cdm_config::types::TrustStoreType::Pkcs12;
 
         let err = tls_spec_from_stores(&config, Side::Origin).unwrap_err();
@@ -598,18 +598,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let truststore = dir.path().join("ts.p12");
         let keystore = dir.path().join("ks.p12");
-        std::fs::write(&truststore, pki.truststore_pkcs12("changeit")).unwrap();
-        std::fs::write(&keystore, pki.keystore_pkcs12("changeit")).unwrap();
+        std::fs::write(&truststore, pki.truststore_pkcs12(pki.password())).unwrap();
+        std::fs::write(&keystore, pki.keystore_pkcs12(pki.password())).unwrap();
 
         let mut config = config();
         config.connect.origin.host = "db.astra.datastax.com".to_owned();
         let tls = &mut config.connect.origin.tls;
         tls.is_astra = true;
         tls.truststore.path = Some(truststore);
-        tls.truststore.password = Some(Secret::new("changeit"));
+        tls.truststore.password = Some(Secret::new(pki.password()));
         tls.truststore.store_type = cdm_config::types::TrustStoreType::Pkcs12;
         tls.keystore.path = Some(keystore);
-        tls.keystore.password = Some(Secret::new("changeit"));
+        tls.keystore.password = Some(Secret::new(pki.password()));
 
         let spec = tls_spec_from_stores(&config, Side::Origin).unwrap();
         assert_eq!(
