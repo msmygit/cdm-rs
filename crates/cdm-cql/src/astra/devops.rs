@@ -500,7 +500,10 @@ mod tests {
     async fn con_004_an_unreachable_devops_api_is_a_connect_error() {
         let client = DevOpsClient::with_endpoint(Side::Origin, "api.invalid", 443).unwrap();
         let err = client
-            .bundle_locations("2b3d9e1f-0000-0000-0000-000000000000", "AstraCS:token")
+            .bundle_locations(
+                "2b3d9e1f-0000-0000-0000-000000000000",
+                &format!("AstraCS:{}", crate::testfixtures::generated_password()),
+            )
             .await
             .unwrap_err();
         assert_eq!(err.kind(), cdm_core::ErrorKind::Connect);

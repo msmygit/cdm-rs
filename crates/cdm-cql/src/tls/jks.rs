@@ -557,7 +557,7 @@ mod tests {
         let err = parse(
             Side::Origin,
             &pki.truststore_jks(pki.password()),
-            Some("wrong"),
+            Some(&format!("not-{}", pki.password())),
         )
         .unwrap_err();
         assert!(err.to_string().contains("integrity check failed"), "{err}");
@@ -646,7 +646,7 @@ mod tests {
     fn con_006_the_key_protection_stream_is_its_own_inverse() {
         let pw = crate::testfixtures::generated_password();
         let plaintext = b"a PKCS#8 blob, more or less, of some length beyond twenty bytes";
-        let salt = [7u8; SHA1_LEN];
+        let salt = crate::testfixtures::generated_salt::<SHA1_LEN>();
         let ciphertext = keystream_xor(pw.as_str(), &salt, plaintext);
         assert_ne!(ciphertext, plaintext.to_vec());
         assert_eq!(keystream_xor(pw.as_str(), &salt, &ciphertext), plaintext);
@@ -656,15 +656,20 @@ mod tests {
     fn con_006_a_wrong_key_password_is_detected_by_the_trailing_digest() {
         let pki = Pki::new();
         // Store password and key password differ, so the store digest passes and the key does not.
+        // The two must not be equal or the test proves nothing; `Pki` hands out distinct values.
+        let store_password = pki.password();
+        let key_password = pki.other_password();
+        assert_ne!(store_password, key_password);
+
         let store = jks_writer::Writer::new(false)
             .private_key(
                 "client",
                 pki.client_key_der().secret_der(),
                 &[pki.client_cert_der().to_vec()],
-                "keypass",
+                key_password,
             )
-            .finish("storepass");
-        let err = identity(Side::Origin, &store, Some("storepass")).unwrap_err();
+            .finish(store_password);
+        let err = identity(Side::Origin, &store, Some(store_password)).unwrap_err();
         assert!(err.to_string().contains("key password is wrong"), "{err}");
     }
 

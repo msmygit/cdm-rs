@@ -38,6 +38,27 @@ pub(crate) fn generated_password() -> String {
     )
 }
 
+/// A salt that differs on every call.
+///
+/// `keytool` randomises this, so a constant would let a reader that quietly ignored the salt still
+/// pass — and it reads to a scanner as an embedded cryptographic constant.
+pub(crate) fn generated_salt<const N: usize>() -> [u8; N] {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let seed = NEXT
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(u64::from(std::process::id()));
+    let mut salt = [0u8; N];
+    for (index, byte) in salt.iter_mut().enumerate() {
+        // A counter-derived pattern: no randomness is needed, only that it varies.
+        *byte = seed
+            .rotate_left(u32::try_from(index).unwrap_or(0) % 64)
+            .to_le_bytes()[index % 8];
+    }
+    salt
+}
+
 /// A self-signed CA plus a server and a client certificate issued by it.
 pub(crate) struct Pki {
     ca_cert: rcgen::Certificate,
@@ -390,15 +411,7 @@ pub(crate) mod jks_writer {
     fn protect(pkcs8: &[u8], password: &str) -> Vec<u8> {
         // `keytool` uses a random salt here, so vary it: a fixed one would let a reader that
         // ignored the salt still pass, and it reads to a scanner as an embedded crypto constant.
-        let mut salt = [0u8; 20];
-        for (index, byte) in salt.iter_mut().enumerate() {
-            *byte = password
-                .as_bytes()
-                .get(index % password.len().max(1))
-                .copied()
-                .unwrap_or(0x5a)
-                ^ u8::try_from(index).unwrap_or(0);
-        }
+        let salt = super::generated_salt::<20>();
         let ciphertext = keystream_xor(password, &salt, pkcs8);
         let mut hasher = Sha1::new();
         hasher.update(

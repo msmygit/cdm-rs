@@ -125,8 +125,12 @@ mod tests {
     #[test]
     fn con_006_a_wrong_pkcs12_password_says_so() {
         let pki = Pki::new();
-        let err =
-            identity(Side::Origin, &pki.keystore_pkcs12(pki.password()), "wrong").unwrap_err();
+        let err = identity(
+            Side::Origin,
+            &pki.keystore_pkcs12(pki.password()),
+            &format!("not-{}", pki.password()),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("store password"), "{err}");
     }
 

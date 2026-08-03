@@ -397,6 +397,23 @@ impl AddressTranslator for ProxyAddressTranslator {
     clippy::panic
 )]
 mod tests {
+    use crate::testfixtures::generated_password;
+
+    /// A token with Astra's prefix, generated so no credential-shaped literal sits in the tree.
+    fn astra_token() -> String {
+        format!("AstraCS:{}", generated_password())
+    }
+
+    /// A client id, which Astra formats as a UUID but which these tests only need to be non-empty
+    /// and distinguishable from a token.
+    fn client_id() -> String {
+        format!("id-{}", generated_password())
+    }
+
+    /// A client secret.
+    fn client_secret() -> String {
+        format!("secret-{}", generated_password())
+    }
     use std::net::{IpAddr, Ipv4Addr};
     use std::time::Duration;
 
@@ -494,32 +511,38 @@ mod tests {
 
     #[test]
     fn con_028_a_token_password_forces_the_token_username() {
-        let credentials =
-            AstraCredentials::resolve(Side::Origin, "cassandra", "AstraCS:abcdef").unwrap();
+        let token = astra_token();
+        let credentials = AstraCredentials::resolve(Side::Origin, "cassandra", &token).unwrap();
+
         assert_eq!(credentials.username(), "token");
-        assert_eq!(credentials.password(), "AstraCS:abcdef");
+        assert_eq!(
+            credentials.password(),
+            token,
+            "the token is passed through verbatim"
+        );
         assert!(credentials.is_token_form());
     }
 
     #[test]
     fn con_028_a_client_id_and_secret_pair_is_accepted_unchanged() {
-        let credentials =
-            AstraCredentials::resolve(Side::Origin, "abcd-client-id", "the-secret").unwrap();
-        assert_eq!(credentials.username(), "abcd-client-id");
+        let id = client_id();
+        let credentials = AstraCredentials::resolve(Side::Origin, &id, &client_secret()).unwrap();
+
+        assert_eq!(credentials.username(), id, "a client id is not rewritten");
         assert!(!credentials.is_token_form());
     }
 
     #[test]
     fn con_028_a_token_supplied_as_the_username_is_detected() {
         let err =
-            AstraCredentials::resolve(Side::Origin, "AstraCS:abcdef", "whatever").unwrap_err();
+            AstraCredentials::resolve(Side::Origin, &astra_token(), &client_secret()).unwrap_err();
         assert!(err.to_string().contains("is the *password*"), "{err}");
         assert_eq!(err.kind(), cdm_core::ErrorKind::Config);
     }
 
     #[test]
     fn con_028_an_empty_password_is_rejected() {
-        let err = AstraCredentials::resolve(Side::Origin, "token", "").unwrap_err();
+        let err = AstraCredentials::resolve(Side::Origin, "token", "").unwrap_err(); // empty, deliberately
         assert!(err.to_string().contains("empty"), "{err}");
     }
 
