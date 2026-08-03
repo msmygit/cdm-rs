@@ -197,18 +197,18 @@ test, fails CI.
 |---|---|---|---|---|
 | `ENG-001` <sup>N</sup> | The engine MUST be a Tokio-based work-stealing scheduler | `cdm-engine` | `eng_001_*` | #20 |
 | `ENG-002` <sup>P</sup> | A partition range is the unit of atomicity for tracking and resume: it is marked `STARTED` before work begins and… | `cdm-engine` | `eng_002_*` | #20 |
-| `ENG-003` <sup>P</sup> | Origin reads MUST be paged with page size `perfops.fetch_size` and streamed — never fully materialised | `cdm-engine` | `eng_003_*` | #20 |
-| `ENG-004` <sup>P</sup> | Two independent per-node rate limiters (origin rows read/s, target rows written/s), with an opt-in globally-divided mode | `cdm-engine` | `eng_004_*` | #51 |
+| `ENG-003` <sup>P</sup> | Origin reads MUST be paged with page size `perfops.fetch_size` and streamed — never fully materialised | `cdm-engine` | `eng_003_*` | #21 |
+| `ENG-004` <sup>P</sup> | Two independent per-node rate limiters (origin rows read/s, target rows written/s), with an opt-in globally-divided mode | `cdm-engine` | `eng_004_*` | #20 |
 | `ENG-005` <sup>N</sup> | Rate limiting MUST use a token-bucket with burst = 1 second of budget, and MUST apply backpressure (await) rather than… | `cdm-engine` | `eng_005_*` | #20 |
 | `ENG-006` <sup>N</sup> | `perfops.adaptive_ratelimit = true` MUST reduce the effective rate when the target reports overload (write timeouts,… | `cdm-engine` | `eng_006_*` | #53 |
 | `ENG-007` <sup>N</sup> | In-flight requests MUST be bounded by `perfops.max_inflight_reads` / `max_inflight_writes` semaphores so memory is bounded… | `cdm-engine` | `eng_007_*` | #20 |
 | `ENG-008` <sup>P</sup> | Per-range failure handling: an error MUST NOT abort the run | `cdm-engine` | `eng_008_*` | #20 |
-| `ENG-009` <sup>P+</sup> | `perfops.error_limit > 0` MUST abort the run once total `ERROR` exceeds it, draining in-flight work cleanly | `cdm-engine` | `eng_009_*` | #26 |
-| `ENG-010` <sup>N</sup> | `SIGINT`/`SIGTERM` MUST trigger graceful shutdown: stop claiming new ranges, let in-flight ranges finish (bounded by… | `cdm-engine` | `eng_010_*` | #26 |
+| `ENG-009` <sup>P+</sup> | `perfops.error_limit > 0` MUST abort the run once total `ERROR` exceeds it, draining in-flight work cleanly | `cdm-engine` | `eng_009_*` | #20 |
+| `ENG-010` <sup>N</sup> | `SIGINT`/`SIGTERM` MUST trigger graceful shutdown: stop claiming new ranges, let in-flight ranges finish (bounded by… | `cdm-engine` | `eng_010_*` | #20 |
 | `ENG-011` <sup>N</sup> | Every range's processing MUST be wrapped in a `tracing` span carrying `run_id`, `range_min`, `range_max`, `node_id`, so all… | `cdm-engine` | `eng_011_*` | #20 |
-| `ENG-012` <sup>P</sup> | . **ENG-013 [N]** — Panics inside a worker MUST be caught at the range boundary, converted to a range failure, and MUST NOT… | `cdm-engine` | `eng_012_*` | #20 |
+| `ENG-012` <sup>P</sup> | The range span MUST additionally carry Java's `min:max` `ThreadLabel`, padding included, when `logging.format = pretty` | `cdm-engine` | `eng_012_*` | #20 |
 | `ENG-013` <sup>N</sup> | Panics inside a worker MUST be caught at the range boundary, converted to a range failure, and MUST NOT poison the run | `cdm-engine` | `eng_013_*` | #20 |
-| `ENG-014` <sup>N</sup> | A pause/resume control stops issuing new work without losing the plan | `cdm-engine` | `eng_014_*` | #26 |
+| `ENG-014` <sup>N</sup> | A pause/resume control stops issuing new work without losing the plan | `cdm-engine` | `eng_014_*` | #20 |
 
 ### MIG
 
