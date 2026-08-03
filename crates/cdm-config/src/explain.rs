@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::loader::{LoadOutcome, Source};
@@ -16,7 +17,7 @@ use crate::model::CdmConfig;
 use crate::registry::PropertyRegistry;
 
 /// Everything `cdm config explain <key>` prints (`CFG-028`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Explanation {
     /// The canonical property name.
     pub canonical: String,
@@ -101,7 +102,7 @@ pub fn explain(key: &str, outcome: &LoadOutcome) -> Option<Explanation> {
 }
 
 /// One property that differs between two configurations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PropertyChange {
     /// The canonical property name.
     pub canonical: String,
@@ -112,7 +113,7 @@ pub struct PropertyChange {
 }
 
 /// The normalised difference between two configurations (`CFG-029`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ConfigDiff {
     /// The properties that differ, in canonical order.
     pub changes: Vec<PropertyChange>,

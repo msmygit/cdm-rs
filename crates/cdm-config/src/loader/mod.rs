@@ -31,6 +31,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use cdm_core::{Diagnostic, Severity};
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::meta::PropertyKind;
@@ -42,7 +43,8 @@ use crate::secret::{self, SecretSource, SystemSecrets};
 pub const CODE: &str = "CDM-CONFIG";
 
 /// Where a value came from (`CFG-010`, and the answer `cdm config explain` prints).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Source {
     /// The built-in default.
     Defaults,

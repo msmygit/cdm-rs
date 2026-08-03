@@ -385,13 +385,13 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CLI-001` <sup>N</sup> | A single `cdm` binary with subcommands: migrate, validate, guardrail, plan, runs, config, schema, connect, codecs, cluster, serve, mcp, completions, version | `cdm-cli` | `cli_001_*` | #10 |
-| `CLI-002` <sup>P</sup> | Java invocation shapes are accepted on every job subcommand, including a properties file and Spark-style conf overrides | `cdm-cli` | `cli_002_*` | #5 |
-| `CLI-003` <sup>N</sup> | `cdm config convert --from cdm.properties --to cdm.toml` MUST translate a Java config to canonical form, annotating deprecated… | `cdm-cli` | `cli_003_*` | #10 |
-| `CLI-004` <sup>N</sup> | Exit codes MUST be meaningful and documented: `0` success · `1` completed with failures/discrepancies · `2` configuration… | `cdm-cli` | `cli_004_*` | #10 |
-| `CLI-005` <sup>N</sup> | `--output json` MUST render machine-readable output for every non-streaming command | `cdm-cli` | `cli_005_*` | #10 |
+| `CLI-001` <sup>N</sup> | The `cdm` binary and its subcommand tree | `cdm-cli` | `cli_001_*` | #10 |
+| `CLI-002` <sup>P</sup> | Java invocation shapes are accepted on every job subcommand, including a properties file and Spark-style conf overrides | `cdm-cli` | `cli_002_*` | #10 |
+| `CLI-003` <sup>N</sup> | `cdm config convert` translates a Java properties file to canonical TOML, annotating what it found | `cdm-cli` | `cli_003_*` | #10 |
+| `CLI-004` <sup>N</sup> | Exit codes are meaningful and documented: success, completed-with-findings, config, connect, interrupted, internal | `cdm-cli::exit` | `cli_004_*` | #10 |
+| `CLI-005` <sup>N</sup> | `--output json` renders every non-streaming command as one machine-readable document | `cdm-cli::output` | `cli_005_*` | #10 |
 | `CLI-006` <sup>N</sup> | `cdm config init` MUST run an interactive wizard (skippable with `--non-interactive`) that connects, introspects the schema,… | `cdm-cli` | `cli_006_*` | #10 |
-| `CLI-007` <sup>N</sup> | Shell completions for bash/zsh/fish/powershell MUST be generated, plus a man page | `cdm-cli` | `cli_007_*` | #10 |
+| `CLI-007` <sup>N</sup> | Shell completions are generated for bash, zsh, fish and powershell | `cdm-cli` | `cli_007_*` | #10 |
 
 ### API
 
