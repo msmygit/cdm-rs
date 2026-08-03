@@ -140,11 +140,30 @@ cdm_properties! {
             /// Supports `env:VAR`, `file:/path` and `exec:command` indirection (`CFG-012`).
             #[cdm(legacy = ["spark.cdm.connect.{side}.password"], secret = true)]
             pub password: Secret<String> = Secret::new("cassandra"),
+
+            /// The datacenter the load-balancing policy treats as local (`CON-009`).
+            ///
+            /// Left unset, it is auto-detected from the contact point's `system.local`, which is
+            /// right for every single-region deployment. Set it when the process runs in a
+            /// different datacenter from the one it should read or write, or when the cluster
+            /// spans regions and `LOCAL_QUORUM` must resolve locally.
+            ///
+            /// New in cdm-rs: Java CDM has no equivalent property and always lets the driver
+            /// choose (`ConnectionFetcher`, `CDM-31`).
+            #[cdm(
+                default_note = "auto-detected from `system.local`",
+                example = "us-east1",
+            )]
+            pub local_datacenter: Option<String> = None,
         }
         sections {
             /// Astra DevOps API settings for downloading the bundle (`CFG-110`).
             #[cdm()]
             pub astra: Astra,
+
+            /// Speculative execution for this side (`CON-010`).
+            #[cdm()]
+            pub speculative: Speculative,
 
             /// TLS settings for a self-managed cluster with client encryption (`CFG-120`).
             ///
@@ -152,6 +171,34 @@ cdm_properties! {
             /// keystore and cipher suites. It is unrelated to the Astra secure-connect-bundle.
             #[cdm()]
             pub tls: Tls
+        }
+    }
+}
+
+cdm_properties! {
+    /// Speculative execution for one side (`CFG-100`, `CON-010`).
+    ///
+    /// A speculative execution is a second copy of a request, started when the first has not
+    /// answered within [`delay`](Speculative::delay) and raced against it. It trades throughput
+    /// for tail latency, and it is **off by default** — most of all for the target, where a
+    /// second copy of a non-idempotent write is a correctness problem rather than a performance
+    /// one. cdm-rs refuses to speculate on a counter table whatever this section says
+    /// (`CON-012`).
+    ///
+    /// New in cdm-rs: Java CDM has no equivalent property.
+    pub struct Speculative {
+        fields {
+            /// Whether to start speculative executions.
+            #[cdm()]
+            pub enabled: bool = false,
+
+            /// How long to wait for the previous execution before starting another.
+            #[cdm(unit = "duration",)]
+            pub delay: DurationSetting = DurationSetting::from_millis(200),
+
+            /// How many *extra* executions a request may have.
+            #[cdm(unit = "executions",)]
+            pub max_executions: u32 = 2,
         }
     }
 }

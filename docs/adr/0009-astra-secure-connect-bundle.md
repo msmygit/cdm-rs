@@ -57,6 +57,41 @@ do not serve CQL), with the same mTLS material.
 This works, and it is materially slower: one endpoint means no token-aware routing and no per-node
 balancing. It is therefore a fallback with a loud warning (`CON-027`), never a default.
 
+## Implementation findings (PR #7, #8, #9)
+
+The decision above assumed the driver exposed two hooks: a custom `AddressTranslator`, and a TLS
+connector able to set a per-connection `ServerName`. Against `scylla` 1.7 — the newest release —
+one exists and the other does not.
+
+| Hook | Verdict | Evidence |
+|---|---|---|
+| Custom `AddressTranslator` | **Exists.** `SessionBuilder::address_translator(Arc<dyn AddressTranslator>)` | `cdm_cql::astra::strategy::ProxyAddressTranslator` implements it. The trait's `#[async_trait]` signature elides the lifetime of `&UntranslatedPeer`, and an implementation must elide it identically: `&UntranslatedPeer<'_>` makes the lifetime early-bound and fails with `E0195`, which is what makes the trait look unimplementable from outside the crate. The bare `&UntranslatedPeer` compiles, at the cost of an `elided_lifetimes_in_paths` allow. |
+| Per-connection TLS `ServerName` | **Absent.** | `SessionBuilder::tls_context` takes one `TlsContext` for the whole session. The `TlsProvider`/`TlsConfig` pair that would choose a name per endpoint is `pub(crate)` with a single `GlobalContext` variant — `network/tls.rs` records that its `CloudConfig` variant, which once carried an SNI hostname for Scylla Cloud serverless, has been removed. With `rustls-023`, `network/connection.rs` builds `ServerName::IpAddress(node_address.ip())` itself, and rustls sends no SNI extension for an IP name. |
+
+`CON-000` also lists `cloud` among the required crate features. **There is no `cloud` feature in
+`scylla` 1.7**: the list is `rustls-023`, `openssl-010`, `metrics`, the serialization features and a
+set of `unstable-*`. The workspace manifest never enabled it, and `CON-023` forbids relying on it
+for Astra in any case, so the requirement was stale rather than violated; `SPEC.md` is corrected in
+the same change.
+
+**Consequence.** `CON-022`'s primary strategy is not reachable today. cdm-rs implements everything
+up to the missing hook — reading the bundle, the mutual-TLS metadata call, the metadata contract and
+its rate-limited refresh, local-DC and host-id extraction, and the address translator — and then
+selects `CON-026`'s single-endpoint fallback with the warning `CON-027` requires. The selection goes
+through one predicate, `driver_supports_per_connection_sni()`, so the day the hook lands the SNI path
+turns on with no configuration change and no other edit.
+
+A second local workaround follows from the same gap: rustls' stock verifier would demand an IP SAN
+on every server certificate, which no Cassandra or Astra deployment issues. `cdm_cql::tls::verifier`
+therefore always verifies the chain against the configured trust store, and checks the *name* only
+against a hostname the operator or the bundle supplied — never against the driver's synthetic IP
+name. It is removable with the hook.
+
+**Upstream.** The missing hook is worth raising: generic per-connection SNI benefits every Astra user
+of `scylla-rust-driver`, not only cdm-rs. The ask is a public equivalent of `TlsProvider` — something
+like `SessionBuilder::tls_provider(Arc<dyn TlsProvider>)`, where the provider is handed the endpoint
+and returns the `ServerName` to use for it.
+
 ## Consequences
 
 **Positive.** Astra works as an origin and a target, including the DevOps API auto-download that

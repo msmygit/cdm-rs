@@ -286,6 +286,10 @@ The following table is the **normative parity list**. It is generated from the J
 | `spark.cdm.connect.target.scb` | `connect.target.scb` | path | — |
 | `spark.cdm.connect.target.username` | `connect.target.username` | string | `cassandra` |
 | `spark.cdm.connect.target.password` | `connect.target.password` | secret | `cassandra` |
+| — **[N]** | `connect.{side}.local_datacenter` | string | — (auto-detected, `CON-009`) |
+| — **[N]** | `connect.{side}.speculative.enabled` | bool | `false` (`CON-010`) |
+| — **[N]** | `connect.{side}.speculative.delay` | duration | `200ms` (`CON-010`) |
+| — **[N]** | `connect.{side}.speculative.max_executions` | u32 | `2` (`CON-010`) |
 
 #### 3.5.2 Astra DevOps / SCB auto-download — **CFG-110**
 
@@ -459,8 +463,10 @@ never had an effect. Constant-column types are resolved from the target schema (
 [`scylla-rust-driver`](https://github.com/scylladb/scylla-rust-driver) (crate `scylla`), which is
 protocol-compatible with Apache Cassandra, DSE, HCD, Astra DB and ScyllaDB. It is the sole driver
 dependency; the Java driver, `cdrs-tokio` and `cassandra-cpp` are not used. Required crate features:
-`rustls-023` (TLS), `cloud` (SNI/secure-connect-bundle support), `metrics`, `chrono-04`,
-`num-bigint-04`, `bigdecimal-04`. All driver usage MUST be confined to the `cdm-cql` crate behind
+`rustls-023` (TLS), `metrics`, `chrono-04`, `num-bigint-04`, `bigdecimal-04`. (Earlier revisions
+also listed `cloud`. No such feature exists in `scylla` 1.x — the Scylla Cloud serverless support it
+named was removed — and `CON-023` forbids relying on it for Astra in any case; see `ADR-0009`.)
+All driver usage MUST be confined to the `cdm-cql` crate behind
 the `RowSource`/`RowSink`/`SessionHandle` abstractions, so no other crate depends on `scylla`
 directly and the driver remains replaceable. See `ADR-0002`.
 
@@ -559,7 +565,7 @@ restart.
 
 **CON-025 [N]** — The metadata response MUST be re-fetched when all connections fail with a TLS or
 routing error, since `sni_proxy_address` can change. Re-fetch MUST be rate-limited (at most once per
-`connect.astra.metadata_refresh_interval`, default `5m`).
+`connect.{side}.astra.metadata_refresh_interval`, default `5m`).
 
 **CON-026 [N]** — **Fallback strategy — single-endpoint mTLS.** When SNI routing is unavailable
 (hook missing, metadata service unreachable, or `connect.{side}.astra.mode = single_endpoint`),
@@ -607,7 +613,9 @@ Java** and prevents silent counter drift — **CON-012 [P+]**.
 
 **CON-013 [N]** — Origin and target compatibility MUST be probed at startup: protocol version,
 whether `WRITETIME`/`TTL` on collections is supported, whether vector types are supported. Findings
-feed Tier-3 validation.
+feed Tier-3 validation. (`scylla-rust-driver` 1.7 exposes no accessor for the negotiated native
+protocol version, so the probe reports `system.local`'s `cql_version` and `release_version` and
+leaves the protocol version unset until the driver exposes one; see `ADR-0009`.)
 
 ---
 

@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-112 properties.
+120 properties.
 
 
 ## `connect`
@@ -37,12 +37,16 @@ should not use it.
 | `connect.origin.scb` | `spark.cdm.connect.origin.scb` | path | — | — | stable | Path to an Astra DB secure-connect-bundle zip. |
 | `connect.origin.username` | `spark.cdm.connect.origin.username` | string | `cassandra` | — | stable | Username, or the literal `token` when authenticating to Astra. |
 | `connect.origin.password` | `spark.cdm.connect.origin.password` | secret | `***` | — | stable | Password, or the Astra token. |
+| `connect.origin.local_datacenter` | — | string | auto-detected from `system.local` | — | stable | The datacenter the load-balancing policy treats as local (`CON-009`). |
 | `connect.origin.astra.database_id` | `spark.cdm.connect.origin.astra.database.id` | uuid | — | — | stable | The Astra database UUID, used to download a bundle through the DevOps API. |
 | `connect.origin.astra.scb_type` | `spark.cdm.connect.origin.astra.scb.type` | `default` \| `custom` | `default` | — | stable | Whether to download the standard bundle or a custom-domain one. |
 | `connect.origin.astra.region` | `spark.cdm.connect.origin.astra.scb.region` | string | — | — | stable | The Astra region whose bundle to download, for multi-region databases. |
 | `connect.origin.astra.custom_domain` | `spark.cdm.connect.origin.astra.scb.custom.domain` | string | — | — | stable | The custom domain the bundle should be issued for. |
 | `connect.origin.astra.mode` | — | `sni` \| `single_endpoint` | `sni` | — | experimental | How CQL traffic reaches Astra (`CON-022`, `CON-026`). |
 | `connect.origin.astra.metadata_refresh_interval` | — | duration | `5m` | duration | stable | How often to refresh Astra control-connection metadata (`CON-025`). |
+| `connect.origin.speculative.enabled` | — | bool | `false` | — | stable | Whether to start speculative executions. |
+| `connect.origin.speculative.delay` | — | duration | `200ms` | duration | stable | How long to wait for the previous execution before starting another. |
+| `connect.origin.speculative.max_executions` | — | integer | `2` | executions | stable | How many *extra* executions a request may have. |
 | `connect.origin.tls.enabled` | `spark.cdm.connect.origin.tls.enabled` | bool | `false` | — | stable | Whether to use TLS. |
 | `connect.origin.tls.cipher_suites` | `spark.cdm.connect.origin.tls.enabledAlgorithms` | list | `TLS_RSA_WITH_AES_128_CBC_SHA,TLS_RSA_WITH_AES_256_CBC_SHA` | — | stable | Cipher suites offered during the handshake. |
 | `connect.origin.tls.is_astra` | `spark.cdm.connect.origin.tls.isAstra` | bool | `false` | — | stable | Whether this side is Astra, which implies its own trust material. |
@@ -56,12 +60,16 @@ should not use it.
 | `connect.target.scb` | `spark.cdm.connect.target.scb` | path | — | — | stable | Path to an Astra DB secure-connect-bundle zip. |
 | `connect.target.username` | `spark.cdm.connect.target.username` | string | `cassandra` | — | stable | Username, or the literal `token` when authenticating to Astra. |
 | `connect.target.password` | `spark.cdm.connect.target.password` | secret | `***` | — | stable | Password, or the Astra token. |
+| `connect.target.local_datacenter` | — | string | auto-detected from `system.local` | — | stable | The datacenter the load-balancing policy treats as local (`CON-009`). |
 | `connect.target.astra.database_id` | `spark.cdm.connect.target.astra.database.id` | uuid | — | — | stable | The Astra database UUID, used to download a bundle through the DevOps API. |
 | `connect.target.astra.scb_type` | `spark.cdm.connect.target.astra.scb.type` | `default` \| `custom` | `default` | — | stable | Whether to download the standard bundle or a custom-domain one. |
 | `connect.target.astra.region` | `spark.cdm.connect.target.astra.scb.region` | string | — | — | stable | The Astra region whose bundle to download, for multi-region databases. |
 | `connect.target.astra.custom_domain` | `spark.cdm.connect.target.astra.scb.custom.domain` | string | — | — | stable | The custom domain the bundle should be issued for. |
 | `connect.target.astra.mode` | — | `sni` \| `single_endpoint` | `sni` | — | experimental | How CQL traffic reaches Astra (`CON-022`, `CON-026`). |
 | `connect.target.astra.metadata_refresh_interval` | — | duration | `5m` | duration | stable | How often to refresh Astra control-connection metadata (`CON-025`). |
+| `connect.target.speculative.enabled` | — | bool | `false` | — | stable | Whether to start speculative executions. |
+| `connect.target.speculative.delay` | — | duration | `200ms` | duration | stable | How long to wait for the previous execution before starting another. |
+| `connect.target.speculative.max_executions` | — | integer | `2` | executions | stable | How many *extra* executions a request may have. |
 | `connect.target.tls.enabled` | `spark.cdm.connect.target.tls.enabled` | bool | `false` | — | stable | Whether to use TLS. |
 | `connect.target.tls.cipher_suites` | `spark.cdm.connect.target.tls.enabledAlgorithms` | list | `TLS_RSA_WITH_AES_128_CBC_SHA,TLS_RSA_WITH_AES_256_CBC_SHA` | — | stable | Cipher suites offered during the handshake. |
 | `connect.target.tls.is_astra` | `spark.cdm.connect.target.tls.isAstra` | bool | `false` | — | stable | Whether this side is Astra, which implies its own trust material. |

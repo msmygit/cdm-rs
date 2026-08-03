@@ -83,9 +83,14 @@ rust-embed = "8"
 
 # --- crypto / TLS -----------------------------------------------------------
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 webpki-roots = "0.26"
 zeroize = { version = "1", features = ["derive"] }
+# CON-006: the pure-Rust keystore readers. `p12-keystore` reads (and, in tests, writes) PKCS#12;
+# `sha1` backs the JKS keyed digest and the JKS key-protection stream cipher, both of which the
+# format defines as SHA-1 and which are used for nothing else.
+p12-keystore = "0.3"
+sha1 = "0.10"
 
 # --- CLI --------------------------------------------------------------------
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
@@ -124,6 +129,9 @@ testcontainers-modules = "0.15"
 criterion = { version = "0.8", features = ["html_reports"] }
 pretty_assertions = "1"
 tempfile = "3"
+# CON-006/CON-007 fixtures: certificates and keys are generated at test time rather than
+# committed, so no key material ever enters the repository (SEC-001).
+rcgen = "0.14"
 
 # Lints applied uniformly to every crate via `[lints] workspace = true` (OPS-001, ERR-004, SEC-031).
 [workspace.lints.rust]

@@ -193,9 +193,15 @@
               "scb_type": "default"
             },
             "host": "localhost",
+            "local_datacenter": null,
             "password": "***",
             "port": 9042,
             "scb": null,
+            "speculative": {
+              "delay": "200ms",
+              "enabled": false,
+              "max_executions": 2
+            },
             "tls": {
               "cipher_suites": [
                 "TLS_RSA_WITH_AES_128_CBC_SHA",
@@ -229,9 +235,15 @@
               "scb_type": "default"
             },
             "host": "localhost",
+            "local_datacenter": null,
             "password": "***",
             "port": 9042,
             "scb": null,
+            "speculative": {
+              "delay": "200ms",
+              "enabled": false,
+              "max_executions": 2
+            },
             "tls": {
               "cipher_suites": [
                 "TLS_RSA_WITH_AES_128_CBC_SHA",
@@ -1008,6 +1020,14 @@
           "description": "Contact point host name or IP address.\n\nThis is the normal way to reach Apache Cassandra, DSE, HCD and ScyllaDB. Either\nthis or [`scb`](SideConnect::scb) must be set for the side, and setting both is an\nerror (`CFG-024`, `CFG-041`).",
           "type": "string"
         },
+        "local_datacenter": {
+          "default": null,
+          "description": "The datacenter the load-balancing policy treats as local (`CON-009`).\n\nLeft unset, it is auto-detected from the contact point's `system.local`, which is\nright for every single-region deployment. Set it when the process runs in a\ndifferent datacenter from the one it should read or write, or when the cluster\nspans regions and `LOCAL_QUORUM` must resolve locally.\n\nNew in cdm-rs: Java CDM has no equivalent property and always lets the driver\nchoose (`ConnectionFetcher`, `CDM-31`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "password": {
           "$ref": "#/$defs/Secret",
           "default": "***",
@@ -1028,6 +1048,15 @@
             "string",
             "null"
           ]
+        },
+        "speculative": {
+          "$ref": "#/$defs/Speculative",
+          "default": {
+            "delay": "200ms",
+            "enabled": false,
+            "max_executions": 2
+          },
+          "description": "Speculative execution for this side (`CON-010`)."
         },
         "tls": {
           "$ref": "#/$defs/Tls",
@@ -1054,6 +1083,30 @@
           "default": "cassandra",
           "description": "Username, or the literal `token` when authenticating to Astra.",
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Speculative": {
+      "additionalProperties": false,
+      "description": "Speculative execution for one side (`CFG-100`, `CON-010`).\n\nA speculative execution is a second copy of a request, started when the first has not\nanswered within [`delay`](Speculative::delay) and raced against it. It trades throughput\nfor tail latency, and it is **off by default** — most of all for the target, where a\nsecond copy of a non-idempotent write is a correctness problem rather than a performance\none. cdm-rs refuses to speculate on a counter table whatever this section says\n(`CON-012`).\n\nNew in cdm-rs: Java CDM has no equivalent property.",
+      "properties": {
+        "delay": {
+          "$ref": "#/$defs/Duration",
+          "default": "200ms",
+          "description": "How long to wait for the previous execution before starting another."
+        },
+        "enabled": {
+          "default": false,
+          "description": "Whether to start speculative executions.",
+          "type": "boolean"
+        },
+        "max_executions": {
+          "default": 2,
+          "description": "How many *extra* executions a request may have.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1413,9 +1466,15 @@
             "scb_type": "default"
           },
           "host": "localhost",
+          "local_datacenter": null,
           "password": "***",
           "port": 9042,
           "scb": null,
+          "speculative": {
+            "delay": "200ms",
+            "enabled": false,
+            "max_executions": 2
+          },
           "tls": {
             "cipher_suites": [
               "TLS_RSA_WITH_AES_128_CBC_SHA",
@@ -1445,9 +1504,15 @@
             "scb_type": "default"
           },
           "host": "localhost",
+          "local_datacenter": null,
           "password": "***",
           "port": 9042,
           "scb": null,
+          "speculative": {
+            "delay": "200ms",
+            "enabled": false,
+            "max_executions": 2
+          },
           "tls": {
             "cipher_suites": [
               "TLS_RSA_WITH_AES_128_CBC_SHA",

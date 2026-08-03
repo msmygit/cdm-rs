@@ -3,6 +3,21 @@
 //! Part of [cdm-rs](https://github.com/msmygit/cdm-rs), a Rust reimplementation of the
 //! Cassandra Data Migrator.
 //!
+//! # What is here
+//!
+//! * [`connect`] — building an origin and a target session independently, in each of the four
+//!   connection modes, with the load-balancing, speculative-execution and retry policies cdm-rs
+//!   requires, and the start-up capability probe.
+//! * [`tls`] — the trust and key store readers (`PEM`, `PKCS12` and a pure-Rust `JKS`), the
+//!   cipher-suite gate and the certificate verifier.
+//! * [`astra`] — the secure-connect-bundle: reading the zip in memory, the metadata service, the
+//!   DevOps API download and the strategy that follows from what the driver can actually do.
+//! * [`schema`] — `system_schema` introspection, identifier quoting, and the
+//!   [`SchemaProvider`](cdm_config::SchemaProvider) implementation that lets Tier-3 configuration
+//!   validation run.
+//! * [`raw`] — undeserialized access to result rows, the primitive zero-copy passthrough is built
+//!   on.
+//!
 //! # Specification
 //!
 //! This crate is the designated home for the following requirements from
@@ -10,22 +25,42 @@
 //! [`docs/TRACEABILITY.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/TRACEABILITY.md)
 //! for the full matrix:
 //!
-//! - `CON-000`
-//! - `CON-001`
-//! - `SCH-001`
-//! - `SCH-007`
+//! - `CON-000` — the driver, and only in this crate
+//! - `CON-001`..`CON-013` — connection building, TLS, load balancing, retries, the capability probe
+//! - `CON-020`..`CON-029` — Astra secure-connect-bundles
+//! - `SCH-001`, `SCH-002`, `SCH-010` — schema introspection, identifiers, materialized views
 //!
-//! # Status
+//! # A driver limitation you will meet
 //!
-//! Scaffolding only. Implementation lands in the pull requests listed in
-//! [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
+//! `scylla-rust-driver` 1.7 cannot set a per-connection TLS `server_name`, which is the mechanism
+//! Astra's SNI proxy routes on. `CON-022`'s primary strategy is therefore not reachable today and
+//! cdm-rs uses the documented single-endpoint fallback (`CON-026`) with a loud warning. The
+//! analysis, and everything that *is* implemented behind it, is in [`astra::strategy`].
 
+pub mod astra;
+pub mod connect;
 pub mod raw;
+pub mod schema;
+pub mod tls;
+
+mod errors;
+mod http;
+
+#[cfg(test)]
+mod testfixtures;
 
 /// The version of this crate, as reported by `cdm version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
+// (ERR-004) exists to protect production paths, not test bodies.
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::*;
 
