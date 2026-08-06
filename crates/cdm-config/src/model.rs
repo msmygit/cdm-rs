@@ -14,8 +14,8 @@ use std::path::PathBuf;
 
 use crate::secret::Secret;
 use crate::types::{
-    AstraDatabaseId, AstraMode, AuthMode, ConsistencyLevel, DurationSetting, EventSink,
-    GuardrailMode, LogFormat, ScbType, TokenBound, TrustStoreType,
+    AstraDatabaseId, AstraMode, AuthMode, BatchGrouping, ConsistencyLevel, DurationSetting,
+    EventSink, GuardrailMode, LogFormat, ScbType, TokenBound, TrustStoreType,
 };
 
 cdm_properties! {
@@ -521,6 +521,14 @@ cdm_properties! {
             /// (`CFG-040`, `MIG-021`).
             #[cdm(legacy = ["spark.cdm.perfops.batchSize"], unit = "rows")]
             pub batch_size: u32 = 5,
+
+            /// How rows are grouped into a write batch (`MIG-022`).
+            ///
+            /// `strict` never puts two partitions in one batch, which is the only batching that
+            /// is faster than the writes it replaces. `legacy` reproduces Java's index-order
+            /// batching exactly.
+            #[cdm()]
+            pub batch_grouping: BatchGrouping = BatchGrouping::Strict,
 
             /// Rows read from the origin per page.
             #[cdm(legacy = ["spark.cdm.perfops.fetchSizeInRows"], unit = "rows")]

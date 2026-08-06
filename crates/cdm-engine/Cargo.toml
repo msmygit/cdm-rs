@@ -41,7 +41,10 @@ tracing.workspace = true
 # graph that rule governs, and is what lets `guardrail_it.rs` read frame bytes directly in order to
 # state, independently of the job, what the job should have measured.
 [dev-dependencies]
+# `cdm-testkit` is a dev-dependency in this direction only: the testkit must not depend on the
+# engine (ARCHITECTURE.md §3), and the `*_it` suites are where each job meets a real node.
 cdm-testkit.workspace = true
+
 proptest.workspace = true
 scylla.workspace = true
 serde_json.workspace = true

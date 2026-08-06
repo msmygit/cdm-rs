@@ -184,6 +184,23 @@ config_enum! {
 }
 
 config_enum! {
+    /// How rows are grouped into a write batch (`MIG-022`).
+    ///
+    /// A Cassandra `UNLOGGED` batch that spans partitions is not an optimisation: the coordinator
+    /// fans it out to every replica set involved and the batch finishes no sooner than its slowest
+    /// participant. The only batch that is faster than the individual writes it replaces is a
+    /// single-partition one, which the coordinator applies as a single mutation.
+    pub enum BatchGrouping {
+        /// Rows belonging to different partitions are never batched together.
+        Strict => "strict",
+        /// Java's behaviour: rows are appended in the order they are read, whatever partition they
+        /// belong to, and the batch is sent once it reaches `perfops.batch_size`.
+        Legacy => "legacy",
+    }
+    default = Strict;
+}
+
+config_enum! {
     /// The shape of log records.
     pub enum LogFormat {
         /// Human-readable, multi-line, coloured when the terminal supports it.

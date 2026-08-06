@@ -54,7 +54,7 @@ mod upsert;
 
 pub use bind::{
     BindFailure, BindInputs, Binder, Bound, BoundValue, BoundWrite, CounterWrite, Idempotent,
-    IdempotentWrite, MissingKeyPolicy, SourceRow,
+    IdempotentWrite, KeyBinding, MissingKeyPolicy, SourceRow,
 };
 pub use mapping::{ColumnMapping, MappingOptions, TargetSource};
 pub use projection::OriginProjection;

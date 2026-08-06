@@ -12,7 +12,8 @@
 //!
 //! - `TOK-001`..`TOK-010` — [`planner`], the token-range planner
 //! - `ENG-001`..`ENG-014` — [`scheduler`], the work-stealing execution engine
-//! - `MIG-001`
+//! - `MIG-001`..`MIG-005`, `MIG-020`..`MIG-022`, `MIG-030`..`MIG-032`, `MIG-041` — [`migrate`],
+//!   the migrate job
 //! - `VAL-001`..`VAL-012`, `VAL-016`, `VAL-017` — [`jobs::validate`], the diff job
 //! - `GRD-001`..`GRD-004` — [`jobs::guardrail`], the guardrail job
 //!
@@ -35,9 +36,11 @@
 //! [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
 
 pub mod jobs;
+pub mod migrate;
 pub mod planner;
 pub mod scheduler;
 
+pub use migrate::{MigrateJob, MigratePlan, MigrateSettings};
 pub use planner::{
     subdivide_for_rerun, ClusterTopology, InMemoryTopology, MemoryEnvelope, Partitioner,
     PlanReport, PlanStrategy, PlannedRange, Planner, PlannerSettings, RingSegment, SizeEstimate,

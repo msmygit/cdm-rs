@@ -37,6 +37,16 @@ pub enum ErrorKind {
     Tls,
     /// Origin and target schemas cannot be reconciled for the requested job.
     SchemaMismatch,
+    /// A schema changed underneath a running job (`SCH-009`).
+    ///
+    /// Distinct from [`ErrorKind::SchemaMismatch`], which is decided before any data moves: this
+    /// one says the schema cdm-rs planned against is no longer the schema it is writing to, so
+    /// every statement, conversion plan and bind order resolved at startup may now be wrong. It
+    /// is fatal for the same reason a mismatch is — carrying on would write data nobody can
+    /// reconcile — but it needs its own code, because the operator's response is different: a
+    /// mismatch is fixed by editing the configuration, a mid-run change by re-running once the
+    /// schema has settled.
+    SchemaChanged,
     /// A value could not be converted between the origin and target CQL types.
     TypeConversion,
     /// A read against the origin (or, when validating, the target) failed.
@@ -58,12 +68,13 @@ pub enum ErrorKind {
 impl ErrorKind {
     /// Every kind, in declaration order. Exhaustive by construction: adding a variant without
     /// adding it here fails `err_001_all_lists_every_kind`.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Config,
         Self::Connect,
         Self::Auth,
         Self::Tls,
         Self::SchemaMismatch,
+        Self::SchemaChanged,
         Self::TypeConversion,
         Self::Read,
         Self::Write,
@@ -82,6 +93,7 @@ impl ErrorKind {
             Self::Auth => "Auth",
             Self::Tls => "Tls",
             Self::SchemaMismatch => "SchemaMismatch",
+            Self::SchemaChanged => "SchemaChanged",
             Self::TypeConversion => "TypeConversion",
             Self::Read => "Read",
             Self::Write => "Write",
@@ -104,6 +116,7 @@ impl ErrorKind {
             Self::Auth => "CDM-AUTH",
             Self::Tls => "CDM-TLS",
             Self::SchemaMismatch => "CDM-SCHEMA-MISMATCH",
+            Self::SchemaChanged => "CDM-SCHEMA-CHANGED",
             Self::TypeConversion => "CDM-TYPE-CONVERSION",
             Self::Read => "CDM-READ",
             Self::Write => "CDM-WRITE",
@@ -139,6 +152,7 @@ impl ErrorKind {
                 | Self::Auth
                 | Self::Tls
                 | Self::SchemaMismatch
+                | Self::SchemaChanged
                 | Self::Internal
         )
     }
@@ -348,6 +362,18 @@ pub enum CdmError {
         #[source]
         source: Option<BoxSource>,
     },
+    /// See [`ErrorKind::SchemaChanged`].
+    #[error("schema changed mid-run: {message}{context}")]
+    SchemaChanged {
+        /// What went wrong.
+        message: String,
+        /// Where it went wrong. Boxed so that `CdmError` stays small enough to return by
+        /// value on the hot path without bloating every `Result`.
+        context: Box<ErrorContext>,
+        /// The underlying cause, if any.
+        #[source]
+        source: Option<BoxSource>,
+    },
     /// See [`ErrorKind::TypeConversion`].
     #[error("type conversion error: {message}{context}")]
     TypeConversion {
@@ -476,6 +502,11 @@ macro_rules! for_each_variant {
                 $context,
                 $source,
             }
+            | CdmError::SchemaChanged {
+                $message,
+                $context,
+                $source,
+            }
             | CdmError::TypeConversion {
                 $message,
                 $context,
@@ -552,6 +583,11 @@ impl CdmError {
                 context,
                 source,
             },
+            ErrorKind::SchemaChanged => Self::SchemaChanged {
+                message,
+                context,
+                source,
+            },
             ErrorKind::TypeConversion => Self::TypeConversion {
                 message,
                 context,
@@ -603,6 +639,7 @@ impl CdmError {
             Self::Auth { .. } => ErrorKind::Auth,
             Self::Tls { .. } => ErrorKind::Tls,
             Self::SchemaMismatch { .. } => ErrorKind::SchemaMismatch,
+            Self::SchemaChanged { .. } => ErrorKind::SchemaChanged,
             Self::TypeConversion { .. } => ErrorKind::TypeConversion,
             Self::Read { .. } => ErrorKind::Read,
             Self::Write { .. } => ErrorKind::Write,
@@ -701,7 +738,8 @@ mod tests {
     fn err_001_all_lists_every_kind_exactly_once() {
         let unique: BTreeSet<_> = ErrorKind::ALL.iter().collect();
         assert_eq!(unique.len(), ErrorKind::ALL.len());
-        // The thirteen codes named in ERR-001.
+        // The codes named in ERR-001, plus the `SchemaChanged` that `SCH-009` requires to be
+        // distinguishable from `SchemaMismatch`.
         let names: Vec<&str> = ErrorKind::ALL.iter().map(ErrorKind::as_str).collect();
         assert_eq!(
             names,
@@ -711,6 +749,7 @@ mod tests {
                 "Auth",
                 "Tls",
                 "SchemaMismatch",
+                "SchemaChanged",
                 "TypeConversion",
                 "Read",
                 "Write",
@@ -720,6 +759,26 @@ mod tests {
                 "Cancelled",
                 "Internal",
             ]
+        );
+    }
+
+    #[test]
+    fn sch_009_a_mid_run_schema_change_has_its_own_fatal_kind() {
+        // SCH-009 asks for a *distinct* kind, so the two schema kinds must not collapse into one:
+        // a mismatch is fixed by editing configuration, a mid-run change by waiting and re-running.
+        assert_ne!(ErrorKind::SchemaChanged, ErrorKind::SchemaMismatch);
+        assert_eq!(
+            ErrorKind::SchemaChanged.diagnostic_code(),
+            "CDM-SCHEMA-CHANGED"
+        );
+        assert!(ErrorKind::SchemaChanged.is_fatal());
+        assert!(!ErrorKind::SchemaChanged.is_retryable());
+
+        let error = CdmError::new(ErrorKind::SchemaChanged, "the target table gained a column");
+        assert_eq!(error.kind(), ErrorKind::SchemaChanged);
+        assert!(
+            error.to_string().starts_with("schema changed mid-run:"),
+            "{error}"
         );
     }
 
@@ -802,6 +861,7 @@ mod tests {
             ErrorKind::Auth,
             ErrorKind::Tls,
             ErrorKind::SchemaMismatch,
+            ErrorKind::SchemaChanged,
             ErrorKind::Internal,
         ] {
             assert!(kind.is_fatal(), "{kind} must abort the run");

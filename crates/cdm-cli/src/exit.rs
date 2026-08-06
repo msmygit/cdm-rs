@@ -80,6 +80,10 @@ impl Exit {
             ErrorKind::Config | ErrorKind::SchemaMismatch => Self::Config,
             ErrorKind::Connect | ErrorKind::Auth | ErrorKind::Tls => Self::Connect,
             ErrorKind::Cancelled => Self::Interrupted,
+            // SCH-009: the configuration was fine and the run really started; somebody altered a
+            // table underneath it. That is `Completed`, not `Config` — nothing needs editing, and
+            // the honest thing to tell a supervisor is that the run did work and then stopped.
+            ErrorKind::SchemaChanged => Self::Completed,
             _ => Self::Internal,
         }
     }
