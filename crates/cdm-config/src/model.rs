@@ -553,6 +553,15 @@ cdm_properties! {
             /// Reduce the rate limit automatically when the target signals overload.
             #[cdm(stability = experimental,)]
             pub adaptive_ratelimit: bool = false,
+
+            /// How long a graceful shutdown lets in-flight ranges finish (`ENG-010`).
+            ///
+            /// After a `SIGINT` or `SIGTERM` the scheduler stops claiming new ranges and waits
+            /// this long for the ones already running. It is a deadline, not a request: a range
+            /// that has not finished by then is abandoned and stays unclaimed for a resume, which
+            /// is why the value is worth raising on a cluster whose individual ranges are slow.
+            #[cdm(unit = "duration",)]
+            pub shutdown_grace: DurationSetting = DurationSetting::from_secs(60),
         }
         sections {
             /// Rate limits, per side.
@@ -984,6 +993,18 @@ cdm_properties! {
             /// How often a node renews its leases and refreshes its membership row.
             #[cdm(unit = "duration",)]
             pub heartbeat_interval: DurationSetting = DurationSetting::from_secs(15),
+
+            /// Treat `perfops.ratelimit.*` as a budget for the whole cluster (`ENG-004`).
+            ///
+            /// Off, every node applies the configured limit itself, so *n* nodes hit the origin
+            /// *n* times as hard — which is usually a surprise. On, each node takes an equal share
+            /// of the limit based on the live membership count, so the number that was configured
+            /// is the number the clusters actually see.
+            ///
+            /// Only meaningful when `cluster.enabled` is set; a single node's share of a limit is
+            /// the whole limit.
+            #[cdm(stability = experimental,)]
+            pub ratelimit_is_global: bool = false,
         }
     }
 }

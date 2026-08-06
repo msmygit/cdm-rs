@@ -150,6 +150,11 @@
             "string",
             "null"
           ]
+        },
+        "ratelimit_is_global": {
+          "default": false,
+          "description": "Treat `perfops.ratelimit.*` as a budget for the whole cluster (`ENG-004`).\n\nOff, every node applies the configured limit itself, so *n* nodes hit the origin\n*n* times as hard — which is usually a surprise. On, each node takes an equal share\nof the limit based on the live membership count, so the number that was configured\nis the number the clusters actually see.\n\nOnly meaningful when `cluster.enabled` is set; a single node's share of a limit is\nthe whole limit.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -842,6 +847,11 @@
           },
           "description": "Retry policy for transient failures."
         },
+        "shutdown_grace": {
+          "$ref": "#/$defs/Duration",
+          "default": "1m",
+          "description": "How long a graceful shutdown lets in-flight ranges finish (`ENG-010`).\n\nAfter a `SIGINT` or `SIGTERM` the scheduler stops claiming new ranges and waits\nthis long for the ones already running. It is a deadline, not a request: a range\nthat has not finished by then is abandoned and stays unclaimed for a resume, which\nis why the value is worth raising on a cluster whose individual ranges are slow."
+        },
         "workers": {
           "default": null,
           "description": "Concurrent range workers.",
@@ -1449,7 +1459,8 @@
         "enabled": false,
         "heartbeat_interval": "15s",
         "lease_duration": "1m",
-        "node_id": null
+        "node_id": null,
+        "ratelimit_is_global": false
       },
       "description": "Distributed mode (`CFG-200`)."
     },
@@ -1629,6 +1640,7 @@
           "max_attempts": 5,
           "max_backoff": "10s"
         },
+        "shutdown_grace": "1m",
         "workers": null
       },
       "description": "Throughput, concurrency and reliability tuning (`CFG-160`)."
