@@ -889,12 +889,24 @@ asynchronous target SELECT by PK; buffer records and compare in batches of `fetc
 `autocorrect.missing_counter = true`; otherwise log and skip the correction.
 
 **VAL-005 [P]** — Column comparison MUST convert the target value into the origin's type space and
-compare for equality. Both null → equal. Origin null with target non-null → mismatch. Constant
-columns MUST be excluded from comparison.
+compare for equality. Both null → equal. Origin null with target non-null → mismatch. Origin
+non-null with target null → mismatch. Constant columns MUST be excluded from comparison.
+
+The origin value is **not** converted; only the target's is, which is what makes the comparison a
+check on the inverse of the conversion the migration performed. Two values that differ in wire
+representation but are equal after that conversion are not a discrepancy.
 
 **VAL-006 [P]** — A mismatch MUST increment `MISMATCH` and log at ERROR:
 `Mismatch row found for key: <pk> Mismatch: <detail>` where detail lists, per differing column,
-`Target column:<name>-origin[<formatted>]-target[<formatted>]; `.
+`Target column:<name>-origin[<formatted>]-target[<formatted>]; `. Where the origin has no value and
+the target does, Java emits a second form instead —
+`Target column:<name> origin is null, target is <formatted>; ` — and both MUST be reproduced.
+
+Java iterates the columns in a `parallel()` stream over a shared `StringBuffer`, so its column order
+is unspecified; cdm-rs emits them in target-column order — **[P+]**, unrestorable, and required for
+two runs' diff logs to be comparable at all.
+
+The `<formatted>` positions are subject to `VAL-017`.
 
 **VAL-007 [P]** — `autocorrect.mismatch = true` → upsert the record, increment
 `CORRECTED_MISMATCH`, log `Corrected mismatch row in target: <pk>`.
@@ -927,6 +939,30 @@ and `validate --keys-only` MUST compare existence only (much faster pre-flight).
 **VAL-016 [P]** — Run status resolution: any discrepancy with
 `MISSING == CORRECTED_MISSING && MISMATCH == CORRECTED_MISMATCH` → `DIFF_CORRECTED`; any remaining
 discrepancy → `DIFF`; none → `PASS`; exception → `FAIL`.
+
+The four counters MUST be read at the **interim** level (`MET-004`), before the range's flush. At the
+committed level every one of them is still `0`, so both equalities hold trivially and *every* range
+with a discrepancy would be reported `DIFF_CORRECTED` — including one where nothing was corrected.
+`TRK-031` re-plans `DIFF` but not `DIFF_CORRECTED`, so the wrong level here does not merely mislabel
+a range: it decides whether the range is ever looked at again.
+
+**VAL-017 [P+]** — The diff log MUST NOT contain row values. Every `<formatted>` position of
+`VAL-006` and `VAL-009` renders the fixed marker `<redacted>`; a discrepancy is identified by its
+primary key and the names of the differing columns.
+
+`SEC-002` forbids logging row values by default and `VAL-006` reproduces a Java message that
+contains them; the two cannot both hold. `ERR-005` met the identical conflict — Java's bind
+diagnostic prints the offending value — and resolved it in `SEC-002`'s favour, carrying the primary
+key instead. `VAL-017` applies that resolution, and it applies to the diff log only: `VAL-013`'s
+machine-readable report is a deliberate, separately-configured export with its own
+`validate.report.redact_values` switch, which is the supported way to obtain values.
+
+Null-ness is reported, because it is metadata rather than content and because "the target is null"
+and "the target holds something else" call for different actions: a null target renders as
+`-target[null]`.
+
+`--compat-java` does **not** restore the values. A flag that turns a redaction off is a flag that
+turns a leak on, and the operator who needs the values has the row's key and can read it.
 
 ---
 

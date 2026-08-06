@@ -253,6 +253,7 @@ test, fails CI.
 | `VAL-014` <sup>N</sup> | `GET /v1/runs/{id}/discrepancies` MUST page over that report | `cdm-engine::jobs::validate` | `val_014_*` | #40 |
 | `VAL-015` <sup>N</sup> | `validate --sample <percent>` MUST be sugar for `filter.token_coverage_percent`, and `validate --keys-only` MUST compare… | `cdm-engine::jobs::validate` | `val_015_*` | #40 |
 | `VAL-016` <sup>P</sup> | Run status resolution: any discrepancy with `MISSING == CORRECTED_MISSING && MISMATCH == CORRECTED_MISMATCH` →… | `cdm-engine::jobs::validate` | `val_016_*` | #23 |
+| `VAL-017` <sup>P+</sup> | The diff log MUST NOT contain row values: every value position renders `<redacted>`, and a discrepancy is identified by its… | `cdm-engine::jobs::validate` | `val_017_*` | #23 |
 
 ### GRD
 

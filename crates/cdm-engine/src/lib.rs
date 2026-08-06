@@ -13,7 +13,7 @@
 //! - `TOK-001`..`TOK-010` — [`planner`], the token-range planner
 //! - `ENG-001`..`ENG-014` — [`scheduler`], the work-stealing execution engine
 //! - `MIG-001`
-//! - `VAL-001`
+//! - `VAL-001`..`VAL-012`, `VAL-016`, `VAL-017` — [`jobs::validate`], the diff job
 //! - `GRD-001`
 //!
 //! # How the two halves fit together
@@ -30,9 +30,11 @@
 //!
 //! # Status
 //!
-//! The planner and the scheduler are implemented. The built-in jobs land in the pull requests
-//! listed in [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
+//! The planner, the scheduler and the validate job ([`jobs::validate`]) are implemented. Migrate
+//! and guardrail land in the pull requests listed in
+//! [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
 
+pub mod jobs;
 pub mod planner;
 pub mod scheduler;
 
