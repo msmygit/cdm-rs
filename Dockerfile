@@ -1,7 +1,7 @@
 # Distroless, non-root, binary only (OPS-022).
 # Contrast with the Java image, which ships a JVM, Spark, Maven and dsbulk.
 
-FROM rust:1.85-slim AS builder
+FROM rust:1.97-slim AS builder
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config \
     && rm -rf /var/lib/apt/lists/*
