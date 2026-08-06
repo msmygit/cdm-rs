@@ -232,11 +232,16 @@ impl RangeProcessor for FaultProcessor {
     }
 }
 
-/// An observer that records the `ENG-002` lifecycle callbacks.
+/// An observer that records the `ENG-002` lifecycle callbacks and the `TRK-012` run status.
 #[derive(Debug, Default)]
 struct RecordingObserver {
     started: Mutex<Vec<TokenRange>>,
     finished: Mutex<Vec<(TokenRange, RunStatus)>>,
+    /// What [`RangeObserver::on_run_finished`] was told: the terminal status, why the run
+    /// stopped, and the committed `READ` total at the moment it was told. This is exactly the
+    /// seam `cdm-track` writes the run row from, so a test asserting on it is asserting that the
+    /// run row can be written.
+    run: Mutex<Option<(RunStatus, Option<StopReason>, u64)>>,
 }
 
 impl RecordingObserver {
@@ -247,6 +252,10 @@ impl RecordingObserver {
     fn finished(&self) -> Vec<(TokenRange, RunStatus)> {
         self.finished.lock().clone()
     }
+
+    fn run(&self) -> Option<(RunStatus, Option<StopReason>, u64)> {
+        *self.run.lock()
+    }
 }
 
 impl RangeObserver for RecordingObserver {
@@ -256,6 +265,16 @@ impl RangeObserver for RecordingObserver {
 
     fn on_range_finished(&self, _run_id: RunId, outcome: &RangeOutcome) {
         self.finished.lock().push((outcome.range, outcome.status));
+    }
+
+    fn on_run_finished(&self, report: &RunReport) {
+        *self.run.lock() = Some((
+            report.status(),
+            report.stopped_by(),
+            report
+                .counters()
+                .count_of(CounterKind::Read, CounterView::Committed),
+        ));
     }
 }
 
@@ -288,6 +307,77 @@ async fn settle() {
         tokio::task::yield_now().await;
     }
 }
+
+/// Runs a 200-range plan that is stopped part-way through for `reason`, and reports everything
+/// the three stop paths must have in common (`ENG-009`, `ENG-010`, `ENG-014`).
+///
+/// Every range reads ten rows whatever the reason, so one assertion about committed totals covers
+/// all three paths. A ticket gate holds the workers at their first range until the stop has been
+/// requested, so "the run stopped before its plan was exhausted" is a fact about the scheduler and
+/// not a race against it.
+async fn run_stopped_early(reason: StopReason) -> (RunReport, Arc<RecordingObserver>) {
+    let plan = plan(200);
+    let tickets = Arc::new(Semaphore::new(0));
+    let rows = if reason == StopReason::ErrorLimit {
+        // Ten rows read and none written is ten rows lost per failed range (ENG-008), so a limit
+        // of 25 is exceeded by the third range.
+        Rows::new(10, 0, 0)
+    } else {
+        Rows::new(10, 10, 0)
+    };
+    let mut processor = FaultProcessor::migrate()
+        .with_rows(rows)
+        .with_tickets(Arc::clone(&tickets));
+    if reason == StopReason::ErrorLimit {
+        processor = processor.with_default(Behaviour::Fail);
+    }
+    let processor = Arc::new(processor);
+
+    let observer = Arc::new(RecordingObserver::default());
+    let scheduler = Scheduler::new(settings(2).with_error_limit(25)).unwrap();
+    let control = scheduler.control();
+
+    let operator = async {
+        processor.wait_for_entry().await;
+        match reason {
+            StopReason::Signal => control.signalled(),
+            StopReason::Operator => control.stop(StopReason::Operator),
+            // The error limit stops the run by itself; releasing the gate is the whole of the
+            // operator's part in it.
+            StopReason::ErrorLimit => {}
+        }
+        tickets.add_permits(Semaphore::MAX_PERMITS);
+    };
+
+    let (report, ()) = tokio::join!(
+        scheduler.run(
+            &plan,
+            Arc::clone(&processor) as Arc<dyn RangeProcessor>,
+            Arc::clone(&observer) as Arc<dyn RangeObserver>
+        ),
+        operator
+    );
+    let report = report.unwrap();
+
+    assert_eq!(report.stopped_by(), Some(reason));
+    assert!(
+        report.outcomes().len() < plan.len(),
+        "the run must stop before its plan is exhausted"
+    );
+    assert_eq!(
+        report.outcomes().len() + report.unclaimed_ranges().len(),
+        plan.len(),
+        "no range may fall between the claimed and the unclaimed"
+    );
+    (report, observer)
+}
+
+/// The three ways a run stops early. Every test that must hold on all of them iterates this.
+const STOP_REASONS: [StopReason; 3] = [
+    StopReason::Signal,
+    StopReason::ErrorLimit,
+    StopReason::Operator,
+];
 
 // =================================================================================================
 // ENG-001: the work-stealing scheduler
@@ -906,6 +996,109 @@ async fn eng_009_a_guardrail_run_has_no_error_counter_so_no_limit_to_exceed() {
     );
 }
 
+/// Reads `read` rows per range and loses `lost` of them, without failing the range.
+///
+/// This is what record-level isolation looks like from the scheduler's side (`ARCHITECTURE.md`
+/// §13): the job caught the bad row, counted it, and carried on. `ENG-009` counts rows, so these
+/// errors count towards the limit exactly like the ones a failed range contributes.
+#[derive(Debug)]
+struct LosesRowsWithoutFailing {
+    read: u64,
+    lost: u64,
+}
+
+#[async_trait::async_trait]
+impl RangeProcessor for LosesRowsWithoutFailing {
+    fn job(&self) -> JobKind {
+        JobKind::Migrate
+    }
+
+    async fn process(&self, ctx: &RangeContext) -> Result<RangeVerdict, CdmError> {
+        let counters = ctx.counters();
+        counters.increment_by(counters.counter(CounterKind::Read)?, self.read);
+        counters.increment_by(counters.counter(CounterKind::Write)?, self.read - self.lost);
+        counters.increment_by(counters.counter(CounterKind::Error)?, self.lost);
+        Ok(RangeVerdict::Pass)
+    }
+}
+
+#[tokio::test]
+async fn eng_009_row_level_errors_count_towards_the_limit_though_no_range_failed() {
+    // `ENG-009` is a limit on ERROR, and ERROR counts *rows*. A job that loses a row per range
+    // and keeps going never produces a failed range, so a limit checked only on the failure path
+    // would let a run lose every row in the table without ever tripping.
+    let plan = plan(100);
+    let scheduler = Scheduler::new(settings(1).with_error_limit(9)).unwrap();
+    let report = scheduler
+        .run(
+            &plan,
+            Arc::new(LosesRowsWithoutFailing { read: 10, lost: 1 }),
+            Arc::new(NoopObserver),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.stopped_by(), Some(StopReason::ErrorLimit));
+    assert_eq!(report.ranges_failed(), 0, "no range failed; rows did");
+    // One lost row per range, a limit of nine: the tenth range takes the total to ten, which is
+    // the first count greater than the limit.
+    assert_eq!(report.outcomes().len(), 10);
+    assert_eq!(
+        report
+            .counters()
+            .count_of(CounterKind::Error, CounterView::Committed),
+        10
+    );
+}
+
+#[tokio::test]
+async fn eng_009_the_limit_reads_the_level_that_has_the_errors_in_it() {
+    // The `ENG-008` bug class, applied to `ENG-009`: a counter read at a level where it is
+    // structurally always zero produces a check that silently never fires.
+    //
+    // A range increments its own registry at the interim level and flushes on completion;
+    // `JobCounters::add` then merges the range's *committed* values into the run's. The run's
+    // registry is never incremented directly, so its interim level stays at zero for the whole
+    // run — which is where a check reading the wrong level would look.
+    let plan = plan(20);
+    let scheduler = Scheduler::new(settings(1).with_error_limit(4)).unwrap();
+    let report = scheduler
+        .run(
+            &plan,
+            Arc::new(LosesRowsWithoutFailing { read: 10, lost: 1 }),
+            Arc::new(NoopObserver),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report
+            .counters()
+            .count_of(CounterKind::Error, CounterView::Interim),
+        0,
+        "the run's interim level is structurally empty — a check reading it would never fire"
+    );
+    assert_eq!(
+        report
+            .counters()
+            .count_of(CounterKind::Error, CounterView::Committed),
+        5,
+        "the committed level is where the run's errors actually are"
+    );
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.outcomes().len(), 5);
+}
+
+#[tokio::test]
+async fn eng_009_an_abort_is_not_the_exit_code_a_supervisor_retries() {
+    // CLI-004: an error-limit abort exits `1`, not the retryable `4`. Retrying it unchanged would
+    // re-migrate everything up to the limit and then hit the same limit.
+    let (report, _) = run_stopped_early(StopReason::ErrorLimit).await;
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.exit_code(), 1);
+}
+
 // =================================================================================================
 // ENG-010: graceful shutdown
 // =================================================================================================
@@ -942,7 +1135,8 @@ async fn eng_010_a_signal_marks_the_run_interrupted_and_lets_in_flight_ranges_fi
 
     assert_eq!(report.status(), RunStatus::Interrupted);
     assert_eq!(report.stopped_by(), Some(StopReason::Signal));
-    assert_eq!(report.exit_code(), 1, "an interrupted run exits non-zero");
+    // CLI-004: `4`, the one code a supervisor may retry unchanged.
+    assert_eq!(report.exit_code(), 4, "an interrupted run exits non-zero");
 
     // The ranges that were in flight when the signal landed all finished — nothing was abandoned
     // and nothing failed — and no more than the four workers had claimed one.
@@ -1119,6 +1313,187 @@ async fn eng_010_metrics_are_flushed_and_reportable_after_an_interrupt() {
         .counters()
         .final_block(Some(report.run_id()))
         .contains(&format!("Final Read Record Count: {}", 7 * done)));
+}
+
+#[tokio::test]
+async fn eng_010_every_stop_path_flushes_the_run_totals_before_it_returns() {
+    // "Flush metrics" is not a courtesy. A run that stops early is the run whose numbers an
+    // operator has to act on: how far did it get, and what does a resume have left to do?
+    for reason in STOP_REASONS {
+        let (report, _) = run_stopped_early(reason).await;
+        let done = u64::try_from(report.outcomes().len()).unwrap();
+        assert!(done > 0, "{reason:?}");
+        assert_eq!(
+            report
+                .counters()
+                .count_of(CounterKind::Read, CounterView::Committed),
+            10 * done,
+            "{reason:?}: every completed range's rows must be in the run's committed totals"
+        );
+        // MET-006: and they render, which is what the operator actually sees.
+        assert!(report
+            .counters()
+            .final_block(Some(report.run_id()))
+            .contains(&format!("Final Read Record Count: {}", 10 * done)));
+    }
+}
+
+#[tokio::test]
+async fn eng_010_every_stop_path_hands_the_terminal_status_to_the_observer() {
+    // The `cdm-track` seam (TRK-012). The scheduler cannot write a run row — it has no store, and
+    // acquiring one would put a tracking dependency in the middle of the hot path — so what it
+    // owes the tracker is one call, after the last worker has stopped and the totals are final.
+    for reason in STOP_REASONS {
+        let (report, observer) = run_stopped_early(reason).await;
+        let (status, stopped_by, read) = observer.run().unwrap_or_else(|| {
+            panic!("{reason:?}: the observer must be told how the run ended");
+        });
+        assert_eq!(status, reason.run_status(), "{reason:?}");
+        assert_eq!(status, report.status(), "{reason:?}");
+        assert_eq!(stopped_by, Some(reason), "{reason:?}");
+        assert_eq!(
+            read,
+            10 * u64::try_from(report.outcomes().len()).unwrap(),
+            "{reason:?}: the totals must already be flushed when the observer is told"
+        );
+    }
+}
+
+#[tokio::test]
+async fn eng_010_a_run_that_finishes_its_plan_also_reports_it() {
+    let plan = plan(8);
+    let observer = Arc::new(RecordingObserver::default());
+    let scheduler = Scheduler::new(settings(2)).unwrap();
+    scheduler
+        .run(
+            &plan,
+            Arc::new(FaultProcessor::migrate().with_rows(Rows::new(10, 10, 0))),
+            Arc::clone(&observer) as Arc<dyn RangeObserver>,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        observer.run(),
+        Some((
+            RunStatus::Ended,
+            None,
+            10 * u64::try_from(plan.len()).unwrap()
+        ))
+    );
+}
+
+// -------------------------------------------------------------------------------------------------
+// ENG-010: the signal itself
+//
+// Everything above drives `RunControl` directly, which is how `signal.rs` argues the *meaning* of
+// a signal should be tested. What that cannot show is that an operating-system signal reaches the
+// control at all — the wiring, not the meaning — and a run whose `Ctrl-C` does nothing is a run
+// nobody can stop.
+//
+// The two tests below therefore raise a real `SIGINT` at this process, and take three precautions
+// so that doing so is safe in a test binary whose other tests know nothing about it:
+//
+// 1. They hold the module lock, so no two of them are ever in flight together.
+// 2. They install a Tokio `SIGINT` stream of their own *first*. Tokio's registration is
+//    process-global and permanent, so from that moment on a `SIGINT` cannot fall through to the
+//    default disposition and terminate the test binary — including in the window before the
+//    scheduler's own listener has registered, and including for any signal that arrives after
+//    these tests have finished.
+// 3. They deliver the signal in a bounded loop, stopping as soon as the run has noticed. The
+//    scheduler's listener registers asynchronously and a signal raised before it does is simply
+//    not delivered to it, so one raise would be a race; repeating until the control reports the
+//    stop is not.
+// -------------------------------------------------------------------------------------------------
+
+#[cfg(unix)]
+use crate::scheduler::signal::tests::{raise_sigint, serialised, sigint_until};
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn eng_010_a_real_sigint_stops_a_run_that_owns_the_process_signals() {
+    let _serialised = serialised().await;
+    // Precaution 2: registered before anything is raised, and never unregistered by Tokio.
+    let _disposition = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .expect("SIGINT must be installable");
+
+    let plan = plan(200);
+    let tickets = Arc::new(Semaphore::new(0));
+    let processor = Arc::new(
+        FaultProcessor::migrate()
+            .with_rows(Rows::new(4, 4, 0))
+            .with_tickets(Arc::clone(&tickets)),
+    );
+    let scheduler = Scheduler::new(settings(2).with_signal_handling(true)).unwrap();
+    let control = scheduler.control();
+
+    let operator = async {
+        processor.wait_for_entry().await;
+        let stopped = sigint_until(|| control.is_stopping()).await;
+        // Release the gate whatever happened, so a failure is an assertion and not a hang.
+        tickets.add_permits(Semaphore::MAX_PERMITS);
+        assert!(stopped, "SIGINT must reach the run's control");
+    };
+
+    let (report, ()) = tokio::join!(
+        scheduler.run(
+            &plan,
+            Arc::clone(&processor) as Arc<dyn RangeProcessor>,
+            Arc::new(NoopObserver)
+        ),
+        operator
+    );
+    let report = report.unwrap();
+
+    assert_eq!(report.status(), RunStatus::Interrupted);
+    assert_eq!(report.stopped_by(), Some(StopReason::Signal));
+    assert_eq!(report.exit_code(), 4);
+    assert!(
+        report.outcomes().len() < plan.len(),
+        "the run must stop claiming when the signal lands"
+    );
+    assert!(!report.unclaimed_ranges().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn eng_010_a_run_that_does_not_own_the_process_signals_installs_no_listener() {
+    // The other half of the contract. An embedded run — the HTTP control plane's, or another
+    // application's — must not turn that application's `Ctrl-C` into its own shutdown.
+    let _serialised = serialised().await;
+    let mut disposition = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .expect("SIGINT must be installable");
+
+    let plan = plan(8);
+    let tickets = Arc::new(Semaphore::new(0));
+    let processor = Arc::new(FaultProcessor::migrate().with_tickets(Arc::clone(&tickets)));
+    // `settings()` leaves signal handling off, exactly as `SchedulerSettings::default` does.
+    let scheduler = Scheduler::new(settings(2)).unwrap();
+    let control = scheduler.control();
+
+    let operator = async {
+        processor.wait_for_entry().await;
+        raise_sigint();
+        // The signal is delivered to this test's own stream; waiting for it is what makes the
+        // assertion below "the run ignored a signal it was given" rather than "the signal had not
+        // arrived yet".
+        disposition.recv().await;
+        assert!(!control.is_stopping(), "an embedded run must ignore SIGINT");
+        tickets.add_permits(Semaphore::MAX_PERMITS);
+    };
+
+    let (report, ()) = tokio::join!(
+        scheduler.run(
+            &plan,
+            Arc::clone(&processor) as Arc<dyn RangeProcessor>,
+            Arc::new(NoopObserver)
+        ),
+        operator
+    );
+    let report = report.unwrap();
+
+    assert_eq!(report.status(), RunStatus::Ended);
+    assert_eq!(report.outcomes().len(), plan.len());
 }
 
 // =================================================================================================
@@ -1351,6 +1726,57 @@ async fn eng_014_pause_stops_issuing_new_work_and_resume_continues_the_plan() {
         "every range must be processed exactly once across the pause"
     );
     assert!(!control.is_paused());
+}
+
+#[tokio::test]
+async fn eng_014_an_operator_stop_aborts_the_run_and_leaves_the_rest_for_a_resume() {
+    // `ENG-014`'s stop is the `:cancel` of the control plane. It differs from a signal in exactly
+    // one respect that anybody can see: the run is ABORTED rather than INTERRUPTED, so the run row
+    // says the operator ended this run deliberately rather than that the process was stopped.
+    let (report, _) = run_stopped_early(StopReason::Operator).await;
+
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.exit_code(), 1);
+    // Draining, not abandoning: everything claimed also finished, and the rest is untouched.
+    assert_eq!(report.ranges_abandoned(), 0);
+    assert_eq!(report.ranges_failed(), 0);
+    assert_eq!(report.ranges_passed(), report.outcomes().len());
+    assert!(!report.unclaimed_ranges().is_empty());
+}
+
+#[tokio::test]
+async fn eng_014_a_signal_during_an_operator_stop_does_not_rewrite_why_the_run_ended() {
+    // Two stop causes can be live at once: an operator cancels, and the impatient operator then
+    // presses Ctrl-C while the drain is under way. The first reason recorded is the one the run
+    // reports — otherwise the run row would say INTERRUPTED for a run the operator cancelled —
+    // but the second signal still escalates to abandoning in-flight work.
+    let plan = plan(8);
+    let processor = Arc::new(FaultProcessor::migrate().with_default(Behaviour::Hang));
+    let scheduler = Scheduler::new(settings(2)).unwrap();
+    let control = scheduler.control();
+
+    let stopper = {
+        let processor = Arc::clone(&processor);
+        tokio::spawn(async move {
+            processor.wait_for_entry().await;
+            control.stop(StopReason::Operator);
+            control.signalled();
+        })
+    };
+
+    let report = scheduler
+        .run(
+            &plan,
+            Arc::clone(&processor) as Arc<dyn RangeProcessor>,
+            Arc::new(NoopObserver),
+        )
+        .await
+        .unwrap();
+    stopper.await.unwrap();
+
+    assert_eq!(report.stopped_by(), Some(StopReason::Operator));
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.ranges_abandoned(), 2, "the signal still escalated");
 }
 
 #[tokio::test]

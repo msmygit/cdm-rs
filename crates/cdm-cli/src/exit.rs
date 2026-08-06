@@ -47,6 +47,33 @@ impl Exit {
         matches!(self, Self::Interrupted)
     }
 
+    /// The exit code for a run that reached a terminal status (`CLI-004`, `ENG-009`, `ENG-010`,
+    /// `ENG-014`).
+    ///
+    /// The distinction the three early-stop paths draw is the one a supervisor acts on. A run
+    /// interrupted by a signal is [`Exit::Interrupted`] and resumable: nothing about the request
+    /// was wrong, somebody stopped the process, and running it again is the right response. A run
+    /// the engine aborted — because the error limit was exceeded (`ENG-009`) or because an
+    /// operator cancelled it (`ENG-014`) — is [`Exit::Completed`]: the tool worked, and rerunning
+    /// it unchanged would re-migrate everything up to the abort and then abort again.
+    ///
+    /// The statuses that describe a *range* rather than a run (`PASS`, `FAIL`, `DIFF`,
+    /// `DIFF_CORRECTED`, and the two pre-terminal ones) are mapped too, on the same rule — a
+    /// finding is [`Exit::Completed`], the absence of one is [`Exit::Success`] — so that a caller
+    /// holding a range status cannot get a nonsensical code out of this.
+    pub fn for_run_status(status: cdm_core::RunStatus) -> Self {
+        use cdm_core::RunStatus;
+        match status {
+            RunStatus::Ended | RunStatus::Pass | RunStatus::NotStarted | RunStatus::Started => {
+                Self::Success
+            }
+            RunStatus::Interrupted => Self::Interrupted,
+            RunStatus::Fail | RunStatus::Diff | RunStatus::DiffCorrected | RunStatus::Aborted => {
+                Self::Completed
+            }
+        }
+    }
+
     /// The exit code for an error, chosen from its kind.
     pub fn for_error(error: &CdmError) -> Self {
         match error.kind() {
@@ -96,6 +123,41 @@ mod tests {
                 Exit::for_error(&error),
                 Exit::Connect,
                 "{kind:?} is a connectivity problem from the operator's point of view"
+            );
+        }
+    }
+
+    #[test]
+    fn eng_010_an_interrupted_run_is_the_one_a_supervisor_may_retry() {
+        use cdm_core::RunStatus;
+
+        // ENG-010: a signal stops the run cleanly and it is resumable — code 4, retryable.
+        assert_eq!(
+            Exit::for_run_status(RunStatus::Interrupted),
+            Exit::Interrupted
+        );
+        assert!(Exit::for_run_status(RunStatus::Interrupted).is_retryable());
+
+        // ENG-009 and ENG-014: an abort is not. Retrying an error-limit abort unchanged migrates
+        // everything up to the limit again and then aborts again.
+        assert_eq!(Exit::for_run_status(RunStatus::Aborted), Exit::Completed);
+        assert!(!Exit::for_run_status(RunStatus::Aborted).is_retryable());
+
+        assert_eq!(Exit::for_run_status(RunStatus::Ended), Exit::Success);
+        assert_eq!(Exit::for_run_status(RunStatus::Pass), Exit::Success);
+        assert_eq!(Exit::for_run_status(RunStatus::Fail), Exit::Completed);
+        assert_eq!(Exit::for_run_status(RunStatus::Diff), Exit::Completed);
+    }
+
+    #[test]
+    fn cli_004_every_run_status_has_an_exit_code() {
+        // A `RunStatus` added later must be given a code deliberately, not inherit one by
+        // accident; the match in `for_run_status` is exhaustive and this walks all of it.
+        for status in cdm_core::RunStatus::ALL {
+            let exit = Exit::for_run_status(status);
+            assert!(
+                matches!(exit, Exit::Success | Exit::Completed | Exit::Interrupted),
+                "{status:?} mapped to {exit:?}, which is not a run outcome"
             );
         }
     }
