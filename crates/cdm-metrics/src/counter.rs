@@ -25,13 +25,13 @@ pub enum CounterKind {
     Read,
     /// Rows written to the target, incremented only once a write has been flushed (`MIG-005`).
     Write,
-    /// Rows present on both sides whose values differ (`VAL-002`).
+    /// Rows present on both sides whose values differ (`VAL-006`).
     Mismatch,
-    /// Mismatched rows that autocorrect rewrote (`VAL-005`).
+    /// Mismatched rows that autocorrect rewrote (`VAL-007`).
     CorrectedMismatch,
     /// Rows present on the origin and absent from the target (`VAL-002`).
     Missing,
-    /// Missing rows that autocorrect inserted (`VAL-005`).
+    /// Missing rows that autocorrect inserted (`VAL-003`).
     CorrectedMissing,
     /// Rows that compared equal, or that passed the guardrail.
     Valid,

@@ -47,6 +47,7 @@
 pub mod astra;
 pub mod connect;
 pub mod raw;
+pub mod rows;
 pub mod schema;
 pub mod statement;
 pub mod tls;

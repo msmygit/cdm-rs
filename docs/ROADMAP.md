@@ -61,7 +61,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | #20 | `feat(engine): scheduler, rate limiting, backpressure, failure isolation` | `ENG-001`..`ENG-013` |
 | #21 | `feat(engine): migrate job` | `MIG-001`..`MIG-005`, `MIG-020`..`MIG-022`, `MIG-041` |
 | #22 | `feat(engine): counter table support` | `SCH-005`, `MIG-030`..`MIG-032`, `CON-011`, `CON-012` |
-| #23 | `feat(engine): validate job with autocorrect` | `VAL-001`..`VAL-012`, `VAL-016` |
+| #23 | `feat(engine): validate job with autocorrect` | `VAL-001`..`VAL-012`, `VAL-016`, `VAL-017` |
 | #24 | `feat(engine): guardrail job` | `GRD-001`..`GRD-004` |
 | #25 | `feat(track): run tracking, resume and rerun` | `TRK-001`..`TRK-003`, `TRK-010`, `TRK-012`, `TRK-020`..`TRK-036` |
 | #26 | `feat(engine): error limit and graceful shutdown` | `ENG-009`, `ENG-010`, `ENG-014` |
