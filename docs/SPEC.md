@@ -448,6 +448,7 @@ never had an effect. Constant-column types are resolved from the target schema (
 | `metrics.prometheus.enabled` | bool | `true` when server enabled | `MET-020` |
 | `metrics.otlp.endpoint` | url | — | `MET-021` |
 | `metrics.events.sink` | enum `none`\|`stdout_json`\|`file` | `none` | `MET-030` |
+| `metrics.events.path` | path | `cdm_logs/cdm_events.ndjson` | the file the `file` sink appends to, `MET-030` |
 | `cluster.enabled` | bool | `false` | distributed mode `DST-001` |
 | `cluster.node_id` | string | hostname+pid | |
 | `cluster.lease_duration` | duration | `60s` | `DST-012` |

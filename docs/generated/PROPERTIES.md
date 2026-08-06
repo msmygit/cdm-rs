@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-122 properties.
+123 properties.
 
 
 ## `connect`
@@ -191,6 +191,7 @@ should not use it.
 | `metrics.prometheus.enabled` | — | bool | true when `server.enabled` is true | — | stable | Serve `/metrics`. Defaults to whether the control plane is enabled. |
 | `metrics.otlp.endpoint` | — | string | — | — | stable | The OTLP collector endpoint. Export is off when unset. |
 | `metrics.events.sink` | — | `none` \| `stdout_json` \| `file` | `none` | — | stable | Where run events are written. |
+| `metrics.events.path` | — | path | `cdm_logs/cdm_events.ndjson` | — | stable | The file the `file` sink appends to (`MET-030`). |
 
 ## `cluster`
 

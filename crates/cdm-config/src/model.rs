@@ -970,6 +970,16 @@ cdm_properties! {
             /// Where run events are written.
             #[cdm()]
             pub sink: EventSink = EventSink::None,
+
+            /// The file the `file` sink appends to (`MET-030`).
+            ///
+            /// Ignored unless [`sink`](Events::sink) is `file`. The sink appends rather than
+            /// truncating, so a resumed run (`TRK-031`) adds to the record of the run it resumes
+            /// instead of erasing it; point two concurrent runs at one path and their events
+            /// interleave in one stream, which is usually what you want and never a corruption,
+            /// since NDJSON is line-delimited.
+            #[cdm(example = "cdm_logs/run-2026-08-06.ndjson",)]
+            pub path: PathBuf = PathBuf::from("cdm_logs/cdm_events.ndjson"),
         }
     }
 }

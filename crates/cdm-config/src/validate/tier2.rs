@@ -22,6 +22,7 @@ pub(super) fn check(config: &CdmConfig, _options: ValidationOptions) -> Vec<Diag
     column_rename_syntax(config, &mut out);
     extract_json(config, &mut out);
     batch_size(config, &mut out);
+    event_sink_path(config, &mut out);
     out
 }
 
@@ -368,6 +369,33 @@ fn batch_size(config: &CdmConfig, out: &mut Vec<Diagnostic>) {
 
 // Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
 // (ERR-004) exists to protect production paths, not test bodies.
+/// `MET-030`: a configured event path with no `file` sink writes nothing.
+///
+/// Not an error — the path is harmless — but silence is the same symptom as a broken sink, and an
+/// operator who set a path expects a file to appear.
+fn event_sink_path(config: &CdmConfig, out: &mut Vec<Diagnostic>) {
+    use crate::types::EventSink;
+
+    let default_path = std::path::Path::new("cdm_logs/cdm_events.ndjson");
+    if config.metrics.events.sink == EventSink::File || config.metrics.events.path == default_path {
+        return;
+    }
+
+    out.push(
+        notice(
+            "metrics.events.path",
+            "the event path is ignored because no file sink is enabled",
+            "MET-030",
+        )
+        .with_value(config.metrics.events.path.display().to_string())
+        .with_detail(
+            "events are written to this path only when `metrics.events.sink` is `file`; it is \
+             currently `none` or `stdout_json`",
+        )
+        .with_suggestion("set `metrics.events.sink = \"file\"`"),
+    );
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -384,6 +412,42 @@ mod tests {
         let mut config = CdmConfig::default();
         config.schema.origin.keyspace_table = Some("ks.src".to_owned());
         config
+    }
+
+    #[test]
+    fn met_030_a_custom_event_path_without_a_file_sink_is_noticed() {
+        let mut config = valid();
+        config.metrics.events.path = std::path::PathBuf::from("cdm_logs/mine.ndjson");
+
+        let notices = check(&config, ValidationOptions::default());
+        let found = notices
+            .iter()
+            .any(|d| d.location.as_deref() == Some("metrics.events.path"));
+        assert!(
+            found,
+            "a path that writes nothing must say so: {notices:#?}"
+        );
+        // Advice, not an error: the path itself is harmless.
+        assert!(!notices.iter().any(|d| d.severity == Severity::Error));
+    }
+
+    #[test]
+    fn met_030_a_custom_event_path_with_a_file_sink_is_silent() {
+        let mut config = valid();
+        config.metrics.events.sink = crate::types::EventSink::File;
+        config.metrics.events.path = std::path::PathBuf::from("cdm_logs/mine.ndjson");
+
+        assert!(!check(&config, ValidationOptions::default())
+            .iter()
+            .any(|d| d.location.as_deref() == Some("metrics.events.path")));
+    }
+
+    #[test]
+    fn met_030_the_default_path_is_never_noticed() {
+        // Otherwise every default configuration would carry a notice about a property nobody set.
+        assert!(!check(&valid(), ValidationOptions::default())
+            .iter()
+            .any(|d| d.location.as_deref() == Some("metrics.events.path")));
     }
 
     fn rules(config: &CdmConfig) -> Vec<String> {

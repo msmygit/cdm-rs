@@ -411,6 +411,11 @@
       "additionalProperties": false,
       "description": "The run event stream (`MET-030`).",
       "properties": {
+        "path": {
+          "default": "cdm_logs/cdm_events.ndjson",
+          "description": "The file the `file` sink appends to (`MET-030`).\n\nIgnored unless [`sink`](Events::sink) is `file`. The sink appends rather than\ntruncating, so a resumed run (`TRK-031`) adds to the record of the run it resumes\ninstead of erasing it; point two concurrent runs at one path and their events\ninterleave in one stream, which is usually what you want and never a corruption,\nsince NDJSON is line-delimited.",
+          "type": "string"
+        },
         "sink": {
           "$ref": "#/$defs/EventSink",
           "default": "none",
@@ -661,6 +666,7 @@
         "events": {
           "$ref": "#/$defs/Events",
           "default": {
+            "path": "cdm_logs/cdm_events.ndjson",
             "sink": "none"
           },
           "description": "The run event stream (`MET-030`)."
@@ -1604,6 +1610,7 @@
       "$ref": "#/$defs/Metrics",
       "default": {
         "events": {
+          "path": "cdm_logs/cdm_events.ndjson",
           "sink": "none"
         },
         "otlp": {
