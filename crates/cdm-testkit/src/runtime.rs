@@ -375,7 +375,10 @@ mod tests {
             Some("/var/run/docker.sock")
         );
         for socket in &sockets {
-            assert!(socket.is_absolute(), "{} is relative", socket.display());
+            // `has_root`, not `is_absolute`: on Windows an absolute path needs a drive prefix, so
+            // `is_absolute` is false for every one of these — and the property that matters is
+            // that none of them would be resolved against the current directory.
+            assert!(socket.has_root(), "{} is not rooted", socket.display());
         }
     }
 
