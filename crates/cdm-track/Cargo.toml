@@ -13,6 +13,30 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cdm-engine` is a dependency and not the other way round: the engine's seam into tracking is the
+# `RangeObserver` trait, which this crate implements, so nothing in `cdm-engine` names `cdm-track`
+# and the graph stays acyclic. Depending on it here is what lets `TRK-033` reuse the Java-parity
+# splitter of `TOK-003` instead of transcribing that arithmetic a second time.
+#
+# `scylla` appears here for the one reason `ARCHITECTURE.md` §3 otherwise forbids: the tracking
+# tables live in the *target* keyspace and are written through `cdm-cql`'s target session, which
+# is handed out as an `Arc<scylla::client::session::Session>` and has no statement facade yet.
+# See the module note on `store::cassandra` for what would remove it again.
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+async-trait.workspace = true
+cdm-config.workspace = true
+cdm-core.workspace = true
+cdm-cql.workspace = true
+cdm-engine.workspace = true
+cdm-metrics.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+scylla.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+cdm-testkit.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

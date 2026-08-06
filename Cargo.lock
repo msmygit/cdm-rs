@@ -717,6 +717,22 @@ dependencies = [
 [[package]]
 name = "cdm-track"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cdm-config",
+ "cdm-core",
+ "cdm-cql",
+ "cdm-engine",
+ "cdm-metrics",
+ "cdm-testkit",
+ "chrono",
+ "parking_lot",
+ "scylla",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "cdm-ui"
