@@ -8,9 +8,18 @@
 cdm-rs migrates and validates data between Cassandra-compatible clusters — Apache Cassandra, DSE,
 HCD, Astra DB, ScyllaDB and Azure Cosmos DB Cassandra API — as a single static binary.
 
-> **Status: specification and scaffolding.** No functionality is implemented yet. The complete
-> design is in [`docs/SPEC.md`](docs/SPEC.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md);
-> delivery is tracked PR-by-PR in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: the engines work; the command line does not yet drive them.**
+>
+> Migrate, validate and guardrail are implemented, unit tested and exercised against real
+> Cassandra nodes in CI — as libraries. The `cdm` binary still answers `cdm migrate` with "not yet",
+> because the shared *connect → introspect → plan → run* path that every job command needs has not
+> landed. Configuration, schema introspection, connectivity, token planning, scheduling, run
+> tracking, resume and metrics are all in place beneath it.
+>
+> In practical terms: you can depend on the crates today, and you cannot yet run a migration from a
+> terminal. The complete design is in [`docs/SPEC.md`](docs/SPEC.md) and
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); delivery is tracked PR-by-PR in
+> [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -32,7 +41,7 @@ requirement in [`docs/SPEC.md`](docs/SPEC.md), traced to code and tests in
 [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md), and certified by the ported
 [SIT suite](docs/SPEC.md#211-layers) plus a nightly differential run against the Java build.
 
-## What it will do
+## What it does
 
 - **Migrate** — token-range-parallel bulk copy preserving writetimes and TTLs, with counter-table
   support, batching, rate limiting and resumable runs.
@@ -46,7 +55,12 @@ requirement in [`docs/SPEC.md`](docs/SPEC.md), traced to code and tests in
   The tracking tables are schema-compatible with Java CDM, so a run started by either tool can be
   finished by the other.
 
-## Quick start (planned interface)
+## Quick start
+
+Every command below is the intended interface, and the ones that touch a cluster are not wired up
+yet — see the status note above. They are shown now because the flags, property names and exit
+codes are already fixed by [`docs/SPEC.md`](docs/SPEC.md) and will not change when the wiring
+lands.
 
 ```bash
 # Generate a tuned configuration by introspecting your schema
@@ -135,11 +149,17 @@ Sixteen crates, no cycles, everything behind a trait:
 | Domain | `cdm-feature` · `cdm-cql` · `cdm-codec` · `cdm-config` · `cdm-core` |
 | Testing | `cdm-testkit` |
 
-Only `cdm-cql` depends on the CQL driver
+`cdm-cql` is the crate that owns the CQL driver
 ([`scylla-rust-driver`](https://github.com/scylladb/scylla-rust-driver)); only `cdm-api` depends on
 HTTP. Codecs, features, filters, guardrails, jobs, sources, sinks, tracking stores and metric
 exporters are all plugin traits, and the built-in implementations register through the same public
 path a third party would use.
+
+There is currently **one documented exception** to the driver rule: `cdm-track` takes a direct
+`scylla` dependency, because the tracking tables live in the target keyspace and the session is
+handed out as an `Arc<scylla::client::session::Session>` with no statement facade over it yet. It
+is recorded in that crate's `Cargo.toml` and is removable once the facade exists — noted here
+because an exception that only lives in a manifest is an exception nobody sees.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full picture, including flow diagrams and
 the mapping from every Java class to its Rust home.

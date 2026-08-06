@@ -126,7 +126,7 @@ fn cfg_020_tier_three_refuses_rather_than_silently_running_fewer_checks() {
     // Quietly downgrading to tier 2 is how a configuration reaches production unvalidated.
     let error = run_err(&["cdm", "config", "validate", "--tier", "schema"]);
     assert!(
-        error.message().contains("live schema"),
+        error.message().contains("live cluster session"),
         "the error must say why: {}",
         error.message()
     );
