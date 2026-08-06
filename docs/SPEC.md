@@ -368,6 +368,7 @@ The following table is the **normative parity list**. It is generated from the J
 | — **[N]** | `perfops.retry.initial_backoff` | duration | `100ms` |
 | — **[N]** | `perfops.retry.max_backoff` | duration | `10s` |
 | — **[N]** | `perfops.adaptive_ratelimit` | bool | `false` |
+| — **[N]** | `perfops.shutdown_grace` | duration | `60s` |
 
 † `spark.cdm.perfops.errorLimit` appears only as a commented-out line in Java's
 `src/resources/cdm-detailed.properties`. It is **not** in `KnownProperties` and is referenced
@@ -451,6 +452,7 @@ never had an effect. Constant-column types are resolved from the target schema (
 | `cluster.node_id` | string | hostname+pid | |
 | `cluster.lease_duration` | duration | `60s` | `DST-012` |
 | `cluster.heartbeat_interval` | duration | `15s` | |
+| `cluster.ratelimit_is_global` | bool | `false` | `ENG-004` |
 | `logging.level` | string | `info` | |
 | `logging.format` | enum `pretty`\|`json`\|`compact` | `pretty` | |
 | `logging.diff_file` | path | `cdm_logs/cdm_diff.log` | parity with Java diff log |

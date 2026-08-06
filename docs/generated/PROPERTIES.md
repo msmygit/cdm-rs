@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-120 properties.
+122 properties.
 
 
 ## `connect`
@@ -125,6 +125,7 @@ should not use it.
 | `perfops.request_timeout` | — | duration | `30s` | duration | stable | Per-request timeout. |
 | `perfops.connection_pool_size` | — | integer | `4` | connections | stable | Connections per host, per side. |
 | `perfops.adaptive_ratelimit` | — | bool | `false` | — | experimental | Reduce the rate limit automatically when the target signals overload. |
+| `perfops.shutdown_grace` | — | duration | `1m` | duration | stable | How long a graceful shutdown lets in-flight ranges finish (`ENG-010`). |
 | `perfops.ratelimit.origin` | `spark.cdm.perfops.ratelimit.origin` | integer | `20000` | rows/s | stable | Rows read per second, per cdm-rs process. |
 | `perfops.ratelimit.target` | `spark.cdm.perfops.ratelimit.target` | integer | `20000` | rows/s | stable | Rows written per second, per cdm-rs process. |
 | `perfops.consistency.read` | `spark.cdm.perfops.consistency.read` | `ANY` \| `ONE` \| `TWO` \| `THREE` \| `QUORUM` \| `LOCAL_ONE` \| `LOCAL_QUORUM` \| `EACH_QUORUM` \| `SERIAL` \| `LOCAL_SERIAL` \| `ALL` | `LOCAL_QUORUM` | — | stable | Consistency level for reads from the origin. |
@@ -199,6 +200,7 @@ should not use it.
 | `cluster.node_id` | — | string | the host name and process id | — | stable | This node's identity in the membership table. |
 | `cluster.lease_duration` | — | duration | `1m` | duration | stable | How long a range lease is held before another node may reclaim it (`DST-012`). |
 | `cluster.heartbeat_interval` | — | duration | `15s` | duration | stable | How often a node renews its leases and refreshes its membership row. |
+| `cluster.ratelimit_is_global` | — | bool | `false` | — | experimental | Treat `perfops.ratelimit.*` as a budget for the whole cluster (`ENG-004`). |
 
 ## `logging`
 

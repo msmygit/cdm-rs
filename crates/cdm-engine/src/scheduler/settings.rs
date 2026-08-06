@@ -6,16 +6,15 @@
 //! per-row hot path, for the same reason: a setting read on every range is a setting that can
 //! change under a run.
 //!
-//! # Two settings this crate owns rather than reads
+//! # One setting this crate reads but cannot apply
 //!
-//! * **`shutdown_grace`** (`ENG-010`, default 60 s) has no property in `cdm-config` yet. It is a
-//!   field here with the specified default, so the behaviour is correct today and wiring a
-//!   property to it later is a one-line change in the loader rather than a change in the
-//!   scheduler.
-//! * **`cluster.ratelimit_is_global`** (`ENG-004`) likewise has no property yet. The *effect* it
-//!   asks for — dividing the configured limit across live nodes — is
-//!   [`SchedulerSettings::divided_across_nodes`], which takes the live node count from the
-//!   caller because only `cdm-cluster` knows it.
+//! **`cluster.ratelimit_is_global`** (`ENG-004`) is resolved here and exposed as
+//! [`SchedulerSettings::ratelimit_is_global`], but the scheduler cannot act on it alone: the
+//! effect it asks for — dividing the configured limit across live nodes — needs the live node
+//! count, and only `cdm-cluster` knows that. The division itself is
+//! [`SchedulerSettings::divided_across_nodes`], which the caller applies when the flag is set.
+//! Splitting it this way keeps the scheduler free of a membership dependency while still making
+//! the operator's choice visible to it.
 
 use std::time::Duration;
 
@@ -37,6 +36,7 @@ pub struct SchedulerSettings {
     fetch_size: u32,
     error_limit: u64,
     shutdown_grace: Duration,
+    ratelimit_is_global: bool,
     java_thread_label: bool,
 }
 
@@ -58,6 +58,7 @@ impl Default for SchedulerSettings {
             fetch_size: 1_000,
             error_limit: 0,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            ratelimit_is_global: false,
             java_thread_label: true,
         }
     }
@@ -77,7 +78,8 @@ impl SchedulerSettings {
             max_inflight_writes: perfops.max_inflight_writes,
             fetch_size: perfops.fetch_size,
             error_limit: perfops.error_limit,
-            shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            shutdown_grace: perfops.shutdown_grace.get(),
+            ratelimit_is_global: config.config().cluster.ratelimit_is_global,
             // ENG-012: the Java `min:max` label is a `pretty`-format affordance. In `compact`
             // and `json` the same facts are structured span fields, and repeating them as a
             // pre-formatted string would be noise.
@@ -137,6 +139,15 @@ impl SchedulerSettings {
     #[must_use]
     pub const fn shutdown_grace(&self) -> Duration {
         self.shutdown_grace
+    }
+
+    /// Whether the configured rate limits are a fleet-wide budget rather than per-node
+    /// (`ENG-004`).
+    ///
+    /// The scheduler reports this rather than applying it; see the module documentation.
+    #[must_use]
+    pub const fn ratelimit_is_global(&self) -> bool {
+        self.ratelimit_is_global
     }
 
     /// Whether range spans carry the Java-compatible `min:max` label (`ENG-012`).
@@ -199,6 +210,13 @@ impl SchedulerSettings {
     #[must_use]
     pub const fn with_shutdown_grace(mut self, grace: Duration) -> Self {
         self.shutdown_grace = grace;
+        self
+    }
+
+    /// Sets whether the rate limits are a fleet-wide budget.
+    #[must_use]
+    pub const fn with_ratelimit_is_global(mut self, global: bool) -> Self {
+        self.ratelimit_is_global = global;
         self
     }
 
@@ -277,6 +295,39 @@ mod tests {
         assert_eq!(settings.fetch_size(), 250);
         assert_eq!(settings.error_limit(), 9);
         assert_eq!(settings.shutdown_grace(), DEFAULT_SHUTDOWN_GRACE);
+    }
+
+    #[test]
+    fn eng_010_the_shutdown_grace_comes_from_the_configuration() {
+        // Until `perfops.shutdown_grace` existed, this crate hard-coded the default and an
+        // operator whose ranges take longer than a minute had no way to say so.
+        let mut config = CdmConfig::default();
+        config.perfops.shutdown_grace = cdm_config::types::DurationSetting::from_secs(300);
+
+        let settings = SchedulerSettings::from_config(&EffectiveConfig::resolve(config));
+
+        assert_eq!(settings.shutdown_grace(), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn eng_004_a_fleet_wide_ratelimit_is_read_from_the_cluster_section() {
+        let mut config = CdmConfig::default();
+        config.cluster.ratelimit_is_global = true;
+
+        let settings = SchedulerSettings::from_config(&EffectiveConfig::resolve(config));
+
+        // Read, not applied: dividing needs the live node count, which only `cdm-cluster` has.
+        assert!(settings.ratelimit_is_global());
+        assert_eq!(settings.origin_rows_per_second(), 20_000);
+    }
+
+    #[test]
+    fn eng_004_the_default_ratelimit_is_per_node() {
+        // Java's limits are per worker. Defaulting to a fleet-wide budget would silently slow
+        // every existing multi-node invocation by a factor of the node count.
+        let settings =
+            SchedulerSettings::from_config(&EffectiveConfig::resolve(CdmConfig::default()));
+        assert!(!settings.ratelimit_is_global());
     }
 
     #[test]
