@@ -13,7 +13,7 @@
 //!
 //! Neither exporter opens a socket. [`prometheus::render`] returns the exposition text that
 //! `GET /metrics` serves, and [`otlp::OtlpExporter`] produces an OTLP payload and hands it to an
-//! [`OtlpTransport`](otlp::OtlpTransport) that somebody else implements.
+//! [`OtlpTransport`] that somebody else implements.
 //!
 //! That is not squeamishness, it is the dependency graph. `ARCHITECTURE.md` §3 places the
 //! exporters in `cdm-metrics`, and `AGENTS.md` says only `cdm-api` may depend on HTTP crates —

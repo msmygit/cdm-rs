@@ -2,7 +2,7 @@
 //!
 //! Renders a [`MetricsReport`] as Prometheus text format 0.0.4 — the body of `GET /metrics`
 //! (`API-003`). Metric names are prefixed [`METRIC_PREFIX`] and the identity labels are exactly
-//! the closed set of [`MetricLabels`](crate::MetricLabels).
+//! the closed set of [`MetricLabels`].
 //!
 //! # Why this is written out rather than delegated
 //!

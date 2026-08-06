@@ -154,7 +154,8 @@ const RELAXED: Ordering = Ordering::Relaxed;
 /// The bucket a value belongs to.
 ///
 /// Values below [`SUB_BUCKETS`] are counted exactly, one bucket each. Above that, the leading one
-/// bit selects a power of two and the next [`SIGNIFICANT_BITS`] bits select a sub-bucket within it.
+/// bit selects a power of two and the bits below it select one of [`SUB_BUCKETS`] sub-buckets
+/// within that power.
 #[must_use]
 pub fn bucket_index(value: u64) -> usize {
     if value < SUB_BUCKETS {

@@ -373,7 +373,7 @@ pub struct Metric {
 pub struct Sum {
     /// The points.
     pub data_points: Vec<NumberDataPoint>,
-    /// Always [`AGGREGATION_TEMPORALITY_CUMULATIVE`]: an exported counter is a run total.
+    /// Always OTLP's cumulative temporality (`2`): an exported counter is a run total.
     pub aggregation_temporality: i32,
     /// Always true: cdm-rs counters never decrease.
     pub is_monotonic: bool,
