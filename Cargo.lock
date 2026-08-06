@@ -623,6 +623,7 @@ dependencies = [
  "async-trait",
  "cdm-config",
  "cdm-core",
+ "cdm-testkit",
  "futures",
  "p12-keystore",
  "rand 0.8.7",
@@ -701,6 +702,17 @@ version = "0.1.0"
 [[package]]
 name = "cdm-testkit"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cdm-codec",
+ "cdm-core",
+ "cdm-metrics",
+ "chrono",
+ "rand 0.8.7",
+ "testcontainers",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "cdm-track"
@@ -4225,6 +4237,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cdm-config",
+ "cdm-testkit",
  "clap",
  "regex",
  "serde_yaml",

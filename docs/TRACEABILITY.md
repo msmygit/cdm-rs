@@ -512,9 +512,9 @@ test, fails CI.
 | `TST-070` | **Snapshot tests** (`insta`) for CLI output, generated CQL, generated config files, error messages, and the OpenAPI document | `cdm-testkit / tests` | `tst_070_*` | #10 |
 | `TST-080` | **Fuzzing** (`cargo-fuzz`) of the properties parser, the CQL identifier quoter, the JSON extractor, and the Java date-pattern… | `cdm-testkit / tests` | `tst_080_*` | #58 |
 | `TST-090` | Every rustdoc example compiles and runs, and code blocks in `docs/` are extracted and compiled | `cdm-testkit / tests` | `tst_090_*` | #57 |
-| `TST-100` | A `cdm-testkit` crate MUST provide: containerised origin/target fixtures, a schema and data generator covering all CQL types,… | `cdm-testkit / tests` | `tst_100_*` | #16 |
-| `TST-101` | Test data generation MUST be deterministic and seeded; failures MUST print the seed | `cdm-testkit / tests` | `tst_101_*` | #16 |
-| `TST-102` | Integration tests MUST be runnable locally with one command (`cargo xtask it`) and MUST skip (not fail) with a clear message… | `cdm-testkit / tests` | `tst_102_*` | #16 |
+| `TST-100` | A `cdm-testkit` crate MUST provide: containerised origin/target fixtures, a schema and data generator covering all CQL types,… | `cdm-testkit`, `cdm-cql / tests` | `tst_100_*` | #16 |
+| `TST-101` | Test data generation MUST be deterministic and seeded; failures MUST print the seed | `cdm-testkit / seed, data` | `tst_101_*` | #16 |
+| `TST-102` | Integration tests MUST be runnable locally with one command (`cargo xtask it`) and MUST skip (not fail) with a clear message… | `cdm-testkit / runtime`, `xtask` | `tst_102_*` | #16 |
 
 ### OPS
 

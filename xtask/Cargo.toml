@@ -15,6 +15,9 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 cdm-config.workspace = true
+# `cargo xtask it` must decide whether a container runtime is available using exactly the rule the
+# tests themselves use, or the two disagree and TST-102's "skip, do not fail" becomes a lie.
+cdm-testkit.workspace = true
 clap.workspace = true
 regex.workspace = true
 serde_yaml.workspace = true
