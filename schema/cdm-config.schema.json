@@ -523,7 +523,8 @@
         "guardrail": {
           "$ref": "#/$defs/Guardrail",
           "default": {
-            "column_size_kb": 0.0
+            "column_size_kb": 0.0,
+            "mode": "check"
           },
           "description": "Limits that make a row be skipped and reported rather than written."
         }
@@ -586,9 +587,34 @@
           "description": "Report any column whose serialised size exceeds this. `0` disables the check.\n\nA negative value is invalid (`CFG-035`).",
           "format": "double",
           "type": "number"
+        },
+        "mode": {
+          "$ref": "#/$defs/GuardrailMode",
+          "default": "check",
+          "description": "What an inline guardrail violation does to the row that caused it (`GRD-004`).\n\nOnly consulted when the guardrail runs *inside* a migrate or validate run. The\nstandalone `cdm guardrail` job always reports and never writes, so the mode cannot\nchange what it does."
         }
       },
       "type": "object"
+    },
+    "GuardrailMode": {
+      "description": "What an inline guardrail violation does to the row that caused it (`GRD-004`).\n\nThe column-size guardrail reports; it does not filter. So the default changes nothing about\nwhat a run writes: `check` counts the row `LARGE` and carries on, which is the only\nbehaviour Java has — its guardrail is a job of its own and never runs alongside a migration.\n`warn` is the same judgement said more quietly, for a run that wants the finding in the log\nwithout an `ERROR` line per row. `block` is the one mode that changes the outcome: the row\nis counted `LARGE` and *not* written, which is what an operator wants when the target\nenforces a column-size limit and a migration that skips the handful of rows over it is far\nmore useful than one that fails on them.",
+      "oneOf": [
+        {
+          "const": "check",
+          "description": "Count the row `LARGE`, report it at `ERROR`, and process it as normal. Java's behaviour.",
+          "type": "string"
+        },
+        {
+          "const": "warn",
+          "description": "As `check`, but the finding is reported at `WARN`.",
+          "type": "string"
+        },
+        {
+          "const": "block",
+          "description": "Count the row `LARGE` and skip it: nothing is written for it (`GRD-004`).",
+          "type": "string"
+        }
+      ]
     },
     "KeyStore": {
       "additionalProperties": false,
@@ -1572,7 +1598,8 @@
           "property_mapping": null
         },
         "guardrail": {
-          "column_size_kb": 0.0
+          "column_size_kb": 0.0,
+          "mode": "check"
         }
       },
       "description": "Optional behaviours (`CFG-190`)."

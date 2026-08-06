@@ -149,6 +149,28 @@ config_enum! {
 }
 
 config_enum! {
+    /// What an inline guardrail violation does to the row that caused it (`GRD-004`).
+    ///
+    /// The column-size guardrail reports; it does not filter. So the default changes nothing about
+    /// what a run writes: `check` counts the row `LARGE` and carries on, which is the only
+    /// behaviour Java has — its guardrail is a job of its own and never runs alongside a migration.
+    /// `warn` is the same judgement said more quietly, for a run that wants the finding in the log
+    /// without an `ERROR` line per row. `block` is the one mode that changes the outcome: the row
+    /// is counted `LARGE` and *not* written, which is what an operator wants when the target
+    /// enforces a column-size limit and a migration that skips the handful of rows over it is far
+    /// more useful than one that fails on them.
+    pub enum GuardrailMode {
+        /// Count the row `LARGE`, report it at `ERROR`, and process it as normal. Java's behaviour.
+        Check => "check",
+        /// As `check`, but the finding is reported at `WARN`.
+        Warn => "warn",
+        /// Count the row `LARGE` and skip it: nothing is written for it (`GRD-004`).
+        Block => "block",
+    }
+    default = Check;
+}
+
+config_enum! {
     /// Where run events are written (`MET-030`).
     pub enum EventSink {
         /// Events are not emitted.

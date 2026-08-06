@@ -26,4 +26,11 @@ chrono.workspace = true
 num-bigint.workspace = true
 regex.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 uuid.workspace = true
+
+# `TST-010` wants property tests over *generated schemas* for the guardrail's size accounting.
+# `proptest` is already the workspace's property-testing crate (`cdm-engine` dev-depends on it), so
+# this adds no new licence, advisory or supply-chain surface for `cargo deny` to weigh.
+[dev-dependencies]
+proptest.workspace = true

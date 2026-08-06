@@ -660,6 +660,7 @@ dependencies = [
  "futures",
  "parking_lot",
  "proptest",
+ "scylla",
  "serde",
  "serde_json",
  "tempfile",
@@ -677,8 +678,10 @@ dependencies = [
  "cdm-core",
  "chrono",
  "num-bigint",
+ "proptest",
  "regex",
  "serde_json",
+ "tracing",
  "uuid",
 ]
 
