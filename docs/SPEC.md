@@ -961,8 +961,9 @@ types using the standard conversion machinery (`CDC-010`).
 `property_mapping` is `jsonField:targetColumn` (or a bare `name` used for both).
 **FEA-031 [P]** — The extracted value MUST be written to the mapped target column.
 **FEA-032 [P]** — `overwrite = false` MUST leave an already-populated target column untouched.
-**FEA-033 [P]** — `exclusive = true` MUST restrict the non-PK target columns to the extract column
-alone.
+**FEA-033 [P+]** — `exclusive = true` MUST restrict the non-PK target columns to the extract column
+alone, matched by **exact** name. Java matches with `name.endsWith(extractColumn)`, so configuring
+`city` also retains `oldcity` — a silent widening of a setting whose only purpose is to narrow.
 **FEA-034 [P+]** — Malformed JSON MUST increment `ERROR` for that record and log the primary key,
 rather than failing the range.
 **FEA-035 [N]** — `property_mapping` MUST accept JSON-Pointer paths (`/a/b/0`) in addition to
@@ -981,14 +982,19 @@ supplying explicit names disables automatic mode for that dimension.
 and the maximum across the list MUST be taken.
 **FEA-044 [P]** — `transform.custom_writetime > 0` overrides the computed writetime;
 `transform.custom_ttl > 0` overrides the computed TTL.
-**FEA-045 [P]** — TTL/writetime MUST be disabled for counter tables.
+**FEA-045 [P]** — TTL/writetime MUST be disabled for counter tables. A counter column on *either*
+side disables the feature: Java inspects the origin only, while `CFG-036` phrases the same rule in
+terms of the target, and neither side can accept a TTL or a timestamp on write.
 **FEA-046 [P]** — When no writetime is resolvable, `USING TIMESTAMP` MUST be omitted (server assigns);
 likewise `USING TTL` when TTL is 0.
 
 ### 11.5 Filters
 
-**FEA-050 [P]** — `filter.cql_where` MUST be appended to the origin range select, prefixed with
-` AND ` unless the user's string already begins with `AND`, before `ALLOW FILTERING`.
+**FEA-050 [P+]** — `filter.cql_where` MUST be appended to the origin range select, prefixed with
+` AND ` unless the user's string already begins with the `AND` **keyword**, before `ALLOW FILTERING`.
+Java tests the prefix with `toUpperCase().startsWith("AND")`, which also matches a condition that
+merely starts with those three letters — `android_id = 1` then loses its conjunction and the
+statement fails to parse. cdm-rs requires a word boundary after the keyword.
 **FEA-051 [P]** — `filter.writetime.min` / `.max` MUST skip rows whose computed row writetime falls
 outside the window.
 **FEA-052 [P]** — `filter.column.name` + `filter.column.value` MUST skip rows where the named text

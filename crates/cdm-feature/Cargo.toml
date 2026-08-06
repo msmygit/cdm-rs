@@ -13,6 +13,17 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# ARCHITECTURE §3 puts `cdm-feature` above `cdm-codec`, `cdm-core` and `cdm-cql`. Nothing here
+# needs a session: every feature is expressed against the driver-independent `CqlTypeInfo`,
+# `RawCell` and `Record`, which is what makes the "independently unit-testable without a cluster"
+# clause of SPEC §11 structural rather than aspirational — so the `cdm-cql` edge is deliberately
+# not taken until a feature genuinely needs the driver.
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+bigdecimal.workspace = true
+cdm-codec.workspace = true
+cdm-core.workspace = true
+chrono.workspace = true
+num-bigint.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
