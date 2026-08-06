@@ -17,6 +17,8 @@
 //!   validation run.
 //! * [`raw`] — undeserialized access to result rows, the primitive zero-copy passthrough is built
 //!   on.
+//! * [`statement`] — the CQL a run executes: the column mapping, the origin projection, the read
+//!   and write statements, and binding a row into one without ever writing a tombstone.
 //!
 //! # Specification
 //!
@@ -29,6 +31,11 @@
 //! - `CON-001`..`CON-013` — connection building, TLS, load balancing, retries, the capability probe
 //! - `CON-020`..`CON-029` — Astra secure-connect-bundles
 //! - `SCH-001`, `SCH-002`, `SCH-010` — schema introspection, identifiers, materialized views
+//! - `SCH-003`..`SCH-007` — [`statement::ColumnMapping`], [`statement::OriginProjection`],
+//!   [`statement::TargetUpsert`]
+//! - `FEA-060`..`FEA-062` — [`statement::OriginRangeSelect`], [`statement::StatementSet`]
+//! - `MIG-010`..`MIG-014` — [`statement::TargetUpsert`], [`statement::Binder`]
+//! - `ERR-005` — [`statement::BindFailure`]
 //!
 //! # A driver limitation you will meet
 //!
@@ -41,6 +48,7 @@ pub mod astra;
 pub mod connect;
 pub mod raw;
 pub mod schema;
+pub mod statement;
 pub mod tls;
 
 mod errors;

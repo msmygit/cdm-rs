@@ -621,6 +621,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cdm-codec",
  "cdm-config",
  "cdm-core",
  "cdm-testkit",
