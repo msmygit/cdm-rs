@@ -146,10 +146,9 @@ impl NdjsonSink<std::io::BufWriter<std::fs::File>> {
     /// Creates the parent directory if it is missing, and appends rather than truncating, so a
     /// resumed run (`TRK-031`) adds to the record of the run it resumes rather than erasing it.
     ///
-    /// `SPEC.md` §3.5.11 defines `metrics.events.sink = file` but no property saying *which* file,
-    /// which is why this takes a path from the caller rather than reading one. Adding
-    /// `metrics.events.path` belongs with the CLI wiring that chooses a sink, in PR #39; until then
-    /// the omission is recorded here so that it is not mistaken for an oversight in this module.
+    /// The path comes from the caller rather than being read here, so that this module stays
+    /// independent of the configuration model; `metrics.events.path` is what the CLI wiring
+    /// passes.
     ///
     /// # Errors
     ///
