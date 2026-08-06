@@ -760,9 +760,23 @@ counts for both. `--compat-java` does not restore the bug.
 draining in-flight work cleanly. *(Documented in Java's properties file but not implemented there;
 cdm-rs implements it.)*
 
+"Total `ERROR`" is the **run's committed count** (`MET-004`) across every range that has completed:
+the rows a failed range lost (`ENG-008`) *and* the rows a job counted as errors without failing its
+range. `ERROR` counts rows, not ranges, so a run that loses rows steadily without ever failing a
+range MUST still reach the limit. The comparison MUST be made at each range boundary, after that
+range's counters have been flushed and merged, and MUST be strictly greater than the limit. The run
+is marked `ABORTED`.
+
 **ENG-010 [N]** — `SIGINT`/`SIGTERM` MUST trigger graceful shutdown: stop claiming new ranges, let
-in-flight ranges finish (bounded by `shutdown_grace`, default `60s`), flush metrics, mark the run
-`INTERRUPTED`, and exit non-zero. A second signal aborts immediately.
+in-flight ranges finish (bounded by `perfops.shutdown_grace`, default `60s`), flush metrics, mark
+the run `INTERRUPTED`, and exit `4` (`CLI-004`) — the one exit code a supervisor may retry
+unchanged.
+
+The grace period is a deadline, not a request: a range that has not finished when it expires MUST
+be abandoned rather than waited for, and is left `STARTED` so that `TRK-031` re-plans it. A second
+signal MUST apply that deadline immediately instead of waiting for it. The run's status after a
+second signal is still `INTERRUPTED`: escalating the abandonment does not change who stopped the
+run.
 
 **ENG-011 [N]** — Every range's processing MUST be wrapped in a `tracing` span carrying
 `run_id`, `range_min`, `range_max`, `node_id`, so all logs and metrics are correlatable. This
@@ -774,6 +788,14 @@ failure, and MUST NOT poison the run.
 
 **ENG-014 [N]** — The engine MUST expose a `Pause`/`Resume` control that stops issuing new work
 without losing the plan, driven by `POST /v1/runs/{id}:pause`.
+
+The same control MUST expose an operator-requested **stop**, driven by `POST /v1/runs/{id}:cancel`
+and `cdm runs cancel` (`TRK-034`). A stop drains in-flight ranges exactly as `ENG-010` does,
+subject to the same `perfops.shutdown_grace` deadline, and marks the run `ABORTED` — not
+`INTERRUPTED`, which is reserved for a signal, because a run row must say whether the operator
+ended this run deliberately or the process was stopped underneath it. Unlike a pause, a stop is
+final: the plan is not resumed in this run, and the ranges nobody claimed are left unclaimed for a
+later resume.
 
 ---
 

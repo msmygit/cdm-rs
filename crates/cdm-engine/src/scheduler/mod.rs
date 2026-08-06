@@ -49,13 +49,22 @@
 //!
 //! # Stopping
 //!
-//! Three things stop a run early, and they differ only in what the run row ends up saying:
+//! Three things stop a run early, and they differ only in what the run row ends up saying and in
+//! what a supervisor should do about it:
 //!
-//! | Trigger | Requirement | In-flight ranges | Final status |
-//! |---|---|---|---|
-//! | `SIGINT` / `SIGTERM` | `ENG-010` | finish, within `shutdown_grace` | `INTERRUPTED` |
-//! | Total `ERROR` > `error_limit` | `ENG-009` | finish, within `shutdown_grace` | `ABORTED` |
-//! | Operator request | `ENG-014` | finish, within `shutdown_grace` | `ABORTED` |
+//! | Trigger | Requirement | In-flight ranges | Final status | Exit code |
+//! |---|---|---|---|---|
+//! | `SIGINT` / `SIGTERM` | `ENG-010` | finish, within `shutdown_grace` | `INTERRUPTED` | `4` |
+//! | Total `ERROR` > `error_limit` | `ENG-009` | finish, within `shutdown_grace` | `ABORTED` | `1` |
+//! | Operator request | `ENG-014` | finish, within `shutdown_grace` | `ABORTED` | `1` |
+//!
+//! Only `4` invites an automatic retry (`CLI-004`): the run was stopped from outside and is
+//! resumable, where an error-limit abort would simply hit the limit again.
+//!
+//! All three paths converge on the same ending: the run's counters are flushed, the final metrics
+//! block is emitted (`MET-006`), and [`RangeObserver::on_run_finished`] hands the terminal status
+//! to whoever is recording it. A run that ends without saying what it did leaves an operator with
+//! nothing to resume from, which is a worse outcome than the stop itself.
 //!
 //! In every case workers stop *claiming* immediately and in-flight ranges drain. A second signal,
 //! or the expiry of the grace period, abandons them: the cancellation token in every
@@ -63,8 +72,17 @@
 //! last point is what makes the deadline real — a hung range cannot extend shutdown past
 //! `shutdown_grace` no matter what it is doing.
 //!
+//! An abandoned range is not a failed one. It is left `STARTED`, which `TRK-031` counts as
+//! pending, so a resume re-plans it — and a resume is the only thing that can know whether
+//! re-planning it is safe: a counter range whose writes are not idempotent must not simply be
+//! replayed (`CON-012`, `DST-015`). The scheduler's part of that contract is to say truthfully
+//! which ranges were in flight when it stopped, which is what [`RunReport::outcomes`] and
+//! [`RunReport::unclaimed_ranges`] are for.
+//!
 //! Pausing (`ENG-014`) is the same mechanism minus the finality: workers stop claiming, the plan
-//! is untouched, and resuming carries on from the queue's cursor.
+//! is untouched, and resuming carries on from the queue's cursor. An operator *stop* is the
+//! finality without the signal: the run ends, marked `ABORTED`, and what it did not claim is left
+//! for a later resume.
 //!
 //! # Example
 //!
@@ -237,6 +255,13 @@ impl Scheduler {
             self.control.clone(),
             self.settings.shutdown_grace(),
         ));
+        // ENG-010: the listener is what connects an operator's `Ctrl-C` to all of the above. It
+        // is installed per run rather than per process so that it is torn down with the run, and
+        // only when the embedder has said the run owns the process's signals.
+        let signals = self
+            .settings
+            .handle_signals()
+            .then(|| spawn_signal_listener(self.control.clone()));
 
         let workers = usize::try_from(self.settings.workers())
             .unwrap_or(usize::MAX)
@@ -259,6 +284,12 @@ impl Scheduler {
             }
         }
         watchdog.abort();
+        if let Some(signals) = signals {
+            // The listener outlives nothing: a second `Ctrl-C` after the run has finished belongs
+            // to whatever runs next, and on a terminated listener it gets the default
+            // disposition, which is how an operator can always kill the process.
+            signals.abort();
+        }
 
         let stopped_by = self.control.stop_reason();
         let status = stopped_by.map_or(RunStatus::Ended, StopReason::run_status);
@@ -277,16 +308,24 @@ impl Scheduler {
                 owned
             });
 
+        // ENG-009, ENG-010: flush before the report is built, on every path out of this function.
+        // Every range has already flushed and merged its own counters, so this normally moves
+        // nothing; what it guarantees is that it cannot matter whether it did. A run that stops
+        // early is exactly the run whose totals an operator has to act on, and "the abort dropped
+        // the last range's numbers" is not a defect anybody would find from the outside.
+        run_counters.flush();
+
         tracing::info!(
             target: "cdm::engine",
             run_id = run_id.as_i64(),
             status = status.as_str(),
+            stopped_by = stopped_by.map_or("plan exhausted", StopReason::as_str),
             ranges_completed = outcomes.len(),
             ranges_unclaimed = queue.remaining(),
             "the range scheduler finished"
         );
 
-        Ok(RunReport {
+        let report = RunReport {
             run_id,
             job,
             status,
@@ -294,7 +333,20 @@ impl Scheduler {
             counters: run_counters,
             outcomes,
             unclaimed: queue.unclaimed(),
-        })
+        };
+
+        // MET-006, ENG-010: report what the run did before anything can exit. A caller that
+        // finishes its plan renders the final block itself, once, when it is ready; a run that was
+        // stopped may have no such moment — the process is on its way out and the operator's next
+        // action depends on these numbers — so the scheduler emits it here for exactly the three
+        // early-stop paths.
+        if stopped_by.is_some() {
+            report.log_final_block(Some(run_id));
+        }
+        // TRK-012: the terminal run status, handed to whoever is recording it.
+        shared.observer.on_run_finished(&report);
+
+        Ok(report)
     }
 }
 
@@ -337,13 +389,14 @@ async fn worker(shared: Arc<WorkerShared>, index: usize) {
         };
 
         let outcome = process_range(&shared, range).await;
-        let failed = outcome.is_failure();
         shared.observer.on_range_finished(shared.run_id, &outcome);
         shared.outcomes.lock().push(outcome);
 
-        if failed {
-            enforce_error_limit(&shared);
-        }
+        // ENG-009: checked after *every* range, not only after a failed one. `ERROR` counts rows,
+        // and a row-level error does not fail its range — record-level isolation is the whole
+        // point of the innermost of the three levels (`ARCHITECTURE.md` §13). A run that loses a
+        // row in every range and never fails one would otherwise sail past any error limit.
+        enforce_error_limit(&shared);
     }
     tracing::debug!(
         target: "cdm::engine",
@@ -476,6 +529,21 @@ fn fail_range(counters: &Arc<JobCounters>, range: TokenRange, error: &CdmError) 
 }
 
 /// `ENG-009`: stop the run once the total `ERROR` count exceeds `perfops.error_limit`.
+///
+/// # Which accounting this reads, and why it matters
+///
+/// The run's **committed** total. `MET-004` gives every counter two levels, and only one of them
+/// has anything in it here: a range increments its own registry at the interim level, flushes it
+/// when the range ends — which is what moves interim to committed — and the scheduler then merges
+/// the range's *committed* values into the run's ([`JobCounters::add`] merges committed only).
+/// The run registry is never incremented directly, so its interim level is permanently zero.
+///
+/// Reading the wrong level here would therefore not be an approximation: `errors` would be `0` on
+/// every call and the error limit would never fire at all. That is precisely the shape of the
+/// `ENG-008` bug Java has in `DiffJobSession` — a counter read at a level where it is structurally
+/// always zero, producing a check that silently never triggers — and it is why
+/// `eng_009_the_limit_reads_the_level_that_has_the_errors_in_it` asserts the two levels differ
+/// rather than merely asserting that the limit works.
 fn enforce_error_limit(shared: &WorkerShared) {
     let limit = shared.settings.error_limit();
     if limit == 0 || shared.control.is_stopping() {
@@ -605,13 +673,26 @@ impl RunReport {
         matches!(self.status, RunStatus::Ended)
     }
 
-    /// The process exit code (`ENG-010`: an interrupted run exits non-zero).
+    /// The process exit code this run implies (`CLI-004`, `ENG-010`).
+    ///
+    /// The numbers are `cdm-cli`'s `Exit` enum, which is a public contract with whatever runs the
+    /// binary, and the distinction they draw is the one a supervisor acts on:
+    ///
+    /// | Status | Code | Retry unchanged? |
+    /// |---|---|---|
+    /// | `ENDED` | `0` | nothing to retry |
+    /// | `INTERRUPTED` (`ENG-010`) | `4` | **yes** — the operator stopped it and it is resumable |
+    /// | `ABORTED` (`ENG-009`, `ENG-014`) | `1` | no |
+    ///
+    /// An error-limit abort deliberately does *not* get the retryable code. The run stopped
+    /// because the data or the target was failing; running it again unchanged fails again, having
+    /// first re-migrated everything up to the limit.
     #[must_use]
     pub const fn exit_code(&self) -> u8 {
-        if self.is_complete() {
-            0
-        } else {
-            1
+        match self.status {
+            RunStatus::Ended => 0,
+            RunStatus::Interrupted => 4,
+            _ => 1,
         }
     }
 

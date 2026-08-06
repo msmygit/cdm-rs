@@ -41,6 +41,7 @@ use cdm_metrics::JobCounters;
 use tokio_util::sync::CancellationToken;
 
 use crate::scheduler::limits::{InflightPermit, RuntimeLimits};
+use crate::scheduler::RunReport;
 
 /// How a range ended when it did not fail (`ENG-002`).
 ///
@@ -261,6 +262,22 @@ pub trait RangeObserver: Send + Sync {
     /// Called once a range has reached a terminal status and its counters are committed
     /// (`ENG-002`, `MET-004`).
     fn on_range_finished(&self, run_id: RunId, outcome: &RangeOutcome);
+
+    /// Called once, after the last worker has stopped and the run's counters have been flushed
+    /// (`ENG-009`, `ENG-010`, `ENG-014`).
+    ///
+    /// This is the seam the run row of `TRK-012` plugs into. `ENG-009` and `ENG-010` each name a
+    /// terminal status the run must be *marked* with — `ABORTED` for an error-limit or operator
+    /// stop, `INTERRUPTED` for a signal — and marking is a write to the tracking table, which
+    /// this crate cannot do and must not learn to. [`RunReport::status`] carries the status and
+    /// [`RunReport::counters`] the totals it is recorded alongside, both already final: an
+    /// implementation has only to persist them.
+    ///
+    /// It is called on every path out of [`Scheduler::run`](crate::scheduler::Scheduler::run),
+    /// including the three that stop a run early, because a run that ends without saying what it
+    /// did is a run nobody can resume with confidence. The default implementation does nothing,
+    /// so an observer that only tracks ranges is unaffected.
+    fn on_run_finished(&self, _report: &RunReport) {}
 }
 
 /// The observer used when nobody is watching — run tracking disabled, or an embedded run.

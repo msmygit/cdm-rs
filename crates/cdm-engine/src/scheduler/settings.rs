@@ -15,6 +15,18 @@
 //! [`SchedulerSettings::divided_across_nodes`], which the caller applies when the flag is set.
 //! Splitting it this way keeps the scheduler free of a membership dependency while still making
 //! the operator's choice visible to it.
+//!
+//! # One setting that has no configuration key
+//!
+//! [`SchedulerSettings::handle_signals`] (`ENG-010`) decides whether a run installs the
+//! process-wide `SIGINT`/`SIGTERM` listener. It is deliberately *not* a configuration key: it is
+//! not the operator's choice but the embedder's. A `cdm migrate` process is the run, so the run
+//! owns the process's signals; a run driven by the HTTP control plane, or by a test, or by an
+//! application that has embedded this crate, is one activity among several and must not seize
+//! them. [`SchedulerSettings::from_config`] therefore turns it on — configuration is only ever
+//! loaded by a process whose purpose is the run — and [`SchedulerSettings::default`] leaves it
+//! off, so a programmatically constructed scheduler never has a side effect on the process that
+//! built it.
 
 use std::time::Duration;
 
@@ -38,6 +50,7 @@ pub struct SchedulerSettings {
     shutdown_grace: Duration,
     ratelimit_is_global: bool,
     java_thread_label: bool,
+    handle_signals: bool,
 }
 
 impl Default for SchedulerSettings {
@@ -60,6 +73,9 @@ impl Default for SchedulerSettings {
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             ratelimit_is_global: false,
             java_thread_label: true,
+            // ENG-010: off by default, because a `Default` that installs a process-wide signal
+            // handler is a `Default` with a side effect on code that never asked for one.
+            handle_signals: false,
         }
     }
 }
@@ -84,6 +100,9 @@ impl SchedulerSettings {
             // and `json` the same facts are structured span fields, and repeating them as a
             // pre-formatted string would be noise.
             java_thread_label: config.config().logging.format == LogFormat::Pretty,
+            // ENG-010: a process that has loaded a configuration is a process whose purpose is
+            // this run, so the run owns its signals.
+            handle_signals: true,
         }
     }
 
@@ -148,6 +167,15 @@ impl SchedulerSettings {
     #[must_use]
     pub const fn ratelimit_is_global(&self) -> bool {
         self.ratelimit_is_global
+    }
+
+    /// Whether the run installs the `SIGINT`/`SIGTERM` listener of `ENG-010`.
+    ///
+    /// See the module documentation for why this is the embedder's choice rather than the
+    /// operator's.
+    #[must_use]
+    pub const fn handle_signals(&self) -> bool {
+        self.handle_signals
     }
 
     /// Whether range spans carry the Java-compatible `min:max` label (`ENG-012`).
@@ -217,6 +245,13 @@ impl SchedulerSettings {
     #[must_use]
     pub const fn with_ratelimit_is_global(mut self, global: bool) -> Self {
         self.ratelimit_is_global = global;
+        self
+    }
+
+    /// Sets whether the run installs the `SIGINT`/`SIGTERM` listener (`ENG-010`).
+    #[must_use]
+    pub const fn with_signal_handling(mut self, enabled: bool) -> Self {
+        self.handle_signals = enabled;
         self
     }
 
@@ -307,6 +342,20 @@ mod tests {
         let settings = SchedulerSettings::from_config(&EffectiveConfig::resolve(config));
 
         assert_eq!(settings.shutdown_grace(), Duration::from_secs(300));
+    }
+
+    #[test]
+    fn eng_010_a_configured_run_owns_the_process_signals_and_a_built_one_does_not() {
+        // The asymmetry is the point: `cdm migrate` *is* the process, so it takes SIGINT; a
+        // scheduler built in-process by the API server, or by a test, must not.
+        assert!(
+            SchedulerSettings::from_config(&EffectiveConfig::resolve(CdmConfig::default()))
+                .handle_signals()
+        );
+        assert!(!SchedulerSettings::default().handle_signals());
+        assert!(SchedulerSettings::default()
+            .with_signal_handling(true)
+            .handle_signals());
     }
 
     #[test]
@@ -412,6 +461,7 @@ mod tests {
             .with_fetch_size(6)
             .with_error_limit(7)
             .with_shutdown_grace(Duration::from_millis(8))
+            .with_signal_handling(true)
             .with_java_thread_label(false);
 
         assert_eq!(settings.workers(), 3);
@@ -423,6 +473,7 @@ mod tests {
         assert_eq!(settings.fetch_size(), 6);
         assert_eq!(settings.error_limit(), 7);
         assert_eq!(settings.shutdown_grace(), Duration::from_millis(8));
+        assert!(settings.handle_signals());
         assert!(!settings.java_thread_label());
     }
 }
