@@ -227,8 +227,32 @@ fn restrict_file_permissions(_side: Side, _path: &Path) -> Result<(), CdmError> 
 mod tests {
     use super::*;
 
+    /// Serialises every test in this module.
+    ///
+    /// `cleanup_all` deliberately removes *every* registered directory, because on `SIGTERM` a
+    /// bundle directory left behind is a private key left behind. That makes it correct in
+    /// production and destructive in a test binary, where cargo runs these tests as concurrent
+    /// threads of one process sharing one `REGISTERED` list: the `cleanup_all` test would delete
+    /// a sibling's directory between its `create_dir_all` and its `write`, and the sibling would
+    /// fail with a confusing `NotFound` from a path it had just created.
+    ///
+    /// Serialising the tests rather than scoping the registry keeps the production behaviour
+    /// under test as it actually ships.
+    static SERIALISE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Takes the module lock, ignoring poisoning.
+    ///
+    /// A test that panics while holding it has already failed and reported; propagating the
+    /// poison would fail every later test with that first failure's noise instead of its own.
+    fn serialised() -> std::sync::MutexGuard<'static, ()> {
+        SERIALISE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn con_005_the_directory_is_0700_and_the_file_0600() {
+        let _guard = serialised();
         let dir = BundleTempDir::new(Side::Origin).unwrap();
         let path = dir.write(Side::Origin, "scb.zip", b"pretend zip").unwrap();
         assert!(path.exists());
@@ -245,6 +269,7 @@ mod tests {
 
     #[test]
     fn con_005_dropping_the_guard_removes_the_directory() {
+        let _guard = serialised();
         let path = {
             let dir = BundleTempDir::new(Side::Target).unwrap();
             dir.write(Side::Target, "scb.zip", b"credentials").unwrap();
@@ -259,6 +284,7 @@ mod tests {
 
     #[test]
     fn con_005_cleanup_all_removes_a_registered_directory() {
+        let _guard = serialised();
         let dir = BundleTempDir::new(Side::Origin).unwrap();
         let path = dir.path().to_path_buf();
         cleanup_all();
@@ -269,6 +295,7 @@ mod tests {
 
     #[test]
     fn con_005_two_directories_do_not_collide() {
+        let _guard = serialised();
         let first = BundleTempDir::new(Side::Origin).unwrap();
         let second = BundleTempDir::new(Side::Origin).unwrap();
         assert_ne!(first.path(), second.path());
@@ -276,6 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn con_005_the_signal_handler_installs_under_a_runtime() {
+        let _guard = serialised();
         // Installing twice must be harmless; the second call is a no-op.
         let _first = BundleTempDir::new(Side::Origin).unwrap();
         let _second = BundleTempDir::new(Side::Target).unwrap();
@@ -283,6 +311,7 @@ mod tests {
 
     #[test]
     fn con_005_writing_to_a_removed_directory_is_an_error_not_a_panic() {
+        let _guard = serialised();
         let dir = BundleTempDir::new(Side::Origin).unwrap();
         std::fs::remove_dir_all(dir.path()).unwrap();
         let err = dir.write(Side::Origin, "scb.zip", b"x").unwrap_err();
