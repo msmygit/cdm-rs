@@ -1535,8 +1535,17 @@ MUST point at it. CI MUST fail if a code lacks a page.
 **ERR-004 [N]** — `unwrap()`/`expect()`/`panic!` MUST be denied by Clippy in all non-test code
 except in `main` startup and documented invariants with a `// SAFETY-INVARIANT:` comment.
 
-**ERR-005 [P]** — Bind failures MUST log the value, its type, the column name, the CQL type, the bind
-index and the statement CQL — matching Java's detailed bind-error diagnostics.
+**ERR-005 [P]** — Bind failures MUST log the column name, its CQL type, the column index, the bind
+index, the statement CQL and the **primary key of the offending row** — matching Java's detailed
+bind-error diagnostics in everything except the value itself.
+
+> **Correction.** Earlier drafts required the *value* and its type to be logged, as Java's
+> `TargetInsertStatement` does. That contradicts `SEC-002`, which forbids logging row values outside
+> the validate diff path, and the two cannot both hold. `SEC-002` wins: the value is the one field
+> that is a customer's data, every other field is enough to reproduce the failure, and the primary
+> key — which Java does *not* log here — identifies the row far better than its contents do. Java's
+> `bindValue.getClass().getName()` is likewise not reproduced: it is a Java type name, and cdm-rs
+> never decodes the value into one.
 
 ---
 

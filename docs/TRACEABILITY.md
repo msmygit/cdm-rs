@@ -167,13 +167,13 @@ test, fails CI.
 |---|---|---|---|---|
 | `SCH-001` <sup>P</sup> | Origin and target table metadata MUST be introspected from `system_schema`: columns, CQL types (including UDTs, tuples,… | `cdm-cql` | `sch_001_*` | #7, #8, #9 |
 | `SCH-002` <sup>P</sup> | Quoted, mixed-case and special-character identifiers MUST be handled correctly on both read and write | `cdm-cql` | `sch_002_*` | #7, #8, #9 |
-| `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql` | `sch_003_*` | #18 |
-| `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql` | `sch_004_*` | #18 |
-| `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql` | `sch_005_*` | #22 |
-| `SCH-006` <sup>P</sup> | The target primary key MUST be derivable from: mapped origin columns, constant columns, and explode-map key/value columns | `cdm-cql` | `sch_006_*` | #18 |
-| `SCH-007` <sup>P</sup> | Virtual projection columns `TTL(col)` and `WRITETIME(col)` MUST be appendable to the origin select and addressable by index | `cdm-cql` | `sch_007_*` | #18 |
+| `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql::statement::mapping` | `sch_003_*` | #18 |
+| `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql::statement::mapping` | `sch_004_*` | #18 |
+| `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql::statement::upsert` | `sch_005_*` | #18, #22 |
+| `SCH-006` <sup>P</sup> | The target primary key MUST be derivable from: mapped origin columns, constant columns, and explode-map key/value columns | `cdm-cql::statement::mapping` | `sch_006_*` | #18 |
+| `SCH-007` <sup>P</sup> | Virtual projection columns `TTL(col)` and `WRITETIME(col)` MUST be appendable to the origin select and addressable by index | `cdm-cql::statement::projection` | `sch_007_*` | #18 |
 | `SCH-008` <sup>N</sup> | `cdm schema diff` MUST print a side-by-side origin/target schema comparison with per-column mapping, conversion plan… | `cdm-cql` | `sch_008_*` | #10 |
-| `SCH-009` <sup>N</sup> | Schema changes detected mid-run (via driver schema-agreement events) MUST abort the run with a distinct error kind rather than… | `cdm-cql` | `sch_009_*` | #18 |
+| `SCH-009` <sup>N</sup> | Schema changes detected mid-run (via driver schema-agreement events) MUST abort the run with a distinct error kind rather than… | `cdm-cql` | `sch_009_*` | #21 |
 | `SCH-010` <sup>P</sup> | Materialized views MUST be rejected as a target with a clear message | `cdm-cql` | `sch_010_*` | #7, #8, #9 |
 
 ### TOK
@@ -219,11 +219,11 @@ test, fails CI.
 | `MIG-003` <sup>P</sup> | A record whose bind produces no statement (e.g | `cdm-engine::jobs::migrate` | `mig_003_*` | #21 |
 | `MIG-004` <sup>P</sup> | Writes MUST be issued asynchronously with bounded concurrency, and flushed when `UNFLUSHED >= flush_threshold` where… | `cdm-engine::jobs::migrate` | `mig_004_*` | #21 |
 | `MIG-005` <sup>P</sup> | On flush, `WRITE` MUST be incremented by the number of successfully written rows | `cdm-engine::jobs::migrate` | `mig_005_*` | #21 |
-| `MIG-010` <sup>P</sup> | INSERT shape: mapped columns bound, constant columns inlined as literals, optional USING TTL and TIMESTAMP | `cdm-engine::jobs::migrate` | `mig_010_*` | #18 |
-| `MIG-011` <sup>P</sup> | Bind order MUST be: mapped/derived columns in target-column order, then TTL, then writetime | `cdm-engine::jobs::migrate` | `mig_011_*` | #18 |
-| `MIG-012` <sup>P</sup> | A `null` value, or an **empty collection**, MUST be bound as `UNSET` rather than `null`, to avoid creating tombstones | `cdm-engine::jobs::migrate` | `mig_012_*` | #18 |
-| `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-engine::jobs::migrate` | `mig_013_*` | #18 |
-| `MIG-014` <sup>P</sup> | `transform.map_remove_null_value = true` MUST strip map entries with null values before binding | `cdm-engine::jobs::migrate` | `mig_014_*` | #18 |
+| `MIG-010` <sup>P</sup> | INSERT shape: mapped columns bound, constant columns inlined as literals, optional USING TTL and TIMESTAMP | `cdm-cql::statement::upsert` | `mig_010_*` | #18 |
+| `MIG-011` <sup>P</sup> | Bind order MUST be: mapped/derived columns in target-column order, then TTL, then writetime | `cdm-cql::statement::upsert` | `mig_011_*` | #18 |
+| `MIG-012` <sup>P</sup> | A `null` value, or an **empty collection**, MUST be bound as `UNSET` rather than `null`, to avoid creating tombstones | `cdm-cql::statement::bind` | `mig_012_*` | #18 |
+| `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-cql::statement::bind` | `mig_013_*` | #18 |
+| `MIG-014` <sup>P</sup> | `transform.map_remove_null_value = true` MUST strip map entries with null values before binding | `cdm-cql::statement::bind` | `mig_014_*` | #18 |
 | `MIG-020` <sup>P</sup> | Batching: when `batch_size > 1`, writes MUST be accumulated into an `UNLOGGED` batch and executed when the batch reaches… | `cdm-engine::jobs::migrate` | `mig_020_*` | #21 |
 | `MIG-021` <sup>P</sup> | `batch_size` MUST be coerced to 1 when the table is a counter table, when a writetime filter is active, or when the configured… | `cdm-engine::jobs::migrate` | `mig_021_*` | #21 |
 | `MIG-022` <sup>N</sup> | Batches SHOULD be grouped by partition key so that a batch never spans partitions (single-partition batches are the only… | `cdm-engine::jobs::migrate` | `mig_022_*` | #21 |
@@ -295,9 +295,9 @@ test, fails CI.
 | `FEA-052` <sup>P</sup> | `filter.column.name` + `filter.column.value` MUST skip rows where the named text column equals the value, case-insensitively after trimming | `cdm-feature::filter` | `fea_052_*` | #31 |
 | `FEA-053` <sup>P</sup> | `filter.token.min` / `.max` bound the planned ring segment (`TOK-002`) | `cdm-feature::filter` | `fea_053_*` | #31 |
 | `FEA-054` <sup>N</sup> | Filters MUST be composable and pluggable (`PLG-003`); a filter chain evaluates in declaration order and short-circuits | `cdm-feature::filter` | `fea_054_*` | #31 |
-| `FEA-060` <sup>P</sup> | The origin range select bounds TOKEN(pk) between two bind values, with the optional CQL filter appended | `cdm-feature` | `fea_060_*` | #18 |
-| `FEA-061` <sup>P+</sup> | `ALLOW FILTERING` MUST be omitted when no `filter.cql_where` is configured, since a pure token-range scan does not require it | `cdm-feature` | `fea_061_*` | #18 |
-| `FEA-062` <sup>N</sup> | The generated CQL for every statement MUST be logged once at startup and exposed at `GET /v1/runs/{id}/statements` | `cdm-feature` | `fea_062_*` | #18 |
+| `FEA-060` <sup>P</sup> | The origin range select bounds TOKEN(pk) between two bind values, with the optional CQL filter appended | `cdm-cql::statement::select` | `fea_060_*` | #18 |
+| `FEA-061` <sup>P+</sup> | `ALLOW FILTERING` MUST be omitted when no `filter.cql_where` is configured, since a pure token-range scan does not require it | `cdm-cql::statement::select` | `fea_061_*` | #18 |
+| `FEA-062` <sup>N</sup> | The generated CQL for every statement MUST be logged once at startup and exposed at `GET /v1/runs/{id}/statements` | `cdm-cql::statement`, `cdm-api` | `fea_062_*` | #18, #42 |
 
 ### CDC
 
@@ -464,7 +464,7 @@ test, fails CI.
 | `ERR-002` <sup>N</sup> | A `Diagnostic` type rendered identically as CLI text, problem+json and SSE events | `cdm-core::error` | `err_002_*` | #3 |
 | `ERR-003` <sup>N</sup> | Every diagnostic code MUST have a page in `docs/errors/<CODE>.md`, and `docs_url` MUST point at it | `cdm-core::error` | `err_003_*` | #3, #57 |
 | `ERR-004` <sup>N</sup> | `unwrap()`/`expect()`/`panic!` MUST be denied by Clippy in all non-test code except in `main` startup and documented… | `cdm-core::error` | `err_004_*` | #3 |
-| `ERR-005` <sup>P</sup> | Bind failures MUST log the value, its type, the column name, the CQL type, the bind index and the statement CQL — matching… | `cdm-core::error` | `err_005_*` | #18 |
+| `ERR-005` <sup>P</sup> | Bind failures MUST log the column name, the CQL type, the bind index, the statement CQL and the row's primary key; the value itself is withheld by `SEC-002` | `cdm-cql::statement::bind` | `err_005_*` | #18 |
 
 ### SEC
 
