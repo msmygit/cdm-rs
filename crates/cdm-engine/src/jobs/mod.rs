@@ -13,6 +13,8 @@
 //! never writes the failure path at all.
 
 pub mod guardrail;
+pub mod migrate;
 pub mod validate;
 
 pub use guardrail::{GuardrailJob, InlineGuardrail, OriginRows, RowSizeStream};
+pub use migrate::{MigrateJob, MigratePlan, MigrateSettings};

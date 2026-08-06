@@ -283,8 +283,8 @@ mod tests {
 
     use cdm_cql::statement::BindInputs;
 
-    use crate::migrate::sink::tests::RecordingSink;
-    use crate::migrate::testfixtures::{binder, row_of};
+    use crate::jobs::migrate::sink::tests::RecordingSink;
+    use crate::jobs::migrate::testfixtures::{binder, row_of};
     use crate::scheduler::limits::RuntimeLimits;
     use crate::scheduler::SchedulerSettings;
 

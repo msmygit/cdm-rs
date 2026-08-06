@@ -254,7 +254,7 @@ fn origin_key_indices(mapping: &ColumnMapping) -> Result<Vec<usize>, CdmError> {
 mod tests {
     use cdm_cql::statement::MappingOptions;
 
-    use crate::migrate::testfixtures::{counter_mapping, plain_mapping, plain_schema};
+    use crate::jobs::migrate::testfixtures::{counter_mapping, plain_mapping, plain_schema};
 
     use super::*;
 

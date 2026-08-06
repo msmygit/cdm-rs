@@ -538,7 +538,7 @@ mod tests {
     use cdm_feature::{table_view, ColumnValueFilter, ExplodeMap, FilterChain, TableFacts};
     use cdm_metrics::{CounterKind, CounterView, JobCounters};
 
-    use crate::migrate::testfixtures::planner;
+    use crate::jobs::migrate::testfixtures::planner;
 
     use super::*;
 
@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn mig_032_a_counter_write_is_never_batched_and_never_retried() {
-        use crate::migrate::settings::BatchCoercion;
+        use crate::jobs::migrate::settings::BatchCoercion;
         use cdm_config::types::BatchGrouping;
 
         // Never batched: the coercion is unconditional for a counter target.
@@ -735,7 +735,7 @@ mod tests {
 
         // Never retried: `TargetWriter::write_counter` has no retry loop, and a source sweep is
         // the check that survives somebody adding one back "for symmetry".
-        let write_source = include_str!("../../../cdm-cql/src/exec/write.rs");
+        let write_source = include_str!("../../../../cdm-cql/src/exec/write.rs");
         let production = write_source.split("#[cfg(test)]").next().unwrap();
         let counter_fn = production
             .split("pub async fn write_counter")

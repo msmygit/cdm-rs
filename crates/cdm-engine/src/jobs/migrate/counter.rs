@@ -219,7 +219,7 @@ fn counter_value(bytes: &[u8], side: Side) -> Result<i64, CdmError> {
 mod tests {
     use cdm_core::{RawCell, Row};
 
-    use crate::migrate::testfixtures::{counter_mapping, plain_mapping};
+    use crate::jobs::migrate::testfixtures::{counter_mapping, plain_mapping};
 
     use super::*;
 

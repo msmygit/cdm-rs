@@ -148,7 +148,7 @@ test, fails CI.
 | `CON-009` <sup>N</sup> | Connections MUST use a token-aware, DC-aware, latency-aware load-balancing policy by default, with… | `cdm-cql` | `con_009_*` | #7, #8, #9 |
 | `CON-010` <sup>N</sup> | Speculative execution MUST be configurable per side and disabled by default for target writes | `cdm-cql` | `con_010_*` | #7, #8, #9 |
 | `CON-011` <sup>P+</sup> | Retry policy: idempotent reads retry on timeout/unavailable up to `perfops.retry.max_attempts` with exponential backoff and jitter; writes are idempotent only for non-counter tables | `cdm-cql::connect::policy`, `cdm-cql::exec` | `con_011_*` | #7, #22 |
-| `CON-012` <sup>P+</sup> | Counter writes MUST NOT be retried automatically (at-most-once), and a counter write failure MUST fail the partition range | `cdm-cql::statement::bind`, `cdm-cql::exec::write`, `cdm-engine::migrate::counter` | `con_012_*` | #7, #22 |
+| `CON-012` <sup>P+</sup> | Counter writes MUST NOT be retried automatically (at-most-once), and a counter write failure MUST fail the partition range | `cdm-cql::statement::bind`, `cdm-cql::exec::write`, `cdm-engine::jobs::migrate::counter` | `con_012_*` | #7, #22 |
 | `CON-013` <sup>N</sup> | Origin and target compatibility MUST be probed at startup: protocol version, whether `WRITETIME`/`TTL` on collections is… | `cdm-cql` | `con_013_*` | #7, #8, #9 |
 | `CON-020` <sup>N</sup> | The bundle zip is read in memory; PEM members are used and the JKS/PFX members ignored | `cdm-cql` | `con_020_*` | #7, #8, #9 |
 | `CON-021` <sup>N</sup> | `config.json` is parsed leniently, with a named Tier-1 diagnostic for each missing required field | `cdm-cql` | `con_021_*` | #7, #8, #9 |
@@ -214,24 +214,24 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `MIG-001` <sup>P</sup> | For each origin row in a range: acquire an origin rate-limit permit, increment `READ`, build the target primary key, apply filters, expand exploded records, bind, write, count | `cdm-engine::migrate::job` | `mig_001_*` | #21 |
-| `MIG-002` <sup>P</sup> | Rows rejected by any filter MUST increment `SKIPPED` and MUST NOT be written | `cdm-engine::migrate::job` | `mig_002_*` | #21 |
-| `MIG-003` <sup>P</sup> | A record whose bind produces no statement (an all-null exploded map) MUST increment `SKIPPED` | `cdm-engine::migrate::job` | `mig_003_*` | #21 |
-| `MIG-004` <sup>P+</sup> | Writes MUST be issued asynchronously with bounded concurrency, and flushed when `UNFLUSHED >= min(fetch_size, max(batch_size * 10, 100))`; unlike Java the comparison reads the interim count, so the threshold fires | `cdm-engine::migrate::settings`, `cdm-engine::migrate::buffer` | `mig_004_*` | #21 |
-| `MIG-005` <sup>P</sup> | On flush, `WRITE` MUST be incremented by the number of successfully written rows; a flush failure fails the range | `cdm-engine::migrate::buffer` | `mig_005_*` | #21 |
+| `MIG-001` <sup>P</sup> | For each origin row in a range: acquire an origin rate-limit permit, increment `READ`, build the target primary key, apply filters, expand exploded records, bind, write, count | `cdm-engine::jobs::migrate::job` | `mig_001_*` | #21 |
+| `MIG-002` <sup>P</sup> | Rows rejected by any filter MUST increment `SKIPPED` and MUST NOT be written | `cdm-engine::jobs::migrate::job` | `mig_002_*` | #21 |
+| `MIG-003` <sup>P</sup> | A record whose bind produces no statement (an all-null exploded map) MUST increment `SKIPPED` | `cdm-engine::jobs::migrate::job` | `mig_003_*` | #21 |
+| `MIG-004` <sup>P+</sup> | Writes MUST be issued asynchronously with bounded concurrency, and flushed when `UNFLUSHED >= min(fetch_size, max(batch_size * 10, 100))`; unlike Java the comparison reads the interim count, so the threshold fires | `cdm-engine::jobs::migrate::settings`, `cdm-engine::jobs::migrate::buffer` | `mig_004_*` | #21 |
+| `MIG-005` <sup>P</sup> | On flush, `WRITE` MUST be incremented by the number of successfully written rows; a flush failure fails the range | `cdm-engine::jobs::migrate::buffer` | `mig_005_*` | #21 |
 | `MIG-010` <sup>P</sup> | INSERT shape: mapped columns bound, constant columns inlined as literals, optional USING TTL and TIMESTAMP | `cdm-cql::statement::upsert` | `mig_010_*` | #18 |
 | `MIG-011` <sup>P</sup> | Bind order MUST be: mapped/derived columns in target-column order, then TTL, then writetime | `cdm-cql::statement::upsert` | `mig_011_*` | #18 |
 | `MIG-012` <sup>P</sup> | A `null` value, or an **empty collection**, MUST be bound as `UNSET` rather than `null`, to avoid creating tombstones | `cdm-cql::statement::bind` | `mig_012_*` | #18 |
 | `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-cql::statement::bind` | `mig_013_*` | #18 |
 | `MIG-014` <sup>P</sup> | `transform.map_remove_null_value = true` MUST strip map entries with null values before binding | `cdm-cql::statement::bind` | `mig_014_*` | #18 |
-| `MIG-020` <sup>P</sup> | Batching: when `batch_size > 1`, writes MUST be accumulated into an `UNLOGGED` batch and executed when the batch reaches `batch_size` | `cdm-engine::migrate::buffer`, `cdm-cql::exec::write` | `mig_020_*` | #21 |
-| `MIG-021` <sup>P</sup> | `batch_size` MUST be coerced to 1 for a counter table, for an active writetime filter, or for a configured value below 1 | `cdm-engine::migrate::settings` | `mig_021_*` | #21, #22 |
-| `MIG-022` <sup>N</sup> | Batches SHOULD be grouped by partition key so that a batch never spans partitions; `perfops.batch_grouping = legacy` restores Java's index-order batching | `cdm-engine::migrate::buffer`, `cdm-cql::statement::upsert` | `mig_022_*` | #21 |
-| `MIG-030` <sup>P</sup> | Counter tables use UPDATE with `SET c = c + ?`, TTL/writetime bound first, then non-key columns, then the primary-key where-clause | `cdm-cql::statement::upsert`, `cdm-engine::migrate::counter` | `mig_030_*` | #18, #22 |
-| `MIG-031` <sup>P</sup> | The counter delta MUST be `origin_value − (current_target_value or 0)`, obtained by a rate-limited target SELECT by PK immediately before the write | `cdm-engine::migrate::counter`, `cdm-cql::statement::bind` | `mig_031_*` | #22 |
-| `MIG-032` <sup>P</sup> | Counter migration MUST NOT be batched and MUST NOT be retried (`CON-012`) | `cdm-engine::migrate::counter`, `cdm-cql::exec::write` | `mig_032_*` | #22 |
+| `MIG-020` <sup>P</sup> | Batching: when `batch_size > 1`, writes MUST be accumulated into an `UNLOGGED` batch and executed when the batch reaches `batch_size` | `cdm-engine::jobs::migrate::buffer`, `cdm-cql::exec::write` | `mig_020_*` | #21 |
+| `MIG-021` <sup>P</sup> | `batch_size` MUST be coerced to 1 for a counter table, for an active writetime filter, or for a configured value below 1 | `cdm-engine::jobs::migrate::settings` | `mig_021_*` | #21, #22 |
+| `MIG-022` <sup>N</sup> | Batches SHOULD be grouped by partition key so that a batch never spans partitions; `perfops.batch_grouping = legacy` restores Java's index-order batching | `cdm-engine::jobs::migrate::buffer`, `cdm-cql::statement::upsert` | `mig_022_*` | #21 |
+| `MIG-030` <sup>P</sup> | Counter tables use UPDATE with `SET c = c + ?`, TTL/writetime bound first, then non-key columns, then the primary-key where-clause | `cdm-cql::statement::upsert`, `cdm-engine::jobs::migrate::counter` | `mig_030_*` | #18, #22 |
+| `MIG-031` <sup>P</sup> | The counter delta MUST be `origin_value − (current_target_value or 0)`, obtained by a rate-limited target SELECT by PK immediately before the write | `cdm-engine::jobs::migrate::counter`, `cdm-cql::statement::bind` | `mig_031_*` | #22 |
+| `MIG-032` <sup>P</sup> | Counter migration MUST NOT be batched and MUST NOT be retried (`CON-012`) | `cdm-engine::jobs::migrate::counter`, `cdm-cql::exec::write` | `mig_032_*` | #22 |
 | `MIG-040` <sup>N</sup> | Identical origin/target types pass through as raw bytes with no deserialize/reserialize | `cdm-cql::raw` | `con_000_raw_column_bytes_are_reachable`, `mig_040_*` | #2, #15 |
-| `MIG-041` <sup>N</sup> | `migrate --dry-run` MUST execute the full read + transform + bind pipeline and count everything, but issue no target writes | `cdm-engine::migrate::sink`, `cdm-engine::migrate::job` | `mig_041_*` | #21 |
+| `MIG-041` <sup>N</sup> | `migrate --dry-run` MUST execute the full read + transform + bind pipeline and count everything, but issue no target writes | `cdm-engine::jobs::migrate::sink`, `cdm-engine::jobs::migrate::job` | `mig_041_*` | #21 |
 
 ### VAL
 

@@ -1,7 +1,7 @@
 //! The migrate job, against a real cluster (`MIG-001`..`MIG-005`, `MIG-020`..`MIG-022`,
 //! `MIG-030`..`MIG-032`, `MIG-041`, `CON-012`, `SCH-009`).
 //!
-//! The unit tests in `cdm_engine::migrate` prove the *arithmetic*: when a flush happens, how a
+//! The unit tests in `cdm_engine::jobs::migrate` prove the *arithmetic*: when a flush happens, how a
 //! batch is grouped, what a counter delta is, which counter is credited. They cannot prove that
 //! the rows arrive, that an `UNLOGGED` batch of generated CQL is accepted, or — the one that
 //! matters most — that a counter delta lands **exactly once**. Those are facts about a node.
@@ -44,7 +44,7 @@ use cdm_cql::statement::{
     ColumnMapping, MappingOptions, MissingKeyPolicy, OriginProjection, OriginRangeSelect,
     OriginSelectByPk, StatementOptions, StatementSet, TargetSelectByPk, TargetUpsert,
 };
-use cdm_engine::migrate::{MigrateFeatures, MigrateJob, MigratePlan, MigrateSettings};
+use cdm_engine::jobs::migrate::{MigrateFeatures, MigrateJob, MigratePlan, MigrateSettings};
 use cdm_engine::planner::{Partitioner, Planner, PlannerSettings};
 use cdm_engine::scheduler::{NoopObserver, Scheduler, SchedulerSettings};
 use cdm_metrics::{CounterKind, CounterView};
