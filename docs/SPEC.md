@@ -457,6 +457,7 @@ never had an effect. Constant-column types are resolved from the target schema (
 | `logging.level` | string | `info` | |
 | `logging.format` | enum `pretty`\|`json`\|`compact` | `pretty` | |
 | `logging.diff_file` | path | `cdm_logs/cdm_diff.log` | parity with Java diff log |
+| `feature.guardrail.mode` | enum `check`\|`warn`\|`block` | `check` | the inline guardrail of `GRD-004`. Listed here, not in §3.5.10, because it is new to cdm-rs and has no `spark.cdm.*` alias |
 
 ---
 
@@ -968,19 +969,51 @@ turns a leak on, and the operator who needs the values has the row's key and can
 
 ## 10. Guardrail job (`GRD`)
 
-**GRD-001 [P]** — The guardrail job reads the **origin only**; no target connection is required or
-opened.
+**GRD-001 [P+]** — The guardrail job reads the **origin only**; no target connection is required or
+opened. This MUST be structural: the job's only capability is a range reader, so there is no
+reachable type through which it could write.
+
+> **Improvement.** Java's `GuardrailCheckJobSession` logs
+> `GuardrailCheckJobSession is disabled - is it configured correctly?` when
+> `guardrail.colSizeInKB` is unset and then runs the job regardless: `guardrailChecks` returns
+> `null` for every row, every row is counted `VALID`, and the table is reported clean. cdm-rs
+> refuses to start instead, because a clean report from a run that was never looking is
+> indistinguishable from a clean report from one that was. `--compat-java` does not restore this,
+> on the same reasoning as the two Java bugs in `docs/MIGRATION_FROM_JAVA.md`.
 
 **GRD-002 [P]** — For each row, every column's serialized size MUST be computed and compared against
 `feature.guardrail.column_size_kb * 1000` bytes (note: Java uses a 1000, not 1024, factor —
 parity is required).
 
-**GRD-003 [P]** — A row with at least one oversized column increments `LARGE` and logs
+**GRD-003 [P+]** — A row with at least one oversized column increments `LARGE` and logs
 `Large columns (KB): col(12.345),col2(...)` with three-decimal formatting; otherwise `VALID`.
+The report lists columns in projection order, and identifies the row by its **primary key**, never
+by any column's value (`SEC-002`).
+
+> **Correction.** Earlier revisions marked this `[P]` and described three-decimal formatting as
+> Java's behaviour. It is not. `Guardrail.guardrailChecks` formats
+> `entry.getValue() / BASE_FACTOR` where the size is an `int` and `BASE_FACTOR` is the `int` 1000,
+> so the division is integer division and the `DecimalFormat("0.###")` pattern never has a fraction
+> to render: a 1 474-byte column is reported as `col(1)`, and every column between 1 000 and 1 999
+> bytes reports the same number. cdm-rs emits the real quotient — `col(1.474)`, trailing zeros
+> dropped exactly as `0.###` would drop them — because a report whose whole purpose is to rank
+> oversized columns must be able to tell two of them apart. `--compat-java` restores the
+> truncation. The threshold comparison itself is unaffected and is exact parity (`GRD-002`).
 
 **GRD-004 [N]** — Guardrail MUST additionally be runnable *inline* during migrate/validate
 (`feature.guardrail.mode = check|warn|block`), where `block` skips oversized rows and counts them
-in `LARGE` rather than writing them.
+in `SKIPPED` rather than writing them. `check` and `warn` report the finding and change nothing
+about what the run writes; they differ only in the level the finding is logged at.
+
+> **Correction.** Earlier revisions counted a blocked row in `LARGE`. That contradicts `MET-002`,
+> which registers `LARGE` for the guardrail job alone, and `MET-003`, which makes reaching for an
+> unregistered counter a startup error rather than a runtime one. The two cannot both hold, and
+> `MET-002` wins: its observable form is the final metrics block (`MET-005`, `MET-006`), so adding
+> a `Large Record Count` line to migrate's block would break every assertion file written against
+> Java's output, Java's own SIT suite included. `SKIPPED` is already what `MIG-002` means — the row
+> was rejected before the write and nothing failed — and it is registered for both jobs. The
+> finding itself is logged and returned as a diagnostic, so nothing about *why* the row was skipped
+> is lost.
 
 **GRD-005 [N]** — Additional guardrails MUST be pluggable via `PLG-003`: partition size, row count
 per partition, collection cardinality, and tombstone density are shipped as built-ins in v1.1.

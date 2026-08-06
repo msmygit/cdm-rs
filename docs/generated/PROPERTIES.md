@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-123 properties.
+124 properties.
 
 
 ## `connect`
@@ -175,6 +175,7 @@ should not use it.
 | `feature.extract_json.overwrite` | `spark.cdm.feature.extractJson.overwrite` | bool | `false` | — | stable | Overwrite a target column that already holds a value. |
 | `feature.extract_json.exclusive` | `spark.cdm.feature.extractJson.exclusive` | bool | `false` | — | stable | Migrate only the extracted columns, not the JSON column itself. |
 | `feature.guardrail.column_size_kb` | `spark.cdm.feature.guardrail.colSizeInKB` | float | `0.0` | KB | stable | Report any column whose serialised size exceeds this. `0` disables the check. |
+| `feature.guardrail.mode` | — | `check` \| `warn` \| `block` | `check` | — | stable | What an inline guardrail violation does to the row that caused it (`GRD-004`). |
 
 ## `server`
 

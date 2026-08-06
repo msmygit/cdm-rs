@@ -5,7 +5,7 @@
 //!
 //! # What is here
 //!
-//! Five features, each a plugin (`PLG-002`, `PLG-003`) and each independently unit-testable without
+//! Six features, each a plugin (`PLG-002`, `PLG-003`) and each independently unit-testable without
 //! a cluster:
 //!
 //! * [`ConstantColumns`] — target columns written with a fixed literal (`FEA-010`..`FEA-014`);
@@ -13,7 +13,9 @@
 //! * [`ExtractJson`] — one property of a JSON document promoted to a column (`FEA-030`..`FEA-035`);
 //! * [`WritetimeTtl`] — the origin's cell metadata carried to the target (`FEA-040`..`FEA-046`);
 //! * [`FilterChain`] and its built-in filters — everything that decides a row is not this run's
-//!   business (`FEA-050`..`FEA-054`).
+//!   business (`FEA-050`..`FEA-054`);
+//! * [`Guardrail`] and [`ColumnSizeGuardrail`] — the column-size limit whose violations are
+//!   reported rather than acted on (`GRD-001`..`GRD-004`).
 //!
 //! # The two-phase shape every feature has
 //!
@@ -59,14 +61,18 @@
 //! - `FEA-040`..`FEA-046` — [`WritetimeTtl`], [`WritetimeTtlPlan`], [`UsingClause`]
 //! - `FEA-050`..`FEA-054` — [`CqlWhereFilter`], [`WritetimeFilter`], [`ColumnValueFilter`],
 //!   [`TokenBounds`], [`FilterChain`]
+//! - `GRD-001`..`GRD-004` — [`Guardrail`], [`ColumnSizeGuardrail`], [`RowSizes`], [`Finding`]
 //!
-//! Guardrails (`GRD-001`..`GRD-005`) land in this crate too, with PR #24.
+//! `GRD-005` — further guardrails over partition size, row count, collection cardinality and
+//! tombstone density — lands in v1.1 through the same [`GuardrailPlugin`](cdm_core::GuardrailPlugin)
+//! seam [`ColumnSizeGuardrail`] already uses.
 
 mod constant;
 mod diagnostic;
 mod explode;
 mod extract_json;
 mod filter;
+mod guardrail;
 mod literal;
 pub mod properties;
 mod schema;
@@ -77,6 +83,10 @@ pub use constant::{dropped_origin_columns, ColumnSource, ConstantColumns, Resolv
 pub use explode::{ExplodeMap, ExplodePlan, ExplodedEntry};
 pub use extract_json::{ExtractJson, ExtractJsonPlan, JsonPath};
 pub use filter::{ColumnValueFilter, CqlWhereFilter, FilterChain, TokenBounds, WritetimeFilter};
+pub use guardrail::{
+    ColumnSizeGuardrail, Finding, Guardrail, GuardrailMode, LargeColumn, RowSizes, BYTES_PER_KB,
+    COLUMN_SIZE_GUARDRAIL, GUARDRAIL_DIAGNOSTIC_CODE,
+};
 pub use literal::{encode_json, parse_literal};
 pub use properties::{registry, PropertyKey};
 pub use schema::{table_view, ColumnFacts, FeatureSchema, TableFacts};

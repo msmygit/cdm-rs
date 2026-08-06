@@ -259,10 +259,10 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `GRD-001` <sup>P</sup> | The guardrail job reads the **origin only**; no target connection is required or opened | `cdm-engine::jobs::guardrail` | `grd_001_*` | #24 |
-| `GRD-002` <sup>P</sup> | For each row, every column's serialized size MUST be computed and compared against `feature.guardrail.column_size_kb * 1000`… | `cdm-engine::jobs::guardrail` | `grd_002_*` | #24 |
-| `GRD-003` <sup>P</sup> | A row with at least one oversized column increments `LARGE` and logs `Large columns (KB): col(12.345),col2(...)` with… | `cdm-engine::jobs::guardrail` | `grd_003_*` | #24 |
-| `GRD-004` <sup>N</sup> | Guardrail MUST additionally be runnable *inline* during migrate/validate (`feature.guardrail.mode = check\|warn\|block`),… | `cdm-engine::jobs::guardrail` | `grd_004_*` | #24 |
+| `GRD-001` <sup>P+</sup> | The guardrail job reads the **origin only**; no target connection is required or opened | `cdm-engine::jobs::guardrail`, `cdm-feature::guardrail` | `grd_001_*` | #24 |
+| `GRD-002` <sup>P</sup> | For each row, every column's serialized size MUST be computed and compared against `feature.guardrail.column_size_kb * 1000`… | `cdm-feature::guardrail`, `cdm-engine::jobs::guardrail` | `grd_002_*` | #24 |
+| `GRD-003` <sup>P+</sup> | A row with at least one oversized column increments `LARGE` and logs `Large columns (KB): col(12.345),col2(...)` with… | `cdm-feature::guardrail` | `grd_003_*` | #24 |
+| `GRD-004` <sup>N</sup> | Guardrail MUST additionally be runnable *inline* during migrate/validate (`feature.guardrail.mode = check\|warn\|block`),… | `cdm-engine::jobs::guardrail`, `cdm-feature::guardrail` | `grd_004_*` | #24 |
 | `GRD-005` <sup>N</sup> | Additional guardrails MUST be pluggable via `PLG-003`: partition size, row count per partition, collection cardinality, and… | `cdm-engine::jobs::guardrail` | `grd_005_*` | #54 |
 
 ### FEA

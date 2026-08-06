@@ -14,8 +14,8 @@ use std::path::PathBuf;
 
 use crate::secret::Secret;
 use crate::types::{
-    AstraDatabaseId, AstraMode, AuthMode, ConsistencyLevel, DurationSetting, EventSink, LogFormat,
-    ScbType, TokenBound, TrustStoreType,
+    AstraDatabaseId, AstraMode, AuthMode, ConsistencyLevel, DurationSetting, EventSink,
+    GuardrailMode, LogFormat, ScbType, TokenBound, TrustStoreType,
 };
 
 cdm_properties! {
@@ -880,6 +880,14 @@ cdm_properties! {
             /// A negative value is invalid (`CFG-035`).
             #[cdm(legacy = ["spark.cdm.feature.guardrail.colSizeInKB"], unit = "KB")]
             pub column_size_kb: f64 = 0.0,
+
+            /// What an inline guardrail violation does to the row that caused it (`GRD-004`).
+            ///
+            /// Only consulted when the guardrail runs *inside* a migrate or validate run. The
+            /// standalone `cdm guardrail` job always reports and never writes, so the mode cannot
+            /// change what it does.
+            #[cdm()]
+            pub mode: GuardrailMode = GuardrailMode::Check,
         }
     }
 }

@@ -14,7 +14,7 @@
 //! - `ENG-001`..`ENG-014` — [`scheduler`], the work-stealing execution engine
 //! - `MIG-001`
 //! - `VAL-001`..`VAL-012`, `VAL-016`, `VAL-017` — [`jobs::validate`], the diff job
-//! - `GRD-001`
+//! - `GRD-001`..`GRD-004` — [`jobs::guardrail`], the guardrail job
 //!
 //! # How the two halves fit together
 //!
@@ -30,8 +30,8 @@
 //!
 //! # Status
 //!
-//! The planner, the scheduler and the validate job ([`jobs::validate`]) are implemented. Migrate
-//! and guardrail land in the pull requests listed in
+//! The planner, the scheduler, the validate job ([`jobs::validate`]) and the guardrail job
+//! ([`jobs::guardrail`]) are implemented. Migrate lands in the pull request listed in
 //! [`docs/ROADMAP.md`](https://github.com/msmygit/cdm-rs/blob/main/docs/ROADMAP.md).
 
 pub mod jobs;

@@ -36,9 +36,14 @@ tokio = { workspace = true, features = ["macros", "rt", "signal", "sync", "time"
 tokio-util.workspace = true
 tracing.workspace = true
 
+# The integration suite drives each job against a real node. `cdm-cql` is the only crate that may
+# depend on `scylla` (`ARCHITECTURE.md` §3); a *dev*-dependency here is outside the production
+# graph that rule governs, and is what lets `guardrail_it.rs` read frame bytes directly in order to
+# state, independently of the job, what the job should have measured.
 [dev-dependencies]
 cdm-testkit.workspace = true
 proptest.workspace = true
+scylla.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 # `test-util` is what makes the rate-limit and shutdown tests deterministic: it pauses the

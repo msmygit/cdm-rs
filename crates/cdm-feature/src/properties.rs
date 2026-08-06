@@ -22,14 +22,28 @@ use cdm_core::{CdmError, EffectiveConfig, ErrorKind};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PropertyKey {
     canonical: &'static str,
-    legacy: &'static str,
+    legacy: Option<&'static str>,
 }
 
 impl PropertyKey {
     /// Declares a key. `legacy` is the Java `spark.cdm.*` name exactly as `KnownProperties` spells
     /// it, which is what makes an existing `.properties` file work unchanged.
     const fn new(canonical: &'static str, legacy: &'static str) -> Self {
-        Self { canonical, legacy }
+        Self {
+            canonical,
+            legacy: Some(legacy),
+        }
+    }
+
+    /// Declares a key that is new in cdm-rs (`CFG-200`) and therefore has no Java spelling.
+    ///
+    /// There is nothing to fall back to for one of these: an existing `.properties` file cannot
+    /// contain it, because Java has no such setting to have written.
+    const fn new_in_cdm_rs(canonical: &'static str) -> Self {
+        Self {
+            canonical,
+            legacy: None,
+        }
     }
 
     /// The cdm-rs name, e.g. `feature.constant_columns.names`.
@@ -37,8 +51,9 @@ impl PropertyKey {
         self.canonical
     }
 
-    /// The Java name, e.g. `spark.cdm.feature.constantColumns.names`.
-    pub const fn legacy(&self) -> &'static str {
+    /// The Java name, e.g. `spark.cdm.feature.constantColumns.names`, or `None` for a property
+    /// that is new in cdm-rs.
+    pub const fn legacy(&self) -> Option<&'static str> {
         self.legacy
     }
 }
@@ -162,6 +177,14 @@ pub const FILTER_TOKEN_MAX: PropertyKey = PropertyKey::new(
     "filter.token.max",
     "spark.cdm.filter.cassandra.partition.max",
 );
+/// `feature.guardrail.column_size_kb` (`GRD-002`).
+pub const GUARDRAIL_COLUMN_SIZE_KB: PropertyKey = PropertyKey::new(
+    "feature.guardrail.column_size_kb",
+    "spark.cdm.feature.guardrail.colSizeInKB",
+);
+/// `feature.guardrail.mode` (`GRD-004`). New in cdm-rs: Java's guardrail is a job of its own and
+/// never runs alongside a migration, so it has no inline mode to spell.
+pub const GUARDRAIL_MODE: PropertyKey = PropertyKey::new_in_cdm_rs("feature.guardrail.mode");
 
 /// Every property this crate reads, in specification order.
 ///
@@ -195,6 +218,8 @@ pub const fn registry() -> &'static [PropertyKey] {
         FILTER_COLUMN_VALUE,
         FILTER_TOKEN_MIN,
         FILTER_TOKEN_MAX,
+        GUARDRAIL_COLUMN_SIZE_KB,
+        GUARDRAIL_MODE,
     ]
 }
 
@@ -206,7 +231,7 @@ pub const fn registry() -> &'static [PropertyKey] {
 pub(crate) fn raw(config: &EffectiveConfig, key: PropertyKey) -> Option<&str> {
     config
         .get(key.canonical())
-        .or_else(|| config.get(key.legacy()))
+        .or_else(|| key.legacy().and_then(|legacy| config.get(legacy)))
         .filter(|value| !value.is_empty())
 }
 
@@ -261,6 +286,41 @@ pub(crate) fn integer(config: &EffectiveConfig, key: PropertyKey) -> Result<Opti
     })
 }
 
+/// A floating-point property, which is what the guardrail threshold needs (`GRD-002`).
+///
+/// A fraction is accepted where Java's `Long.parseLong` would reject it, which is the whole of
+/// `docs/MIGRATION_FROM_JAVA.md` item 12. Non-finite values are refused: `inf` would disable a
+/// guardrail the operator switched on, and `NaN` would make every comparison false, both of which
+/// look exactly like a working configuration from the outside.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::Config`] naming the canonical key.
+pub(crate) fn float(config: &EffectiveConfig, key: PropertyKey) -> Result<Option<f64>, CdmError> {
+    let Some(value) = trimmed(config, key) else {
+        return Ok(None);
+    };
+    let parsed = value.parse::<f64>().map_err(|e| {
+        CdmError::new(
+            ErrorKind::Config,
+            format!("`{}` must be a number, got `{value}`", key.canonical()),
+        )
+        .with_context(|c| c.with_config_key(key.canonical()))
+        .with_source(e)
+    })?;
+    if !parsed.is_finite() {
+        return Err(CdmError::new(
+            ErrorKind::Config,
+            format!(
+                "`{}` must be a finite number, got `{value}`",
+                key.canonical()
+            ),
+        )
+        .with_context(|c| c.with_config_key(key.canonical())));
+    }
+    Ok(Some(parsed))
+}
+
 /// A 128-bit integer property, which is what a Random-partitioner token bound needs (`TOK-002`).
 ///
 /// # Errors
@@ -304,26 +364,69 @@ mod tests {
         // Spot-checks every §3.5 pairing this crate owns. A drift in either spelling breaks an
         // operator's existing `.properties` file, so the table is asserted rather than trusted.
         for key in registry() {
-            assert!(
-                key.legacy().starts_with("spark.cdm."),
-                "{} has a non-Java legacy alias",
-                key.canonical()
-            );
+            if let Some(legacy) = key.legacy() {
+                assert!(
+                    legacy.starts_with("spark.cdm."),
+                    "{} has a non-Java legacy alias",
+                    key.canonical()
+                );
+            }
             assert!(!key.canonical().starts_with("spark."));
         }
-        assert_eq!(registry().len(), 25);
+        assert_eq!(registry().len(), 27);
         assert_eq!(
             CONSTANT_COLUMN_NAMES.legacy(),
-            "spark.cdm.feature.constantColumns.names"
+            Some("spark.cdm.feature.constantColumns.names")
         );
         assert_eq!(
             TTL_WRITETIME_USE_COLLECTIONS.legacy(),
-            "spark.cdm.schema.ttlwritetime.calc.useCollections"
+            Some("spark.cdm.schema.ttlwritetime.calc.useCollections")
         );
         assert_eq!(
             FILTER_TOKEN_MIN.legacy(),
-            "spark.cdm.filter.cassandra.partition.min"
+            Some("spark.cdm.filter.cassandra.partition.min")
         );
+        assert_eq!(
+            GUARDRAIL_COLUMN_SIZE_KB.legacy(),
+            Some("spark.cdm.feature.guardrail.colSizeInKB")
+        );
+        // GRD-004's mode is new in cdm-rs, so there is nothing for it to fall back to.
+        assert_eq!(GUARDRAIL_MODE.legacy(), None);
+        assert_eq!(
+            registry()
+                .iter()
+                .filter(|key| key.legacy().is_none())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn grd_002_the_threshold_accessor_takes_fractions_and_refuses_nonsense() {
+        let settings = config(&[
+            ("feature.guardrail.column_size_kb", " 0.5 "),
+            ("feature.guardrail.mode", "inf"),
+        ]);
+        assert_eq!(
+            float(&settings, GUARDRAIL_COLUMN_SIZE_KB).unwrap(),
+            Some(0.5_f64)
+        );
+        assert_eq!(float(&settings, FILTER_TOKEN_MIN).unwrap(), None);
+        // `inf` parses as a float but is not a threshold; borrowing the mode key here keeps the
+        // case to one config map.
+        assert!(float(&settings, GUARDRAIL_MODE).is_err());
+        assert!(float(
+            &config(&[("feature.guardrail.mode", "big")]),
+            GUARDRAIL_MODE
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn grd_004_a_new_in_cdm_rs_key_is_read_from_its_canonical_name_only() {
+        let settings = config(&[("feature.guardrail.mode", "block")]);
+        assert_eq!(raw(&settings, GUARDRAIL_MODE), Some("block"));
+        assert_eq!(raw(&config(&[]), GUARDRAIL_MODE), None);
     }
 
     #[test]
