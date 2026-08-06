@@ -14,5 +14,17 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+# Deliberately no `scylla` and no `cdm-cql`: only `cdm-cql` may depend on the driver
+# (AGENTS.md, ARCHITECTURE.md §3), so the container fixture speaks to a node over a
+# hand-rolled CQL `OPTIONS` probe and hands callers a contact point, and everything that
+# needs a real session goes through the `TestSession` seam.
+cdm-codec.workspace = true
+cdm-core.workspace = true
+cdm-metrics.workspace = true
+
+async-trait.workspace = true
+chrono.workspace = true
+rand.workspace = true
+testcontainers.workspace = true
+tokio.workspace = true
+uuid.workspace = true

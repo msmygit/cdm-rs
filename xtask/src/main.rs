@@ -37,8 +37,15 @@ enum Task {
     },
     /// Install native git hooks for contributors who do not use pre-commit (`OPS-003`).
     InstallHooks,
-    /// Run the containerised integration suite (`TST-002`).
-    It,
+    /// Run the containerised integration suite (`TST-002`, `TST-102`).
+    It {
+        /// Which engines to run against: `cassandra`, `scylla`, `all`, or `image:tag` pairs.
+        ///
+        /// Sets `CDM_IT_ENGINES` for the test process. Defaults to whatever is already in the
+        /// environment, and thence to the newest Cassandra.
+        #[arg(long)]
+        engines: Option<String>,
+    },
     /// Run the ported SIT parity suite (`TST-003`).
     Sit,
     /// Run the differential suite against Java CDM (`TST-020`).
@@ -61,7 +68,8 @@ fn run(task: &Task) -> anyhow::Result<()> {
         Task::CheckTraceability => traceability::check(&repo_root()?),
         Task::Openapi { check } => openapi(*check),
         Task::Docs { check } => docs(*check),
-        Task::InstallHooks | Task::It | Task::Sit | Task::Differential => {
+        Task::It { engines } => integration(engines.as_deref()),
+        Task::InstallHooks | Task::Sit | Task::Differential => {
             anyhow::bail!(not_yet(task))
         }
     }
@@ -88,10 +96,11 @@ fn repo_root() -> anyhow::Result<std::path::PathBuf> {
 fn not_yet(task: &Task) -> String {
     let pr = match task {
         Task::InstallHooks => "a #1 follow-up",
-        Task::It => "#16 (cdm-testkit)",
         Task::Sit => "#32 (SIT parity suite)",
         Task::Differential => "#34 (differential harness)",
-        Task::CheckTraceability | Task::Openapi { .. } | Task::Docs { .. } => "this build",
+        Task::CheckTraceability | Task::Openapi { .. } | Task::Docs { .. } | Task::It { .. } => {
+            "this build"
+        }
     };
     format!("`{task:?}` is delivered by PR {pr}; see docs/ROADMAP.md")
 }
@@ -214,5 +223,53 @@ fn docs(check: bool) -> anyhow::Result<()> {
             artefacts.len()
         );
     }
+    Ok(())
+}
+
+/// `TST-002` and `TST-102`: the one command that runs the containerised suite.
+///
+/// Every containerised test is marked `#[ignore]`, so `cargo test` leaves them alone and stays
+/// fast and offline; this is the command that opts in. It runs single-threaded because the
+/// container fixtures publish the CQL port on the host unchanged — a node advertises its own
+/// address and port, so a mapped port would leave the driver unable to reach the pool — and two
+/// fixtures therefore cannot share a port.
+///
+/// # Skipping is not failing
+///
+/// `TST-102` requires a clear message rather than a failure when no container runtime is
+/// available. The check uses `cdm_testkit::ContainerRuntime::detect`, the same rule the tests
+/// themselves apply, so this command and the suite can never disagree about whether a runtime is
+/// there.
+fn integration(engines: Option<&str>) -> anyhow::Result<()> {
+    match cdm_testkit::ContainerRuntime::detect() {
+        Ok(runtime) => println!("integration: using container runtime at {runtime}"),
+        Err(reason) => {
+            println!("{reason}");
+            println!(
+                "integration: skipped, not failed (TST-102). Nothing ran, and that is not an error."
+            );
+            return Ok(());
+        }
+    }
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let mut command = std::process::Command::new(cargo);
+    command.current_dir(repo_root()?).args([
+        "test",
+        "--workspace",
+        "--all-features",
+        "--",
+        "--ignored",
+        "--test-threads=1",
+        "--nocapture",
+    ]);
+    if let Some(engines) = engines {
+        command.env("CDM_IT_ENGINES", engines);
+    }
+
+    let status = command
+        .status()
+        .map_err(|e| anyhow::anyhow!("cannot run the integration suite: {e}"))?;
+    anyhow::ensure!(status.success(), "the integration suite failed: {status}");
     Ok(())
 }

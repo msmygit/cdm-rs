@@ -49,7 +49,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | #13 | `feat(codec): Java date/decimal format translation` | `CDC-022` |
 | #14 | `feat(codec): UDT, tuple, collection and vector conversion` | `CDC-004`, `CDC-013`..`CDC-015`, `CDC-032` |
 | #15 | `feat(codec): zero-copy passthrough fast path` | `MIG-040`, `TST-030` |
-| #16 | `feat(testkit): containers, generators, counter assertions` | `TST-100`..`TST-102` — **also re-enables the `pull_request`/`push` triggers on `integration.yml`** |
+| #16 | `feat(testkit): containers, generators, counter assertions` | `TST-100`..`TST-102` — the `pull_request`/`push` triggers on `integration.yml` were already restored by #2, which gave the workflow something to run first; #16 gives it the shared harness and implements `cargo xtask it` |
 
 ## Phase 3 — Core engine and parity jobs
 
@@ -155,7 +155,7 @@ restoring the triggers.
 
 | Workflow | Dormant until | Reason |
 |---|---|---|
-| `integration.yml` | #16 | no test suite exists to run against containers |
+| ~~`integration.yml`~~ | ~~#16~~ — **live**, restored early by #2 | the driver spike gave it something to run before #16 did |
 | `sit.yml` | #32 | no SIT cases are ported yet |
 | `differential.yml` | #34 | no differential harness exists |
 | `bench.yml` | #55 | no benchmarks exist |

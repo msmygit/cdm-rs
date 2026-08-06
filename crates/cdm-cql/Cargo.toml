@@ -32,6 +32,11 @@ webpki-roots.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+# `cdm-testkit` is a dev-dependency here and nowhere in the other direction: the testkit must not
+# depend on the driver (ARCHITECTURE.md §3), so this crate is where its session seam gets its
+# first real implementation and its container fixture gets exercised end to end (TST-100).
+cdm-testkit.workspace = true
+
 anyhow.workspace = true
 futures.workspace = true
 rcgen.workspace = true
