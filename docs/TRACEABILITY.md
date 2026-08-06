@@ -203,7 +203,7 @@ test, fails CI.
 | `ENG-006` <sup>N</sup> | `perfops.adaptive_ratelimit = true` MUST reduce the effective rate when the target reports overload (write timeouts,… | `cdm-engine` | `eng_006_*` | #53 |
 | `ENG-007` <sup>N</sup> | In-flight requests MUST be bounded by `perfops.max_inflight_reads` / `max_inflight_writes` semaphores so memory is bounded… | `cdm-engine` | `eng_007_*` | #20 |
 | `ENG-008` <sup>P</sup> | Per-range failure handling: an error MUST NOT abort the run | `cdm-engine` | `eng_008_*` | #20 |
-| `ENG-009` <sup>P+</sup> | `perfops.error_limit > 0` aborts the run once the run's committed `ERROR` total exceeds it — row-level errors included — draining in-flight work cleanly | `cdm-engine::scheduler` | `eng_009_*` | #26 |
+| `ENG-009` <sup>N</sup> | `perfops.error_limit > 0` aborts the run once the run's committed `ERROR` total exceeds it — row-level errors included — draining in-flight work cleanly | `cdm-engine::scheduler` | `eng_009_*` | #26 |
 | `ENG-010` <sup>N</sup> | `SIGINT`/`SIGTERM` trigger graceful shutdown: stop claiming, drain in-flight ranges within `perfops.shutdown_grace`, flush metrics, mark the run `INTERRUPTED`, exit `4`; a second signal abandons at once | `cdm-engine::scheduler` | `eng_010_*` | #26 |
 | `ENG-011` <sup>N</sup> | Every range's processing MUST be wrapped in a `tracing` span carrying `run_id`, `range_min`, `range_max`, `node_id`, so all… | `cdm-engine` | `eng_011_*` | #20 |
 | `ENG-012` <sup>P</sup> | The range span MUST additionally carry Java's `min:max` `ThreadLabel`, padding included, when `logging.format = pretty` | `cdm-engine` | `eng_012_*` | #20 |

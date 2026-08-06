@@ -756,7 +756,7 @@ always incremented by exactly `0` for a failed validate range** — the counter 
 many rows were lost reports none. `CopyJobSession` gets this right for migrate. cdm-rs uses interim
 counts for both. `--compat-java` does not restore the bug.
 
-**ENG-009 [P+]** — `perfops.error_limit > 0` MUST abort the run once total `ERROR` exceeds it,
+**ENG-009 [N]** — `perfops.error_limit > 0` MUST abort the run once total `ERROR` exceeds it,
 draining in-flight work cleanly. *(Documented in Java's properties file but not implemented there;
 cdm-rs implements it.)*
 
