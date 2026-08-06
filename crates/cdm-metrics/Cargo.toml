@@ -13,12 +13,21 @@ categories.workspace = true
 [lints]
 workspace = true
 
-# The instrument, exporter and event-bus dependencies (metrics, opentelemetry, tokio, ratatui)
-# arrive with PRs #36-#39; the counter core needs none of them.
+# The terminal UI (`MET-031`, PR #39) is the only part of this crate's remit still missing, and
+# `ratatui` arrives with it. Everything else here is deliberately transport-free: the Prometheus
+# text and the OTLP payloads are *rendered*, and putting them on a socket is the job of a crate
+# that is allowed to depend on an HTTP client (`ARCHITECTURE.md` §3).
 [dependencies]
+async-trait.workspace = true
 cdm-core.workspace = true
 chrono.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

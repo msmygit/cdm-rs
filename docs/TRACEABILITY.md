@@ -372,13 +372,13 @@ test, fails CI.
 | `MET-004` <sup>P</sup> | The interim/committed two-level accounting MUST be preserved: per-range interim counts are folded into totals on range… | `cdm-metrics` | `met_004_*` | #19 |
 | `MET-005` <sup>P</sup> | The metrics string format MUST be reproduced exactly: `Read: 10; Write: 9; Skipped: 1` (title-cased counter names, `; `… | `cdm-metrics` | `met_005_*` | #19 |
 | `MET-006` <sup>P</sup> | The final metrics block must be printed in the Java format so existing assertion tooling keeps working | `cdm-metrics` | `met_006_*` | #19 |
-| `MET-010` <sup>N</sup> | In addition to counters, the following MUST be recorded: rows/sec (origin and target, 1s/10s/60s EWMA), bytes/sec, request… | `cdm-metrics` | `met_010_*` | #36 |
-| `MET-011` <sup>N</sup> | Progress MUST be computable as `ranges_completed / ranges_total`, refined by `system.size_estimates` row estimates, with an… | `cdm-metrics` | `met_011_*` | #36 |
-| `MET-020` <sup>N</sup> | A Prometheus endpoint exposes `cdm_`-prefixed metrics, labelled by run, job, side, node, keyspace and table, with no per-range or per-key cardinality | `cdm-metrics` | `met_020_*` | #37 |
-| `MET-021` <sup>N</sup> | OpenTelemetry OTLP export of metrics **and** traces MUST be supported, configured by `metrics.otlp.endpoint` | `cdm-metrics` | `met_021_*` | #37 |
-| `MET-030` <sup>N</sup> | A structured event stream MUST be emitted (`RunStarted`, `RangeStarted`, `RangeCompleted`, `Discrepancy`, `Warning`, `Error`,… | `cdm-metrics` | `met_030_*` | #38 |
+| `MET-010` <sup>N</sup> | Rows and bytes per second per side over 1s/10s/60s EWMA windows, request-latency percentiles per side and operation, in-flight requests, batch sizes, retries by cause, rate-limiter wait time, ranges by state and an ETA | `cdm-metrics` (`instrument`, `progress`) | `met_010_*` | #36 |
+| `MET-011` <sup>N</sup> | Progress from completed token ranges, weighted by token span or by `system.size_estimates`, with an ETA whose error characteristics are documented and which is withheld until it is meaningful | `cdm-metrics` (`progress`) | `met_011_*` | #36 |
+| `MET-020` <sup>N</sup> | A Prometheus exposition of `cdm_`-prefixed metrics, labelled by run, job, side, node, keyspace and table, with no per-range or per-key cardinality | `cdm-metrics` (`export::prometheus`, `label`) | `met_020_*` | #37 |
+| `MET-021` <sup>N</sup> | OpenTelemetry OTLP export of metrics **and** traces, in the OTLP/JSON encoding, configured by `metrics.otlp.endpoint` and delivered through a pluggable transport | `cdm-metrics` (`export::otlp`) | `met_021_*` | #37 |
+| `MET-030` <sup>N</sup> | A structured event stream — `RunStarted`, `RangeStarted`, `RangeCompleted`, `Discrepancy`, `Warning`, `Error`, `RunCompleted` — on a bounded broadcast bus, serialisable as NDJSON to standard output or a file | `cdm-metrics` (`event`) | `met_030_*` | #38 |
 | `MET-031` <sup>N</sup> | An interactive terminal UI (`cdm migrate --tui`) MUST show live throughput, progress bar, ETA, per-node status in cluster… | `cdm-metrics` | `met_031_*` | #39 |
-| `MET-032` <sup>N</sup> | All logs MUST be `tracing`-based, with `logging.format = json` producing structured records suitable for ingestion, and MUST… | `cdm-metrics` | `met_032_*` | #38 |
+| `MET-032` <sup>N</sup> | All logs are `tracing`-based, `logging.format = json` produces one structured record per event carrying the `ENG-011` span fields, and neither secrets nor row values are logged by default | `cdm-metrics` (`logging`) | `met_032_*` | #38 |
 | `MET-033` <sup>N</sup> | A run summary MUST be writable to a file (`--summary-out report.json`) containing config hash, plan, all counters, timings,… | `cdm-metrics` | `met_033_*` | #40 |
 
 ### CLI

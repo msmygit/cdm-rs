@@ -1,0 +1,108 @@
+---
+source: crates/cdm-metrics/src/export/prometheus.rs
+expression: render(&sample_report())
+---
+# HELP cdm_read_total Rows read from the origin.
+# TYPE cdm_read_total counter
+cdm_read_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 1000000
+# HELP cdm_write_total Rows written to the target and flushed.
+# TYPE cdm_write_total counter
+cdm_write_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 999998
+# HELP cdm_skipped_total Rows a filter rejected, or that produced no statement.
+# TYPE cdm_skipped_total counter
+cdm_skipped_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 2
+# HELP cdm_error_total Rows a failed token range could not account for.
+# TYPE cdm_error_total counter
+cdm_error_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 0
+# HELP cdm_partitions_passed_total Token ranges that completed successfully.
+# TYPE cdm_partitions_passed_total counter
+cdm_partitions_passed_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 3
+# HELP cdm_partitions_failed_total Token ranges that failed.
+# TYPE cdm_partitions_failed_total counter
+cdm_partitions_failed_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 0
+# HELP cdm_rows_total Rows that crossed the wire, per side.
+# TYPE cdm_rows_total counter
+cdm_rows_total{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders"} 1000000
+cdm_rows_total{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders"} 999998
+# HELP cdm_bytes_total Bytes that crossed the wire, per side.
+# TYPE cdm_bytes_total counter
+cdm_bytes_total{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders"} 64000000
+cdm_bytes_total{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders"} 0
+# HELP cdm_rows_per_second Exponentially-weighted rows per second, per side and averaging window.
+# TYPE cdm_rows_per_second gauge
+cdm_rows_per_second{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",window="1s"} 0.000
+cdm_rows_per_second{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",window="10s"} 55023.220
+cdm_rows_per_second{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",window="60s"} 616724.214
+cdm_rows_per_second{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",window="1s"} 0.000
+cdm_rows_per_second{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",window="10s"} 55023.110
+cdm_rows_per_second{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",window="60s"} 616722.981
+# HELP cdm_bytes_per_second Exponentially-weighted bytes per second, per side and averaging window.
+# TYPE cdm_bytes_per_second gauge
+cdm_bytes_per_second{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",window="1s"} 0.000
+cdm_bytes_per_second{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",window="10s"} 3521486.084
+cdm_bytes_per_second{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",window="60s"} 39470349.720
+cdm_bytes_per_second{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",window="1s"} 0.000
+cdm_bytes_per_second{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",window="10s"} 0.000
+cdm_bytes_per_second{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",window="60s"} 0.000
+# HELP cdm_request_duration_seconds Request latency, per side and operation.
+# TYPE cdm_request_duration_seconds summary
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",operation="range_read",quantile="0.5"} 0.008
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",operation="range_read",quantile="0.9"} 0.008
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",operation="range_read",quantile="0.99"} 0.008
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",operation="range_read",quantile="0.999"} 0.008
+cdm_request_duration_seconds_sum{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",operation="range_read"} 0.008
+cdm_request_duration_seconds_count{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",operation="range_read"} 1
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",operation="write",quantile="0.5"} 0.003
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",operation="write",quantile="0.9"} 0.003
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",operation="write",quantile="0.99"} 0.003
+cdm_request_duration_seconds{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",operation="write",quantile="0.999"} 0.003
+cdm_request_duration_seconds_sum{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",operation="write"} 0.003
+cdm_request_duration_seconds_count{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders",operation="write"} 1
+# HELP cdm_ratelimit_wait_seconds Time spent waiting for a rate-limit permit, per side.
+# TYPE cdm_ratelimit_wait_seconds summary
+cdm_ratelimit_wait_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.5"} 0.001
+cdm_ratelimit_wait_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.9"} 0.001
+cdm_ratelimit_wait_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.99"} 0.001
+cdm_ratelimit_wait_seconds{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.999"} 0.001
+cdm_ratelimit_wait_seconds_sum{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders"} 0.001
+cdm_ratelimit_wait_seconds_count{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders"} 1
+# HELP cdm_inflight_requests Requests issued and not yet answered, per side.
+# TYPE cdm_inflight_requests gauge
+cdm_inflight_requests{run_id="1712345678901234",job="migrate",side="origin",node_id="node-a",keyspace="target_ks",table="orders"} 0
+cdm_inflight_requests{run_id="1712345678901234",job="migrate",side="target",node_id="node-a",keyspace="target_ks",table="orders"} 1
+# HELP cdm_batch_size Rows per executed batch. Pinned at one when the coercion of MIG-021 fires.
+# TYPE cdm_batch_size summary
+cdm_batch_size{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.5"} 5
+cdm_batch_size{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.9"} 5
+cdm_batch_size{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.99"} 5
+cdm_batch_size{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",quantile="0.999"} 5
+cdm_batch_size_sum{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 5
+cdm_batch_size_count{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 1
+# HELP cdm_retries_total Requests retried, by cause.
+# TYPE cdm_retries_total counter
+cdm_retries_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",cause="read_timeout"} 0
+cdm_retries_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",cause="write_timeout"} 0
+cdm_retries_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",cause="unavailable"} 0
+cdm_retries_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",cause="overloaded"} 1
+cdm_retries_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",cause="connection_error"} 0
+cdm_retries_total{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",cause="other"} 0
+# HELP cdm_ranges_planned Token ranges in the plan.
+# TYPE cdm_ranges_planned gauge
+cdm_ranges_planned{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 4
+# HELP cdm_ranges Token ranges in each state. Terminal states use the TRK-012 spellings.
+# TYPE cdm_ranges gauge
+cdm_ranges{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",state="pending"} 0
+cdm_ranges{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",state="in_flight"} 1
+cdm_ranges{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders",state="PASS"} 3
+# HELP cdm_progress_ratio Completed weight over planned weight, weighted by token span or size estimate.
+# TYPE cdm_progress_ratio gauge
+cdm_progress_ratio{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 0.750
+# HELP cdm_progress_ranges_ratio Completed ranges over planned ranges, unweighted.
+# TYPE cdm_progress_ranges_ratio gauge
+cdm_progress_ranges_ratio{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 0.750
+# HELP cdm_run_elapsed_seconds Wall-clock seconds since the run started.
+# TYPE cdm_run_elapsed_seconds gauge
+cdm_run_elapsed_seconds{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 30.000
+# HELP cdm_eta_seconds Estimated seconds to completion. Absent until the estimate is worth having.
+# TYPE cdm_eta_seconds gauge
+cdm_eta_seconds{run_id="1712345678901234",job="migrate",node_id="node-a",keyspace="target_ks",table="orders"} 10.000

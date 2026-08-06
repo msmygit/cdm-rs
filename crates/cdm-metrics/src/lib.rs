@@ -1,4 +1,4 @@
-//! Counter registry and the Java-format reporter (`MET-001`..`MET-006`).
+//! Counters, instruments, progress, exporters and the run event bus.
 //!
 //! Part of [cdm-rs](https://github.com/msmygit/cdm-rs), a Rust reimplementation of the
 //! Cassandra Data Migrator.
@@ -60,11 +60,34 @@
 //! # Ok::<(), cdm_core::CdmError>(())
 //! ```
 //!
-//! # Not here yet
+//! # Beyond parity
 //!
-//! The new observability of `MET-010`..`MET-033` — throughput and latency instruments, the
-//! Prometheus and OTLP exporters, the event bus, the terminal UI — arrives in PRs #36..#39. This
-//! crate is deliberately the parity core and nothing else for now.
+//! The counters say what a run did; the rest of the crate says how fast, how far along, and what
+//! happened:
+//!
+//! * [`Instruments`] — rows and bytes per second per side, latency percentiles per side and
+//!   operation, in-flight requests, batch sizes, retries by cause and rate-limiter wait time
+//!   (`MET-010`);
+//! * [`ProgressTracker`] — weighted progress, ranges by state and an ETA that is honest about its
+//!   error (`MET-011`);
+//! * [`export::prometheus`] and [`export::otlp`] — the `GET /metrics` exposition and the OTLP
+//!   payloads (`MET-020`, `MET-021`);
+//! * [`EventBus`] and [`NdjsonSink`] — the structured event stream and its NDJSON transcription
+//!   (`MET-030`);
+//! * [`logging`] — the `tracing` subscriber behind `logging.format` (`MET-032`).
+//!
+//! The terminal UI (`MET-031`, PR #39) and the run summary (`MET-033`, PR #40) are still to come.
+//!
+//! # Two rules this crate is built around
+//!
+//! **`SEC-001`.** No exported label, attribute or event field is a string somebody passed in.
+//! Metric labels are the closed set of [`MetricLabels`]; every other dimension comes from a Rust
+//! enum in this crate. There is no `record(name, value)` anywhere, which is what makes "a secret
+//! cannot reach the metrics" a property of the types rather than of the reviewer's attention.
+//!
+//! **`SEC-002`.** Events carry identifiers and counts, never row payloads. The one place a row is
+//! identifiable — a validate discrepancy — is redacted when the event is *constructed*
+//! ([`Redaction`]), so no sink can leak what was never published.
 //!
 //! # Specification
 //!
@@ -79,12 +102,40 @@
 //! - `MET-004` — [`CounterView`], [`JobCounters::flush`], [`JobCounters::add`]
 //! - `MET-005` — [`JobCounters::metrics`], [`JobCounters::run_info`]
 //! - `MET-006` — [`JobCounters::final_block`], [`JobCounters::log_final_block`]
+//! - `MET-010` — [`Instruments`], [`RateMeter`], [`Histogram`], [`Gauge`]
+//! - `MET-011` — [`ProgressTracker`], [`Progress`]
+//! - `MET-020` — [`export::prometheus::render`], [`PrometheusExporter`], [`MetricLabels`]
+//! - `MET-021` — [`OtlpExporter`], [`OtlpTransport`], [`SpanRecord`]
+//! - `MET-030` — [`EventBus`], [`Event`], [`NdjsonSink`]
+//! - `MET-032` — [`logging::init`], [`logging::LogFormat`]
 
 mod counter;
 mod registry;
 mod report;
 
+pub mod event;
+pub mod export;
+pub mod instrument;
+pub mod label;
+pub mod logging;
+pub mod progress;
+
 pub use counter::{registered_counters, CounterKind};
+pub use event::{
+    DiscrepancyKind, Event, EventBus, EventPayload, EventRange, EventStreamError, EventSubscriber,
+    KeyRef, NdjsonSink, Redaction,
+};
+pub use export::{
+    MemoryTransport, MetricsReport, OtlpExporter, OtlpSignal, OtlpTransport, PrometheusExporter,
+    SpanKind, SpanRecord,
+};
+pub use instrument::{
+    Gauge, Histogram, HistogramSnapshot, InstrumentSnapshot, Instruments, Operation, RateMeter,
+    RateSnapshot, RetryCause, SideSnapshot,
+};
+pub use label::MetricLabels;
+pub use logging::{LogFormat, LoggingSetup};
+pub use progress::{Progress, ProgressTracker, RangeEstimate};
 pub use registry::{Counter, CounterView, JobCounters};
 pub use report::{FINAL_BLOCK_RULE, METRIC_SEPARATOR};
 
