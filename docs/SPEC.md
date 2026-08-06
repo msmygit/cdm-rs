@@ -1151,8 +1151,20 @@ to `STARTED`.
 **TRK-021 [P]** — Each range MUST be updated to `STARTED` (setting `start_time`) when work begins and
 to its terminal status with the metrics string in `run_info` when it completes.
 
-**TRK-022 [P]** — On run completion the info row MUST be updated with `end_time`, the aggregate
-metrics string, and status `ENDED`.
+**TRK-022 [P]** — When a run stops, the info row MUST be updated with `end_time`, the aggregate
+metrics string, and **the terminal status the scheduler reports**: `ENDED` for a run that
+processed its whole plan (Java's only outcome), `INTERRUPTED` for one stopped by a signal
+(`ENG-010`), or `ABORTED` for one stopped by the error limit (`ENG-009`). The aggregate metrics
+string MUST be rendered from the **committed** counter level (`MET-004`): a run's registry only
+ever receives committed values from its ranges, so its interim level is structurally zero, and
+reading it would reproduce the `ENG-008` defect in durable form.
+
+Writing `ENDED` unconditionally — as an earlier draft of this requirement said — records an
+interrupted run as one that finished, which `TRK-030` then declines to adopt: the unfinished
+ranges look complete and no resume ever re-plans them. `ENDED` is therefore reserved for a run
+that genuinely completed, and the two cdm-rs statuses of `TRK-012` are what make the distinction
+recordable. A Java reader ignores statuses it does not know, so a run row cdm-rs left
+`INTERRUPTED` is simply "not `ENDED`" to Java, which is exactly how `TRK-030` should treat it.
 
 **TRK-030 [P]** — `track_run.auto_rerun = true` MUST select the most recent run for
 `(table_name, run_type)` and adopt it as the previous run **only if** its status is not `ENDED`, or

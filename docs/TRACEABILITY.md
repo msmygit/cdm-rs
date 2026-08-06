@@ -325,24 +325,24 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `TRK-001` <sup>P</sup> | Tracking MUST be enabled when any of: `track_run.enabled = true`, `track_run.run_id != 0`, `track_run.previous_run_id != 0`,… | `cdm-track` | `trk_001_*` | #25 |
-| `TRK-002` <sup>P</sup> | When enabled and `run_id == 0`, a run id MUST be generated | `cdm-track` | `trk_002_*` | #25 |
-| `TRK-003` <sup>P+</sup> | which preserves the "latest = highest" ordering Java relies on while eliminating collisions across nodes | `cdm-core::domain::run`, `cdm-track` | `trk_003_*` | #3, #25 |
-| `TRK-010` <sup>P</sup> | Create `cdm_run_info` and `cdm_run_details` in the target keyspace with exactly the Java schema | `cdm-track` | `trk_010_*` | #25 |
-| `TRK-011` <sup>N</sup> | cdm-rs MUST additionally maintain, in the same keyspace, `cdm_run_leases` for distributed coordination (`DST-010`) | `cdm-track` | `trk_011_*` | #25 |
-| `TRK-012` <sup>P</sup> | Statuses: `NOT_STARTED, STARTED, PASS, FAIL, DIFF, DIFF_CORRECTED, ENDED` | `cdm-core::domain::run`, `cdm-track` | `trk_012_*` | #3, #25 |
-| `TRK-013` <sup>P</sup> | `cdm_run_info.run_type` is the exact upper-case job name `MIGRATE`/`VALIDATE`/`GUARDRAIL`, matching Java's `jobType.toString()` | `cdm-core` | `trk_013_*` | #3 |
-| `TRK-014` <sup>P</sup> | Run and range statuses use the exact Java spellings, underscores included | `cdm-core` | `trk_014_*` | #3 |
-| `TRK-020` <sup>P</sup> | Run initialisation MUST: reject a `run_id` that already exists; insert the info row as `NOT_STARTED`; insert one details row… | `cdm-track` | `trk_020_*` | #25 |
-| `TRK-021` <sup>P</sup> | Each range MUST be updated to `STARTED` (setting `start_time`) when work begins and to its terminal status with the metrics… | `cdm-track` | `trk_021_*` | #25 |
-| `TRK-022` <sup>P</sup> | On run completion the info row MUST be updated with `end_time`, the aggregate metrics string, and status `ENDED` | `cdm-track` | `trk_022_*` | #25 |
-| `TRK-030` <sup>P</sup> | `track_run.auto_rerun = true` MUST select the most recent run for `(table_name, run_type)` and adopt it as the previous run… | `cdm-track` | `trk_030_*` | #25 |
-| `TRK-031` <sup>P</sup> | Resuming from a previous run MUST re-plan only ranges whose status is in `{NOT_STARTED, STARTED, FAIL, DIFF}`, shuffled | `cdm-track` | `trk_031_*` | #25 |
-| `TRK-032` <sup>P</sup> | If the previous run's info row is missing or `NOT_STARTED`, resumption MUST fall back to a fresh full plan (Java's… | `cdm-track` | `trk_032_*` | #25 |
-| `TRK-033` <sup>P</sup> | `track_run.rerun_multiplier > 1` MUST subdivide each pending range into that many sub-ranges at 100% coverage, to break up… | `cdm-track`, `cdm-engine::planner` | `trk_033_*` | #17, #25 |
-| `TRK-034` <sup>N</sup> | `cdm runs list\|show\|resume\|cancel` MUST provide first-class run management, and `GET /v1/runs`, `GET /v1/runs/{id}` the API… | `cdm-track` | `trk_034_*` | #25 |
-| `TRK-035` <sup>N</sup> | Tracking writes MUST be batched and asynchronous with a bounded queue, so tracking never becomes the throughput bottleneck; on… | `cdm-track` | `trk_035_*` | #25 |
-| `TRK-036` <sup>N</sup> | Tracking MUST be storable in a pluggable backend (`TrackingStore` trait): the Cassandra target keyspace (default,… | `cdm-track` | `trk_036_*` | #25 |
+| `TRK-001` <sup>P</sup> | Tracking MUST be enabled when any of: `track_run.enabled = true`, `track_run.run_id != 0`, `track_run.previous_run_id != 0`,… | `cdm-track::settings` | `trk_001_*` | #25 |
+| `TRK-002` <sup>P</sup> | When enabled and `run_id == 0`, a run id MUST be generated | `cdm-track::settings` | `trk_002_*` | #25 |
+| `TRK-003` <sup>P+</sup> | which preserves the "latest = highest" ordering Java relies on while eliminating collisions across nodes | `cdm-core::domain::run`, `cdm-track::settings` | `trk_003_*` | #3, #25 |
+| `TRK-010` <sup>P</sup> | Create `cdm_run_info` and `cdm_run_details` in the target keyspace with exactly the Java schema | `cdm-track::schema` | `trk_010_*` | #25 |
+| `TRK-011` <sup>N</sup> | cdm-rs MUST additionally maintain, in the same keyspace, `cdm_run_leases` for distributed coordination (`DST-010`) | `cdm-track::schema` | `trk_011_*` | #25 |
+| `TRK-012` <sup>P</sup> | Statuses: `NOT_STARTED, STARTED, PASS, FAIL, DIFF, DIFF_CORRECTED, ENDED` | `cdm-core::domain::run`, `cdm-track::compat` | `trk_012_*` | #3, #25 |
+| `TRK-013` <sup>P</sup> | `cdm_run_info.run_type` is the exact upper-case job name `MIGRATE`/`VALIDATE`/`GUARDRAIL`, matching Java's `jobType.toString()` | `cdm-track::compat` | `trk_013_*` | #25 |
+| `TRK-014` <sup>P</sup> | Run and range statuses use the exact Java spellings, underscores included | `cdm-core::domain::run`, `cdm-track::compat` | `trk_014_*` | #3, #25 |
+| `TRK-020` <sup>P</sup> | Run initialisation MUST: reject a `run_id` that already exists; insert the info row as `NOT_STARTED`; insert one details row… | `cdm-track::tracker` | `trk_020_*` | #25 |
+| `TRK-021` <sup>P</sup> | Each range MUST be updated to `STARTED` (setting `start_time`) when work begins and to its terminal status with the committed metrics… | `cdm-track::tracker` | `trk_021_*` | #25 |
+| `TRK-022` <sup>P</sup> | When a run stops, the info row MUST record `end_time`, the committed aggregate metrics string, and the terminal status the scheduler reports (`ENDED`, `INTERRUPTED` or `ABORTED`) | `cdm-track::tracker` | `trk_022_*` | #25 |
+| `TRK-030` <sup>P</sup> | `track_run.auto_rerun = true` MUST select the most recent run for `(table_name, run_type)` and adopt it as the previous run… | `cdm-track::resume` | `trk_030_*` | #25 |
+| `TRK-031` <sup>P</sup> | Resuming from a previous run MUST re-plan only ranges whose status is in `{NOT_STARTED, STARTED, FAIL, DIFF}`, shuffled | `cdm-track::resume` | `trk_031_*` | #25 |
+| `TRK-032` <sup>P</sup> | If the previous run's info row is missing or `NOT_STARTED`, resumption MUST fall back to a fresh full plan (Java's… | `cdm-track::resume` | `trk_032_*` | #25 |
+| `TRK-033` <sup>P</sup> | `track_run.rerun_multiplier > 1` MUST subdivide each pending range into that many sub-ranges at 100% coverage, to break up… | `cdm-track::resume`, `cdm-engine::planner` | `trk_033_*` | #17, #25 |
+| `TRK-034` <sup>N</sup> | `cdm runs list\|show\|resume\|cancel` MUST provide first-class run management, and `GET /v1/runs`, `GET /v1/runs/{id}` the API… — the operations live in `cdm-track::manage`; the CLI and REST renderings wire in with their own crates | `cdm-track::manage` | `trk_034_*` | #25 |
+| `TRK-035` <sup>N</sup> | Tracking writes MUST be batched and asynchronous with a bounded queue, so tracking never becomes the throughput bottleneck; on… | `cdm-track::tracker` | `trk_035_*` | #25 |
+| `TRK-036` <sup>N</sup> | Tracking MUST be storable in a pluggable backend (`TrackingStore` trait): the Cassandra target keyspace (default,… — the SQLite backend is deferred; see `cdm-track::store` | `cdm-track::store` | `trk_036_*` | #25 |
 
 ### DST
 
@@ -356,7 +356,7 @@ test, fails CI.
 | `DST-012` <sup>N</sup> | Leases MUST be renewed every `cluster.heartbeat_interval` while the range is being processed, and MUST expire after… | `cdm-cluster` | `dst_012_*` | #50 |
 | `DST-013` <sup>N</sup> | A range that has been attempted more than `cluster.max_attempts` (default 3) times MUST be marked `FAIL` and abandoned rather… | `cdm-cluster` | `dst_013_*` | #50 |
 | `DST-014` <sup>N</sup> | Reclaiming a range after a node death MUST be safe | `cdm-cluster` | `dst_014_*` | #51 |
-| `DST-015` <sup>N</sup> | . *(Counters are not idempotent; correctness beats convenience.)* **DST-016 [N]** — Metrics MUST be aggregated across nodes:… | `cdm-cluster` | `dst_015_*` | #51 |
+| `DST-015` <sup>N</sup> | . *(Counters are not idempotent; correctness beats convenience.)* **DST-016 [N]** — Metrics MUST be aggregated across nodes:… — the resume-side exclusion is `cdm-track::resume::RerunPolicy` | `cdm-track::resume`, `cdm-cluster` | `dst_015_*` | #25, #51 |
 | `DST-016` <sup>N</sup> | Metrics MUST be aggregated across nodes: each node periodically writes its counter snapshot; any node (and the API) can… | `cdm-cluster` | `dst_016_*` | #51 |
 | `DST-017` <sup>N</sup> | A node MUST cleanly deregister on shutdown, releasing its leases immediately rather than waiting for expiry | `cdm-cluster` | `dst_017_*` | #51 |
 | `DST-018` <sup>N</sup> | `cdm cluster status` and `GET /v1/cluster` MUST list live nodes, their leases, their per-node throughput and their last heartbeat | `cdm-cluster` | `dst_018_*` | #51 |
