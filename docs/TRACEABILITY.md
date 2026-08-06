@@ -268,33 +268,33 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `FEA-010` <sup>P</sup> | `feature.constant_columns.names` and `.values` (split by `.split_regex`) define target columns written with fixed literal values | `cdm-feature` | `fea_010_*` | #27 |
-| `FEA-011` <sup>P</sup> | Values MUST be parsed and type-checked against the target column type at validation time | `cdm-feature` | `fea_011_*` | #27 |
-| `FEA-012` <sup>P</sup> | Constant columns that are part of the target primary key MUST participate in the PK and appear as literals in generated WHERE… | `cdm-feature` | `fea_012_*` | #27 |
-| `FEA-013` <sup>P</sup> | Constant columns MUST be excluded from validate comparison | `cdm-feature` | `fea_013_*` | #27 |
-| `FEA-014` <sup>P</sup> | Constant columns present on origin but absent on target MUST be droppable, and origin constants MUST be replaceable by… | `cdm-feature` | `fea_014_*` | #27 |
-| `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row with the key and… | `cdm-feature` | `fea_020_*` | #28 |
-| `FEA-021` <sup>P</sup> | Key and value MUST be converted from the map's element types to the target column types using the standard conversion… | `cdm-feature` | `fea_021_*` | #28 |
-| `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature` | `fea_022_*` | #28 |
-| `FEA-023` <sup>P</sup> | A null or empty map MUST produce zero target rows and count as `SKIPPED` | `cdm-feature` | `fea_023_*` | #28 |
-| `FEA-030` <sup>P</sup> | `feature.extract_json.origin_column` names a text column containing a JSON object; `property_mapping` is… | `cdm-feature` | `fea_030_*` | #29 |
-| `FEA-031` <sup>P</sup> | The extracted value MUST be written to the mapped target column | `cdm-feature` | `fea_031_*` | #29 |
-| `FEA-032` <sup>P</sup> | `overwrite = false` MUST leave an already-populated target column untouched | `cdm-feature` | `fea_032_*` | #29 |
-| `FEA-033` <sup>P</sup> | `exclusive = true` MUST restrict the non-PK target columns to the extract column alone | `cdm-feature` | `fea_033_*` | #29 |
-| `FEA-034` <sup>P+</sup> | Malformed JSON MUST increment `ERROR` for that record and log the primary key, rather than failing the range | `cdm-feature` | `fea_034_*` | #29 |
-| `FEA-035` <sup>N</sup> | `property_mapping` MUST accept JSON-Pointer paths (`/a/b/0`) in addition to top-level field names | `cdm-feature` | `fea_035_*` | #29 |
-| `FEA-040` <sup>P</sup> | A row's writetime is the **maximum** `WRITETIME(col)` over the eligible columns, plus `transform.custom_writetime_increment` | `cdm-feature` | `fea_040_*` | #30 |
-| `FEA-041` <sup>P</sup> | Eligible columns are non-key columns that are primitive, tuple, or frozen; unfrozen collections are eligible only when… | `cdm-feature` | `fea_041_*` | #30 |
-| `FEA-042` <sup>P</sup> | `ttl.automatic` / `writetime.automatic` (default true) select all eligible columns; supplying explicit names disables… | `cdm-feature` | `fea_042_*` | #30 |
-| `FEA-043` <sup>P</sup> | When reading writetimes from a collection column, the result is a list of values and the maximum across the list MUST be taken | `cdm-feature` | `fea_043_*` | #30 |
-| `FEA-044` <sup>P</sup> | `transform.custom_writetime > 0` overrides the computed writetime; `transform.custom_ttl > 0` overrides the computed TTL.… | `cdm-feature` | `fea_044_*` | #30 |
-| `FEA-045` <sup>P</sup> | TTL/writetime MUST be disabled for counter tables | `cdm-feature` | `fea_045_*` | #30 |
-| `FEA-046` <sup>P</sup> | When no writetime is resolvable, `USING TIMESTAMP` MUST be omitted (server assigns); likewise `USING TTL` when TTL is 0 | `cdm-feature` | `fea_046_*` | #30 |
-| `FEA-050` <sup>P</sup> | `filter.cql_where` MUST be appended to the origin range select, prefixed with ` AND ` unless the user's string already begins… | `cdm-feature` | `fea_050_*` | #31 |
-| `FEA-051` <sup>P</sup> | `filter.writetime.min` / `.max` MUST skip rows whose computed row writetime falls outside the window | `cdm-feature` | `fea_051_*` | #31 |
-| `FEA-052` <sup>P</sup> | `filter.column.name` + `filter.column.value` MUST skip rows where the named text column equals the value, compared… | `cdm-feature` | `fea_052_*` | #31 |
-| `FEA-053` <sup>P</sup> | `filter.token.min` / `.max` bound the planned ring segment (`TOK-002`) | `cdm-feature` | `fea_053_*` | #31 |
-| `FEA-054` <sup>N</sup> | Filters MUST be composable and pluggable (`PLG-003`); a filter chain evaluates in declaration order and short-circuits | `cdm-feature` | `fea_054_*` | #31 |
+| `FEA-010` <sup>P</sup> | `feature.constant_columns.names` and `.values` (split by `.split_regex`) define target columns written with fixed literal values | `cdm-feature::constant` | `fea_010_*` | #27 |
+| `FEA-011` <sup>P</sup> | Values MUST be parsed and type-checked against the target column type at validation time | `cdm-feature::constant`, `cdm-feature::literal` | `fea_011_*` | #27 |
+| `FEA-012` <sup>P</sup> | Constant columns that are part of the target primary key MUST participate in the PK and appear as literals in generated WHERE clauses | `cdm-feature::constant` | `fea_012_*` | #27 |
+| `FEA-013` <sup>P</sup> | Constant columns MUST be excluded from validate comparison | `cdm-feature::constant` | `fea_013_*` | #27 |
+| `FEA-014` <sup>P</sup> | Constant columns present on origin but absent on target MUST be droppable, and origin constants MUST be replaceable by different target constants | `cdm-feature::constant` | `fea_014_*` | #27 |
+| `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row | `cdm-feature::explode` | `fea_020_*` | #28 |
+| `FEA-021` <sup>P</sup> | Key and value MUST be converted from the map's element types to the target column types using the standard conversion machinery | `cdm-feature::explode` | `fea_021_*` | #28 |
+| `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature::explode` | `fea_022_*` | #28 |
+| `FEA-023` <sup>P</sup> | A null or empty map MUST produce zero target rows and count as `SKIPPED` | `cdm-feature::explode` | `fea_023_*` | #28 |
+| `FEA-030` <sup>P</sup> | `feature.extract_json.origin_column` names a text column containing a JSON object; `property_mapping` is `jsonField:targetColumn` | `cdm-feature::extract_json` | `fea_030_*` | #29 |
+| `FEA-031` <sup>P</sup> | The extracted value MUST be written to the mapped target column | `cdm-feature::extract_json`, `cdm-feature::literal` | `fea_031_*` | #29 |
+| `FEA-032` <sup>P</sup> | `overwrite = false` MUST leave an already-populated target column untouched | `cdm-feature::extract_json` | `fea_032_*` | #29 |
+| `FEA-033` <sup>P+</sup> | `exclusive = true` MUST restrict the non-PK target columns to the extract column alone, matched by exact name rather than Java's suffix match | `cdm-feature::extract_json` | `fea_033_*` | #29 |
+| `FEA-034` <sup>P+</sup> | Malformed JSON MUST increment `ERROR` for that record and log the primary key, rather than failing the range | `cdm-feature::extract_json` | `fea_034_*` | #29 |
+| `FEA-035` <sup>N</sup> | `property_mapping` MUST accept JSON-Pointer paths (`/a/b/0`) in addition to top-level field names | `cdm-feature::extract_json` | `fea_035_*` | #29 |
+| `FEA-040` <sup>P</sup> | A row's writetime is the maximum `WRITETIME(col)` over the eligible columns, plus `transform.custom_writetime_increment` | `cdm-feature::writetime` | `fea_040_*` | #30 |
+| `FEA-041` <sup>P</sup> | Eligible columns are non-key columns that are primitive, tuple, or frozen; unfrozen collections only on opt-in | `cdm-feature::writetime`, `cdm-feature::schema` | `fea_041_*` | #30 |
+| `FEA-042` <sup>P</sup> | `ttl.automatic` / `writetime.automatic` select all eligible columns; supplying explicit names disables automatic mode for that dimension | `cdm-feature::writetime` | `fea_042_*` | #30 |
+| `FEA-043` <sup>P</sup> | When reading writetimes from a collection column, the result is a list of values and the maximum across the list MUST be taken | `cdm-feature::writetime`, `cdm-feature::wire` | `fea_043_*` | #30 |
+| `FEA-044` <sup>P</sup> | `transform.custom_writetime > 0` overrides the computed writetime; `transform.custom_ttl > 0` overrides the computed TTL | `cdm-feature::writetime` | `fea_044_*` | #30 |
+| `FEA-045` <sup>P</sup> | TTL/writetime MUST be disabled for counter tables | `cdm-feature::writetime` | `fea_045_*` | #30 |
+| `FEA-046` <sup>P</sup> | When no writetime is resolvable, `USING TIMESTAMP` MUST be omitted; likewise `USING TTL` when TTL is 0 | `cdm-feature::writetime` | `fea_046_*` | #30 |
+| `FEA-050` <sup>P+</sup> | `filter.cql_where` MUST be appended to the origin range select, prefixed with ` AND ` unless the string already begins with the `AND` keyword | `cdm-feature::filter` | `fea_050_*` | #31 |
+| `FEA-051` <sup>P</sup> | `filter.writetime.min` / `.max` MUST skip rows whose computed row writetime falls outside the window | `cdm-feature::filter` | `fea_051_*` | #31 |
+| `FEA-052` <sup>P</sup> | `filter.column.name` + `filter.column.value` MUST skip rows where the named text column equals the value, case-insensitively after trimming | `cdm-feature::filter` | `fea_052_*` | #31 |
+| `FEA-053` <sup>P</sup> | `filter.token.min` / `.max` bound the planned ring segment (`TOK-002`) | `cdm-feature::filter` | `fea_053_*` | #31 |
+| `FEA-054` <sup>N</sup> | Filters MUST be composable and pluggable (`PLG-003`); a filter chain evaluates in declaration order and short-circuits | `cdm-feature::filter` | `fea_054_*` | #31 |
 | `FEA-060` <sup>P</sup> | The origin range select bounds TOKEN(pk) between two bind values, with the optional CQL filter appended | `cdm-feature` | `fea_060_*` | #18 |
 | `FEA-061` <sup>P+</sup> | `ALLOW FILTERING` MUST be omitted when no `filter.cql_where` is configured, since a pure token-range scan does not require it | `cdm-feature` | `fea_061_*` | #18 |
 | `FEA-062` <sup>N</sup> | The generated CQL for every statement MUST be logged once at startup and exposed at `GET /v1/runs/{id}/statements` | `cdm-feature` | `fea_062_*` | #18 |

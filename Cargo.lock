@@ -663,6 +663,16 @@ dependencies = [
 [[package]]
 name = "cdm-feature"
 version = "0.1.0"
+dependencies = [
+ "bigdecimal",
+ "cdm-codec",
+ "cdm-core",
+ "chrono",
+ "num-bigint",
+ "regex",
+ "serde_json",
+ "uuid",
+]
 
 [[package]]
 name = "cdm-mcp"
