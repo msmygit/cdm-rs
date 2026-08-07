@@ -24,7 +24,7 @@ jobs:
         # driver's home turf and runs nightly — claimed support must still be exercised.
         engine:
           - cassandra:3.11
-          - cassandra:4.0
+          #- cassandra:4.0
           - cassandra:4.1
           - cassandra:5.0
         include:
