@@ -559,6 +559,8 @@ dependencies = [
  "cdm-cql",
  "cdm-engine",
  "cdm-metrics",
+ "cdm-track",
+ "chrono",
  "clap",
  "clap_complete",
  "pretty_assertions",
