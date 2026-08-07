@@ -19,7 +19,7 @@
 //! A function form such as `TTL(data)` or `WRITETIME(data)` survives formatting too, so the
 //! virtual projection columns of `SCH-007` can be formatted alongside real ones — but **its
 //! argument is formatted**, where Java's `formatName` returns the whole thing untouched
-//! (`return name; // function`). That is divergence 42: Java quotes the column in the projection
+//! (`return name; // function`). That is divergence 43: Java quotes the column in the projection
 //! list and leaves it bare inside the function, so a reserved-word column produces
 //! `SELECT col1,"order",TTL(order)` and the server rejects the statement outright.
 
