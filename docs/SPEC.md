@@ -1923,6 +1923,21 @@ rather than a 45-field god object.
 **TST-102** — Integration tests MUST be runnable locally with one command (`cargo xtask it`) and MUST
 skip (not fail) with a clear message when no container runtime is available.
 
+**TST-103 [N]** — A container fixture MUST publish its node on a host port chosen at start time
+from the ephemeral range, not on a well-known one, and MUST retry on a fresh port if the chosen one
+is taken between choosing and binding.
+
+Every `*_it.rs` suite is a separate test binary, and container teardown is asynchronous: a binary
+can exit while Docker is still unbinding its port. A fixture that always asks for `9042` therefore
+fails with `Bind for 0.0.0.0:9042 failed: port is already allocated` whenever it follows a suite
+that has not finished being cleaned up — a failure that looks like a product defect, is load- and
+ordering-dependent, and becomes more likely with every Docker-backed suite added. Serialising the
+run does not fix it, because the conflict is between binaries rather than within one.
+
+The host port and the container port MUST still agree, because the node advertises `127.0.0.1` and
+its own native port and the driver honours the advertised address (`TST-100`). So the fixture picks
+the port rather than letting Docker map one.
+
 ---
 
 ## 22. Build, CI/CD, supply chain and release (`OPS`)

@@ -518,6 +518,7 @@ test, fails CI.
 | `TST-100` | A `cdm-testkit` crate MUST provide: containerised origin/target fixtures, a schema and data generator covering all CQL types,… | `cdm-testkit`, `cdm-cql / tests` | `tst_100_*` | #16 |
 | `TST-101` | Test data generation MUST be deterministic and seeded; failures MUST print the seed | `cdm-testkit / seed, data` | `tst_101_*` | #16 |
 | `TST-102` | Integration tests MUST be runnable locally with one command (`cargo xtask it`) and MUST skip (not fail) with a clear message… | `cdm-testkit / runtime`, `xtask` | `tst_102_*` | #16 |
+| `TST-103` <sup>N</sup> | A container fixture publishes on an ephemeral host port chosen at start time, not a well-known one, and retries on a fresh port if it is taken between choosing and binding | `cdm-testkit::containers` | `tst_103_*` | #16 |
 
 ### OPS
 
