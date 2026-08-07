@@ -15,6 +15,7 @@
 //! ```json
 //! [
 //!   {
+//!     "datacenterID": "{database_id}-1",
 //!     "region": "us-east1",
 //!     "downloadURL": "https://…",
 //!     "customDomainBundles": [{ "domain": "cql.example.com", "downloadURL": "https://…" }]
@@ -22,10 +23,14 @@
 //! ]
 //! ```
 //!
-//! Selection: the datacenter whose `region` matches `astra.region` — or the first, when no region
-//! is configured — then either its `downloadURL` (`scb_type = default`) or the `downloadURL` of
-//! the `customDomainBundles` entry whose `domain` matches `astra.custom_domain`
-//! (`scb_type = custom`).
+//! One entry per region on a multi-region database, each with its own custom-domain bundles.
+//! `datacenterID` is `{database_id}-{n}` and **`-1` is the primary region**; secondaries are
+//! numbered from two in no promised order.
+//!
+//! Selection: the datacenter whose `region` matches `astra.region` — or the **primary**, when no
+//! region is configured — then either its `downloadURL` (`scb_type = default`) or the
+//! `downloadURL` of the `customDomainBundles` entry whose `domain` matches
+//! `astra.custom_domain` (`scb_type = custom`).
 //!
 //! # Divergence from Java, deliberately
 //!
@@ -53,6 +58,13 @@ pub const DEVOPS_HOST: &str = "api.astra.datastax.com";
 /// One datacenter's entry in the `secureBundleURL` response.
 #[derive(Debug, Clone, Deserialize)]
 pub struct BundleLocation {
+    /// The datacenter this entry describes, as `{database_id}-{n}`.
+    ///
+    /// Astra numbers datacenters from one, and **`-1` is the database's primary region**. That is
+    /// the only thing in the response that identifies the primary: `region` names it but does not
+    /// rank it, and array order promises nothing.
+    #[serde(default, rename = "datacenterID")]
+    pub datacenter_id: Option<String>,
     /// The Astra region this entry describes.
     #[serde(default)]
     pub region: Option<String>,
@@ -80,7 +92,7 @@ pub struct CustomDomainBundle {
 pub struct BundleSelector {
     /// `default` or `custom`.
     pub scb_type: ScbType,
-    /// The region whose bundle to take; the first datacenter when unset.
+    /// The region whose bundle to take; the database's primary region when unset.
     pub region: Option<String>,
     /// The custom domain to match, required when `scb_type` is `custom`.
     pub custom_domain: Option<String>,
@@ -116,7 +128,12 @@ impl BundleSelector {
                         "connect.{side}.astra.region",
                     )
                 })?,
-            _ => locations.first().ok_or_else(|| {
+            // No region configured: take the *primary*, which `datacenterID` identifies as
+            // `{database_id}-1`. Java takes `rootNode.get(0)` instead, which is right only while
+            // the API happens to return the primary first — an ordering it does not document and
+            // does not promise. On a multi-region database that assumption silently connects to a
+            // secondary region, and the symptom is latency rather than an error.
+            _ => primary(locations).ok_or_else(|| {
                 connect_error(
                     side,
                     "the Astra DevOps API returned no datacenters for this database",
@@ -177,6 +194,22 @@ impl BundleSelector {
             }
         }
     }
+}
+
+/// The primary datacenter, or the first entry when none is identifiable.
+///
+/// The primary is the one whose `datacenterID` ends in `-1`. Falling back to the first entry keeps
+/// a single-region database working even if Astra ever stops sending `datacenterID`, which is the
+/// same answer Java would have given.
+fn primary(locations: &[BundleLocation]) -> Option<&BundleLocation> {
+    locations
+        .iter()
+        .find(|l| {
+            l.datacenter_id
+                .as_deref()
+                .is_some_and(|id| id.ends_with("-1"))
+        })
+        .or_else(|| locations.first())
 }
 
 /// Parses a `secureBundleURL` response (`CON-004`).
@@ -374,8 +407,24 @@ mod tests {
     use super::*;
 
     const RESPONSE: &[u8] = br#"[
-        {"region":"us-east1","downloadURL":"https://downloads.example.invalid/us-east1.zip",
+        {"datacenterID":"db-1","region":"us-east1","downloadURL":"https://downloads.example.invalid/us-east1.zip",
          "customDomainBundles":[{"domain":"cql.example.com","downloadURL":"https://downloads.example.invalid/custom.zip"}]},
+        {"datacenterID":"db-2","region":"eu-west1","downloadURL":"https://downloads.example.invalid/eu-west1.zip","customDomainBundles":[]}
+    ]"#;
+
+    /// The same database with the primary region returned **second**.
+    ///
+    /// Astra documents no ordering for this array, so a client that takes the first entry is
+    /// relying on an accident. This fixture is that accident not happening.
+    const RESPONSE_PRIMARY_LAST: &[u8] = br#"[
+        {"datacenterID":"db-3","region":"ap-south1","downloadURL":"https://downloads.example.invalid/ap-south1.zip","customDomainBundles":[]},
+        {"datacenterID":"db-2","region":"eu-west1","downloadURL":"https://downloads.example.invalid/eu-west1.zip","customDomainBundles":[]},
+        {"datacenterID":"db-1","region":"us-east1","downloadURL":"https://downloads.example.invalid/us-east1.zip","customDomainBundles":[]}
+    ]"#;
+
+    /// A response with no `datacenterID` at all, as Java's fixtures have it.
+    const RESPONSE_NO_DATACENTER_ID: &[u8] = br#"[
+        {"region":"us-east1","downloadURL":"https://downloads.example.invalid/us-east1.zip","customDomainBundles":[]},
         {"region":"eu-west1","downloadURL":"https://downloads.example.invalid/eu-west1.zip","customDomainBundles":[]}
     ]"#;
 
@@ -400,13 +449,52 @@ mod tests {
     }
 
     #[test]
-    fn con_004_without_a_region_the_first_datacenter_is_used() {
+    fn con_004_without_a_region_the_primary_datacenter_is_used() {
         let locations = parse_locations(Side::Origin, RESPONSE).unwrap();
         assert_eq!(
             selector(ScbType::Default, None, None)
                 .select(Side::Origin, &locations)
                 .unwrap(),
             "https://downloads.example.invalid/us-east1.zip"
+        );
+    }
+
+    #[test]
+    fn con_004_the_primary_is_found_by_datacenter_id_not_by_position() {
+        // The regression this guards: Java takes `rootNode.get(0)`, so on a multi-region database
+        // whose primary is not returned first it silently downloads a *secondary* region's bundle
+        // and connects there. The symptom is cross-region latency on every request, not an error.
+        let locations = parse_locations(Side::Origin, RESPONSE_PRIMARY_LAST).unwrap();
+        assert_eq!(
+            selector(ScbType::Default, None, None)
+                .select(Side::Origin, &locations)
+                .unwrap(),
+            "https://downloads.example.invalid/us-east1.zip",
+            "`datacenterID` ending in -1 is the primary, wherever it appears in the array"
+        );
+    }
+
+    #[test]
+    fn con_004_a_response_without_datacenter_ids_falls_back_to_the_first_entry() {
+        // Nothing to rank by, so the only available answer is Java's. A single-region database
+        // keeps working rather than failing over a field it never had.
+        let locations = parse_locations(Side::Origin, RESPONSE_NO_DATACENTER_ID).unwrap();
+        assert_eq!(
+            selector(ScbType::Default, None, None)
+                .select(Side::Origin, &locations)
+                .unwrap(),
+            "https://downloads.example.invalid/us-east1.zip"
+        );
+    }
+
+    #[test]
+    fn con_004_an_explicit_region_still_wins_over_the_primary() {
+        let locations = parse_locations(Side::Origin, RESPONSE_PRIMARY_LAST).unwrap();
+        assert_eq!(
+            selector(ScbType::Default, Some("eu-west1"), None)
+                .select(Side::Origin, &locations)
+                .unwrap(),
+            "https://downloads.example.invalid/eu-west1.zip"
         );
     }
 

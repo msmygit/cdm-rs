@@ -139,9 +139,9 @@ test, fails CI.
 | `CON-000` <sup>N</sup> | `scylla-rust-driver` is the sole CQL driver, confined to `cdm-cql` behind the core traits | `cdm-cql` | `con_000_*` | #2 |
 | `CON-001` <sup>P</sup> | cdm-rs MUST connect independently to origin and target with fully separate credentials, TLS material, consistency levels and… | `cdm-cql` | `con_001_*` | #7, #8, #9 |
 | `CON-002` <sup>P</sup> | Four connection modes MUST be supported per side, selected exactly as Java's `ConnectionFetcher` does: 1 | `cdm-cql` | `con_002_*` | #7, #8, #9 |
-| `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*` | #7, #8, #9 |
-| `CON-004` <sup>P</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain | `cdm-cql` | `con_004_*` | #7, #8, #9 |
-| `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*` | #7, #8, #9 |
+| `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-004` <sup>P+</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain; with no region the primary datacenter (`datacenterID` `-1`) is chosen rather than the first entry | `cdm-cql` | `con_004_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*`, `astra_it` | #7, #8, #9, #41 |
 | `CON-006` <sup>P</sup> | Truststores/keystores MUST be readable in `JKS`, `PKCS12` and `PEM` formats | `cdm-cql` | `con_006_*` | #7, #8, #9 |
 | `CON-007` <sup>P</sup> | `tls.cipher_suites` MUST be honoured | `cdm-cql` | `con_007_*` | #7, #8, #9 |
 | `CON-008` <sup>N</sup> | `cdm connect test --side origin\|target\|both` MUST perform a full connect, report negotiated protocol version, TLS version… | `cdm-cql` | `con_008_*` | #10 |
@@ -150,16 +150,16 @@ test, fails CI.
 | `CON-011` <sup>P+</sup> | Retry policy: idempotent reads retry on timeout/unavailable up to `perfops.retry.max_attempts` with exponential backoff and jitter; writes are idempotent only for non-counter tables | `cdm-cql::connect::policy`, `cdm-cql::exec` | `con_011_*` | #7, #22 |
 | `CON-012` <sup>P+</sup> | Counter writes MUST NOT be retried automatically (at-most-once), and a counter write failure MUST fail the partition range | `cdm-cql::statement::bind`, `cdm-cql::exec::write`, `cdm-engine::jobs::migrate::counter` | `con_012_*` | #7, #22 |
 | `CON-013` <sup>N</sup> | Origin and target compatibility MUST be probed at startup: protocol version, whether `WRITETIME`/`TTL` on collections is… | `cdm-cql` | `con_013_*` | #7, #8, #9 |
-| `CON-020` <sup>N</sup> | The bundle zip is read in memory; PEM members are used and the JKS/PFX members ignored | `cdm-cql` | `con_020_*` | #7, #8, #9 |
-| `CON-021` <sup>N</sup> | `config.json` is parsed leniently, with a named Tier-1 diagnostic for each missing required field | `cdm-cql` | `con_021_*` | #7, #8, #9 |
-| `CON-022` <sup>N</sup> | Primary strategy: mTLS to the metadata service, then per-connection SNI `server_name` = host id via the SNI proxy | `cdm-cql` | `con_022_*` | #7, #8, #9 |
-| `CON-023` <sup>N</sup> | Do not depend on the driver's Scylla-Cloud `cloud` feature for Astra; use its TLS/translator hooks or raise the gap upstream | `cdm-cql` | `con_023_*` | #7, #8, #9 |
-| `CON-024` <sup>N</sup> | Host-id → SNI mapping refreshes as topology changes, without a restart | `cdm-cql` | `con_024_*` | #7, #8, #9 |
-| `CON-025` <sup>N</sup> | Re-fetch the metadata response, rate-limited, when all connections fail | `cdm-cql` | `con_025_*` | #7, #8, #9 |
-| `CON-026` <sup>N</sup> | Fallback strategy: single-endpoint mTLS using the host from `config.json` and the port from `cqlshrc` | `cdm-cql` | `con_026_*` | #7, #8, #9 |
+| `CON-020` <sup>N</sup> | The bundle zip is read in memory; PEM members are used and the JKS/PFX members ignored | `cdm-cql` | `con_020_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-021` <sup>N</sup> | `config.json` is parsed leniently, with a named Tier-1 diagnostic for each missing required field | `cdm-cql` | `con_021_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-022` <sup>N</sup> | Primary strategy: mTLS to the metadata service, then per-connection SNI `server_name` = host id via the SNI proxy | `cdm-cql` | `con_022_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-023` <sup>N</sup> | Do not depend on the driver's Scylla-Cloud `cloud` feature for Astra; use its TLS/translator hooks or raise the gap upstream | `cdm-cql` | `con_023_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-024` <sup>N</sup> | Host-id → SNI mapping refreshes as topology changes, without a restart | `cdm-cql` | `con_024_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-025` <sup>N</sup> | Re-fetch the metadata response, rate-limited, when all connections fail | `cdm-cql` | `con_025_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-026` <sup>N</sup> | Fallback strategy: single-endpoint mTLS using the host from `config.json` and the port from `cqlshrc` | `cdm-cql` | `con_026_*`, `astra_it` | #7, #8, #9, #41 |
 | `CON-027` <sup>N</sup> | The fallback warns prominently that token-aware routing is lost | `cdm-cql` | `con_027_*` | #7, #8, #9 |
 | `CON-028` <sup>N</sup> | Accept both Astra auth spellings, and detect an `AstraCS:` token supplied as the username | `cdm-cql` | `con_028_*` | #7, #8, #9 |
-| `CON-029` <sup>N</sup> | `cdm connect test` reports strategy, metadata URL, proxy address, local DC, host-id count and TLS parameters | `cdm-cql` | `con_029_*` | #10 |
+| `CON-029` <sup>N</sup> | `cdm connect test` reports strategy, metadata URL, proxy address, local DC, host-id count and TLS parameters | `cdm-cql` | `con_029_*`, `astra_it` | #10, #41 |
 
 ### SCH
 
