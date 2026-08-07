@@ -1,0 +1,16 @@
+# Java: SIT/smoke/03_ttl_writetime — migrateData, validateData, breakData.cql, fixData.
+#
+# Eight records whose four columns carry deliberately different TTLs and writetimes, so that
+# the per-row maximum over the *eligible* columns (FEA-040..FEA-046) is a different column for
+# each one.
+
+# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
+# expected to pass unchanged once the wiring lands.
+blocked cdm-cli builds the migrate job with MigrateFeatures::default() (crates/cdm-cli/src/harness/build.rs::migrate), so schema.origin.column.ttl.names and schema.origin.column.writetime.names are validated and then never used; FEA-040..FEA-046 are implemented in cdm-feature but unreachable from the command line
+
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+cql   break.cql
+job   validate fix.properties      fix.assert
+check expected.cql expected.out

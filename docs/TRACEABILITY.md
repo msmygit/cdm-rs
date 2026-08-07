@@ -501,7 +501,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `TST-001` | **Unit tests** live beside the code (`#[cfg(test)]`) and MUST NOT require a cluster | `cdm-testkit / tests` | `tst_001_*` | #33 |
 | `TST-002` | **Integration tests** (`tests/`) MUST run against real clusters via `testcontainers`, matrixed over Cassandra 4.1, Cassandra… | `cdm-testkit / tests` | `tst_002_*` | #33 |
-| `TST-003` | End-to-end SIT parity: every one of the 19 Java SIT cases ported and asserting the identical counter block | `cdm-testkit / tests` | `tst_003_*` | #33 |
+| `TST-003` | End-to-end SIT parity: every one of the 19 Java SIT cases ported to a declarative harness and asserting the identical counter block. Nine cases carry a `blocked` line naming the `cdm-cli` wiring they wait on | `cdm-testkit::sit`, `cdm-testkit / tests/sit_it.rs`, `tests/sit/**` | `tst_003_*` | #32 |
 | `TST-010` | **Property-based tests** (`proptest`): the token splitter (`TOK-003`) is contiguous, non-overlapping and exact; codec round-trips (`CDC-032`); configuration round-trip (parse → serialise → parse); `UNSET` never becomes `NULL` at the wire level (`MIG-012`); and a run's committed totals are the sum of its ranges (`MET-004`) | `cdm-engine::planner`, `cdm-engine / tests/properties.rs`, `cdm-codec / tests`, `cdm-config / tests`, `cdm-cql::statement::bind` | `tst_010_*` | #33 |
 | `TST-020` | **Differential tests against Java CDM**: a harness runs both implementations against the same seeded dataset and asserts… | `cdm-testkit / tests` | `tst_020_*` | #16 |
 | `TST-030` | Zero-copy passthrough (`MIG-040`) MUST be proven lossless by a property test comparing passthrough output against full… | `cdm-testkit / tests` | `tst_030_*` | #32 |

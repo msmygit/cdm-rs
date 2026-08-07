@@ -56,7 +56,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use cdm_core::{CdmError, ErrorKind};
-use testcontainers::core::{IntoContainerPort, WaitFor};
+use testcontainers::core::{ExecCommand, IntoContainerPort, WaitFor};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -364,6 +364,7 @@ pub struct FixtureOptions {
     startup_timeout: Duration,
     readiness_timeout: Duration,
     heap_mib: Option<u32>,
+    container_name: Option<String>,
 }
 
 impl Default for FixtureOptions {
@@ -374,6 +375,7 @@ impl Default for FixtureOptions {
             startup_timeout: Duration::from_secs(300),
             readiness_timeout: Duration::from_secs(180),
             heap_mib: Some(DEFAULT_HEAP_MIB),
+            container_name: None,
         }
     }
 }
@@ -423,6 +425,24 @@ impl FixtureOptions {
     /// The configured heap bound, in MiB.
     pub const fn heap_mib(&self) -> Option<u32> {
         self.heap_mib
+    }
+
+    /// Names the container, rather than letting the runtime invent one.
+    ///
+    /// A fixture held in a `static` — as the SIT parity suite's shared node is, because nineteen
+    /// cases against nineteen containers would take longer to start than the suite takes to run —
+    /// is never dropped, so nothing stops it when the test process exits. A known name is what
+    /// lets `cargo xtask sit` stop exactly that container before and after the suite, instead of
+    /// leaving one behind to collide with the next run on the fixed CQL port.
+    #[must_use]
+    pub fn with_container_name(mut self, name: Option<String>) -> Self {
+        self.container_name = name;
+        self
+    }
+
+    /// The name the container will be given, if any.
+    pub fn container_name(&self) -> Option<&str> {
+        self.container_name.as_deref()
     }
 }
 
@@ -543,6 +563,11 @@ impl ClusterFixture {
             }
         };
 
+        let image = match options.container_name.as_ref() {
+            Some(name) => image.with_container_name(name.clone()),
+            None => image,
+        };
+
         let container = image.start().await.map_err(|e| {
             CdmError::new(
                 ErrorKind::Connect,
@@ -627,6 +652,91 @@ impl ClusterFixture {
     /// The port the node itself listens on, and advertises.
     pub const fn native_port(&self) -> u16 {
         self.native_port
+    }
+
+    /// Runs a CQL script inside the container with the engine's own shell client, and returns
+    /// what it printed (`TST-003`).
+    ///
+    /// This is the one thing the fixture does that needs no driver and no session: the SIT parity
+    /// suite has to apply a `setup.cql`, a `break.cql` and a final `SELECT`, and compare the last
+    /// one's output against a fixture that Java produced with `cqlsh`. Going through `cqlsh`
+    /// rather than through a session keeps this crate free of the driver dependency
+    /// `ARCHITECTURE.md` §3 reserves for `cdm-cql`, and it means the rendering the expectation was
+    /// written against is the rendering it is compared against.
+    ///
+    /// The script may hold any number of statements separated by `;`. Comments and blank lines are
+    /// stripped, because `cqlsh -e` parses its argument as one string and answers
+    /// `no viable alternative at input ';'` for either, and a script longer than a single `execve`
+    /// argument is split on statement boundaries and run in order.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Connect`] if the command cannot be started, and [`ErrorKind::Internal`] if the
+    /// client exits non-zero — carrying its stderr, because a CQL syntax error in a fixture is
+    /// otherwise indistinguishable from a node that went away.
+    pub async fn exec_cql(&self, script: &str) -> Result<String, CdmError> {
+        let mut output = String::new();
+        for chunk in crate::sit::chunk_cql(&crate::sit::flatten_cql(script)) {
+            output.push_str(&self.exec_cql_chunk(&chunk).await?);
+        }
+        Ok(output)
+    }
+
+    /// One `cqlsh -e` invocation, small enough to fit in a single argument.
+    async fn exec_cql_chunk(&self, script: &str) -> Result<String, CdmError> {
+        // Both images ship `cqlsh`; ScyllaDB's is a compatible reimplementation.
+        let client = "cqlsh";
+        let mut result = self
+            .container
+            .exec(ExecCommand::new([
+                client,
+                "-e",
+                script,
+                "127.0.0.1",
+                &self.native_port.to_string(),
+            ]))
+            .await
+            .map_err(|e| {
+                CdmError::new(
+                    ErrorKind::Connect,
+                    format!("cannot run {client} in the {} container: {e}", self.engine),
+                )
+            })?;
+
+        let stdout =
+            String::from_utf8_lossy(&read_stream(result.stdout_to_vec().await)?).into_owned();
+        let stderr =
+            String::from_utf8_lossy(&read_stream(result.stderr_to_vec().await)?).into_owned();
+        let code = result.exit_code().await.map_err(|e| {
+            CdmError::new(
+                ErrorKind::Internal,
+                format!("cannot read {client}'s exit code: {e}"),
+            )
+        })?;
+        if code.is_some_and(|code| code != 0) {
+            return Err(CdmError::new(
+                ErrorKind::Internal,
+                format!(
+                    "{client} exited {}: {}\n--- script ---\n{}",
+                    code.unwrap_or(-1),
+                    stderr.trim(),
+                    truncate(script)
+                ),
+            ));
+        }
+        // `cqlsh` reports a failed statement on stdout and still exits zero when it was given
+        // `-e`, so the exit code alone does not establish that the script ran.
+        if stdout.contains("InvalidRequest") || stdout.contains("SyntaxException") {
+            return Err(CdmError::new(
+                ErrorKind::Internal,
+                format!(
+                    "{client} rejected a statement: {}\n--- script ---\n{}",
+                    stdout.trim(),
+                    truncate(script)
+                ),
+            ));
+        }
+        Ok(stdout)
     }
 
     /// The last `lines` lines of the container's stdout and stderr.
@@ -780,6 +890,30 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// The reason as a string, suitable for a retry log. This is deliberately not a [`CdmError`]:
 /// every failure here is expected and transient until the last one, and only the last one becomes
 /// an error.
+/// Turns a stream-read failure from [`ClusterFixture::exec_cql`] into a `CdmError`.
+fn read_stream<E: fmt::Display>(read: Result<Vec<u8>, E>) -> Result<Vec<u8>, CdmError> {
+    read.map_err(|e| {
+        CdmError::new(
+            ErrorKind::Internal,
+            format!("cannot read the output of a command run in the container: {e}"),
+        )
+    })
+}
+
+/// The first few lines of a script, for an error message.
+///
+/// A SIT case's `setup.cql` can be four thousand statements long; quoting all of it in a failure
+/// buries the one line that matters.
+fn truncate(script: &str) -> String {
+    const LINES: usize = 12;
+    let head: Vec<&str> = script.lines().take(LINES).collect();
+    let total = script.lines().count();
+    if total <= LINES {
+        return head.join("\n");
+    }
+    format!("{}\n… and {} more line(s)", head.join("\n"), total - LINES)
+}
+
 async fn cql_options_probe(address: &str) -> Result<(), String> {
     let attempt = tokio::time::timeout(PROBE_TIMEOUT, async {
         let mut stream = TcpStream::connect(address)

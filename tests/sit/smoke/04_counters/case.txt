@@ -1,0 +1,13 @@
+# Java: SIT/smoke/04_counters — migrateData, validateData, breakData.cql, fixData, fixForce.
+#
+# Counters are not idempotent, so this case is the one that would show a double-count: every
+# delta is read, computed, written and awaited one at a time (MIG-031, MIG-032, divergence 36),
+# and a missing counter row is only recreated when `autocorrect.missing.counter` says so
+# (VAL-004) — which is what separates the `fix` run from the `fixForce` run.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+cql   break.cql
+job   validate fix.properties      fix.assert
+job   validate fix-force.properties fix-force.assert
+check expected.cql expected.out

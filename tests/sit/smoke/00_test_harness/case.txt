@@ -1,0 +1,5 @@
+# Java: SIT/smoke/00_test_harness. The harness checking itself: no cdm run at all, just
+# "can this suite create a schema, load rows and read them back". It is the case that
+# distinguishes "cdm is wrong" from "the fixture never started".
+cql   setup.cql
+check expected.cql expected.out

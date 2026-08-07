@@ -1,0 +1,11 @@
+ key | col1 | col2
+------+------
+ record1 | 1 | 2
+ record2 | 11 | 20
+ record3 | 2000 | 4000
+ record4 | 10000 | 20001
+ record5 | 500 | 501
+ record6 | 500 | null
+ record7 | 1 | 2
+
+(7 rows)

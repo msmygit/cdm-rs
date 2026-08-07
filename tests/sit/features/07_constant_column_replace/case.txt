@@ -1,0 +1,12 @@
+# Java: SIT/features/07_constant_column_replace/execute.sh — migrateData, validateData, breakData.cql, fixData.
+
+# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
+# expected to pass unchanged once the wiring lands.
+blocked cdm-cli resolves the mapping with MappingOptions::default(), so feature.constantColumns.* never reaches ColumnMapping (FEA-014)
+
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+cql   break.cql
+job   validate fix.properties      fix.assert
+check expected.cql expected.out

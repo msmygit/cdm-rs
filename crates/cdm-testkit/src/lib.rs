@@ -20,6 +20,7 @@
 //! | [`counters`] | [`CounterExpectation`], [`assert_counters!`], final-block parsing | `TST-100` |
 //! | [`session`] | [`TestSession`], [`MockSession`], [`TestRow`] | `TST-100` |
 //! | [`faults`] | [`FaultKind`], [`Fault`], [`FaultPlan`], [`FaultySession`] | `TST-040` |
+//! | [`sit`] | [`SitCase`], [`SitStep`], [`compare_counter_block`], [`compare_cqlsh`] | `TST-003` |
 //!
 //! # The three things worth knowing before using it
 //!
@@ -63,6 +64,7 @@
 //! - `TST-101` — [`Seed`], [`SeedGuard`], [`DataGen`]
 //! - `TST-102` — [`ContainerRuntime`], [`skip_without_container_runtime!`], `cargo xtask it`
 //! - `TST-040` — [`FaultySession`], [`FaultPlan`], [`Fault`]
+//! - `TST-003` — [`sit`], and the ported cases in `tests/sit/`
 
 pub mod containers;
 pub mod counters;
@@ -72,6 +74,7 @@ pub mod runtime;
 pub mod schema;
 pub mod seed;
 pub mod session;
+pub mod sit;
 
 pub use containers::{
     engines_under_test, Capabilities, ClusterFixture, Engine, FixtureOptions, Flavour,
@@ -87,6 +90,10 @@ pub use schema::{
 };
 pub use seed::{Seed, SeedGuard, SEED_ENV};
 pub use session::{apply_schema, seed_rows, MockSession, TestRow, TestSession};
+pub use sit::{
+    case, cases, compare_counter_block, compare_cqlsh, final_counter_block, parse_cqlsh,
+    render_properties, sit_root, CqlshTable, SitCase, SitJob, SitStep, CASE_FILE,
+};
 
 /// Items the exported macros expand to.
 ///

@@ -1,0 +1,9 @@
+# Java: SIT/smoke/01_basic_kvp. Two rows, no features, migrate then validate.
+#
+# Java asserts nothing about the counter block here — the case has no `.assert` file at all,
+# and `execute.sh` only checks that the two scenarios exited. TST-003 requires every ported
+# case to assert the block, so both expectations below are new rather than ported.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+check expected.cql expected.out
