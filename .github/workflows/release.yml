@@ -39,9 +39,14 @@ jobs:
           name: cdm-${{ matrix.target }}
           path: target/${{ matrix.target }}/dist/cdm*
 
+  # Everything below publishes something the world can see, so it runs for a tag and nothing else.
+  # `workflow_dispatch` deliberately reaches `build` only: that makes "does this branch still build
+  # for all six targets, musl included" a question anyone can ask safely, which is the whole reason
+  # the manual trigger is here.
   publish:
     name: Publish release
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -70,6 +75,7 @@ jobs:
   container:
     name: Container image
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -87,7 +93,6 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=ref,event=branch
             type=sha
       # OPS-022: distroless, non-root, binary only. No JVM, no Spark, no Maven.
       - uses: docker/build-push-action@v7
