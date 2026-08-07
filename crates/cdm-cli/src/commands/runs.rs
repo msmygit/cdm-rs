@@ -5,7 +5,7 @@
 //! schema you have to go and look up. These commands are that answer.
 //!
 //! The operations themselves live in `cdm-track::manage`, not here. That is deliberate and is what
-//! `TST-050` is about: `GET /v1/runs` will render the same [`RunSummary`](cdm_track::RunSummary)
+//! `TST-050` is about: `GET /v1/runs` will render the same [`RunSummary`]
 //! this command renders, so the terminal and the API cannot drift into disagreeing about what a
 //! run's status was.
 //!
