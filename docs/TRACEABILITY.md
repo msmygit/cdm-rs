@@ -170,7 +170,7 @@ test, fails CI.
 | `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql::statement::mapping` | `sch_003_*` | #18, #21c |
 | `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql::statement::mapping` | `sch_004_*` | #18, #21c |
 | `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql::statement::upsert` | `sch_005_*` | #18, #22 |
-| `SCH-006` <sup>P</sup> | The target primary key MUST be derivable from: mapped origin columns, constant columns, and explode-map key/value columns | `cdm-cql::statement::mapping` | `sch_006_*` | #18 |
+| `SCH-006` <sup>P</sup> | The target primary key MUST be derivable from: mapped origin columns, constant columns, and explode-map key/value columns | `cdm-cql::statement::mapping`, `cdm-cql::rows` | `sch_006_*` | #18, #21c |
 | `SCH-007` <sup>P</sup> | Virtual projection columns `TTL(col)` and `WRITETIME(col)` MUST be appendable to the origin select and addressable by index | `cdm-cql::statement::projection` | `sch_007_*` | #18 |
 | `SCH-008` <sup>N</sup> | `cdm schema diff` MUST print a side-by-side origin/target schema comparison with per-column mapping, conversion plan… | `cdm-cql`, `cdm-cli::commands::schema` | `sch_008_*` | #10, #21b |
 | `SCH-009` <sup>N</sup> | Schema changes detected mid-run (via driver schema-agreement events) MUST abort the run with a distinct error kind rather than producing partial writes | `cdm-cql::exec::watch`, `cdm-core::error` | `sch_009_*` | #21 |
@@ -277,7 +277,7 @@ test, fails CI.
 | `FEA-014` <sup>P</sup> | Constant columns present on origin but absent on target MUST be droppable, and origin constants MUST be replaceable by different target constants | `cdm-feature::constant` | `fea_014_*` | #27 |
 | `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row | `cdm-feature::explode` | `fea_020_*` | #28, #21c |
 | `FEA-021` <sup>P</sup> | Key and value MUST be converted from the map's element types to the target column types using the standard conversion machinery | `cdm-feature::explode` | `fea_021_*` | #28 |
-| `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature::explode` | `fea_022_*` | #28 |
+| `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature::explode`, `cdm-cql::rows` | `fea_022_*` | #28, #21c |
 | `FEA-023` <sup>P</sup> | A null or empty map MUST produce zero target rows and count as `SKIPPED` | `cdm-feature::explode` | `fea_023_*` | #28 |
 | `FEA-030` <sup>P</sup> | `feature.extract_json.origin_column` names a text column containing a JSON object; `property_mapping` is `jsonField:targetColumn` | `cdm-feature::extract_json` | `fea_030_*` | #29, #21c |
 | `FEA-031` <sup>P</sup> | The extracted value MUST be written to the mapped target column | `cdm-feature::extract_json`, `cdm-feature::literal` | `fea_031_*` | #29 |

@@ -1,8 +1,4 @@
 # Java: SIT/regression/01_explode_map_with_constants/execute.sh — migrateData, validateData, breakData.cql, fixData.
-blocked same cause as features/02_explode_map: SCH-006's derivability check does not count explode-map key/value columns, though SPEC SCH-006 names them as a permitted source
-
-# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
-# expected to pass unchanged once the wiring lands.
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert
