@@ -31,7 +31,7 @@ jobs:
           - engine: scylladb/scylla:6.2
             nightly_only: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: ${{ !matrix.nightly_only || github.event_name != 'pull_request' }}
       - uses: dtolnay/rust-toolchain@stable
         if: ${{ !matrix.nightly_only || github.event_name != 'pull_request' }}
