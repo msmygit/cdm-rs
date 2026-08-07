@@ -948,6 +948,47 @@ async fn eng_009_the_limit_is_exceeded_not_merely_reached() {
 
     assert_eq!(report.status(), RunStatus::Ended);
     assert_eq!(report.outcomes().len(), plan.len());
+    // `ENDED` because the limit was reached and not exceeded — which is what this test is about.
+    // Still exit `1`: every range in it failed, and a run that wrote nothing must not report
+    // success just because it got to the end of the plan (`CLI-004`).
+    assert_eq!(report.exit_code(), 1);
+    assert_eq!(report.ranges_failed(), plan.len());
+}
+
+#[tokio::test]
+async fn cli_004_a_run_where_every_range_failed_does_not_report_success() {
+    // The regression this guards: `exit_code` matched on status alone, and a run reaches `ENDED`
+    // by processing every range it claimed — whatever each range concluded. So a run in which
+    // every range failed and nothing was written exited `0`, and a pipeline gating a cutover on
+    // it would have read that as "the data arrived".
+    let plan = plan(4);
+    let processor = Arc::new(FaultProcessor::migrate().with_default(Behaviour::Fail));
+    let report = Scheduler::new(settings(1))
+        .unwrap()
+        .run(&plan, processor, Arc::new(NoopObserver))
+        .await
+        .unwrap();
+
+    assert_eq!(report.status(), RunStatus::Ended);
+    assert_eq!(report.ranges_failed(), plan.len());
+    assert_eq!(
+        report.exit_code(),
+        1,
+        "the command ran; the data did not arrive"
+    );
+}
+
+#[tokio::test]
+async fn cli_004_a_clean_run_still_reports_success() {
+    let plan = plan(4);
+    let processor = Arc::new(FaultProcessor::migrate().with_rows(Rows::new(0, 5, 0)));
+    let report = Scheduler::new(settings(1))
+        .unwrap()
+        .run(&plan, processor, Arc::new(NoopObserver))
+        .await
+        .unwrap();
+
+    assert_eq!(report.ranges_failed(), 0);
     assert_eq!(report.exit_code(), 0);
 }
 
