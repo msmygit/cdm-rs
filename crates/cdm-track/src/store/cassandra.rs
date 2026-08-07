@@ -32,7 +32,7 @@ use cdm_cql::connect::ClusterSession;
 use chrono::{DateTime, Utc};
 use scylla::client::session::Session;
 use scylla::statement::prepared::PreparedStatement;
-use scylla::value::CqlTimestamp;
+use scylla::value::{CqlTimestamp, MaybeUnset};
 use tokio::sync::OnceCell;
 
 use crate::compat::{job_from_run_type, run_type, status as status_string};
@@ -383,6 +383,15 @@ impl TrackingStore for CassandraStore {
 
     /// Java's `endCdmRun` (`TRK-022`), generalised to any run status so that `INTERRUPTED` and
     /// `ABORTED` can be recorded too (`TRK-012`).
+    ///
+    /// `info` is bound `Unset` when absent rather than `None` (`TRK-037`). The statement is
+    /// `SET ... run_info = ?`, so binding `None` would write a `NULL` — a tombstone that erases
+    /// whatever metrics string the run had already recorded. [`RunManager::cancel`] passes `None`
+    /// precisely because it has no new metrics to offer, which is the opposite of asking for the
+    /// old ones to be deleted. `Unset` says "leave this column alone", which is what a status-only
+    /// write means, and it writes no tombstone — the same reasoning as `MIG-012` on the data path.
+    ///
+    /// [`RunManager::cancel`]: crate::manage::RunManager::cancel
     async fn update_run(
         &self,
         run_id: RunId,
@@ -394,7 +403,7 @@ impl TrackingStore for CassandraStore {
             .execute_unpaged(
                 &statements.end_run_info,
                 (
-                    info,
+                    info.map_or(MaybeUnset::Unset, MaybeUnset::Set),
                     status_string(status),
                     self.tables.table_name(),
                     run_id.as_i64(),

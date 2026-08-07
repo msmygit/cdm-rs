@@ -1350,6 +1350,19 @@ and logs a warning rather than blocking data movement.
 Cassandra target keyspace (default, Java-compatible), a local SQLite file, or an in-memory store for
 tests. This makes tracking usable even when the target cannot host extra tables.
 
+**TRK-037 [N]** — A tracking write that carries no aggregate metrics string MUST leave the stored
+one intact, and every `TrackingStore` implementation MUST agree on this.
+
+`TRK-034`'s `cdm runs cancel` is the case that makes it matter: it records a terminal status and has
+no new metrics to offer, which is the opposite of asking for the recorded ones to be deleted. A
+cancelled run whose `run_info` has been emptied is the run an operator most needs to read — it is
+the one that did not finish — and that string is the only record of how far it got.
+
+On the Cassandra backend this means binding `UNSET` rather than `NULL`, because `TRK-022`'s
+statement is an `UPDATE ... SET run_info = ?` and a bound `NULL` writes a tombstone. That is the
+same distinction `MIG-012` draws on the data path, for the same reason, and it is why an
+`update_run` taking `Option<&str>` must not hand the `Option` straight to the driver.
+
 ---
 
 ## 14. Distributed coordination (`DST`)
