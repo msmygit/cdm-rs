@@ -1,0 +1,88 @@
+name: Astra
+
+# Weekly connectivity check against a real Astra DB (CON-003, CON-004, CON-005, CON-020..CON-029).
+#
+# Everything else Astra-related in this repository is a unit test over a synthesised bundle or a
+# stubbed DevOps response. Those prove cdm-rs parses what Astra is documented to send; only this
+# job proves Astra sends it. The DevOps API, the bundle contents, the metadata service's mutual
+# TLS and the SNI proxy's routing are all outside our control and can change without notice.
+#
+# Weekly rather than per-PR for three reasons: it costs a real database, the credentials cannot be
+# exposed to pull requests from forks, and a serverless database that has been idle needs several
+# minutes to resume before it will answer at all.
+
+on:
+  schedule:
+    # Mondays, 04:00 UTC. A weekly cadence guarantees the database is always past Astra's ~48-hour
+    # hibernation threshold, so the resume path is exercised every single run rather than being
+    # the untested branch that only fires when something has gone quiet.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+# Never `pull_request`. The token is a repository secret with write access to a real database, and
+# a workflow that runs on fork PRs hands it to anyone who opens one.
+
+concurrency:
+  # One at a time, and never cancelled mid-run: two jobs against one serverless database race on
+  # the same table, and killing a run half way can leave a row behind.
+  group: astra
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  astra:
+    name: Real Astra DB
+    runs-on: ubuntu-latest
+    # Generous, because a hibernating database can spend a quarter of an hour resuming before the
+    # first query succeeds. The suite's own budget (WAKE_BUDGET) gives up well before this, so a
+    # timeout here means something other than hibernation is wrong.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the credentials are configured
+        env:
+          ASTRA_DB_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+        run: |
+          missing=""
+          [ -n "${{ vars.ASTRA_DB_UUID }}" ]   || missing="$missing ASTRA_DB_UUID(variable)"
+          [ -n "${{ vars.ASTRA_DB_REGION }}" ] || missing="$missing ASTRA_DB_REGION(variable)"
+          [ -n "$ASTRA_DB_TOKEN" ]             || missing="$missing ASTRA_DB_TOKEN(secret)"
+          if [ -n "$missing" ]; then
+            echo "::error::Astra credentials are not configured:$missing"
+            echo "This job cannot be skipped silently — a green run that tested nothing is worse"
+            echo "than a red one, because it reports Astra connectivity as verified."
+            exit 1
+          fi
+
+      - name: Run the Astra suite
+        env:
+          # The suite reads CDM_ASTRA_*; the repository names them ASTRA_DB_*. Mapping here keeps
+          # the test runnable locally with the same variables a developer would set by hand.
+          CDM_ASTRA_DB_ID: ${{ vars.ASTRA_DB_UUID }}
+          CDM_ASTRA_REGION: ${{ vars.ASTRA_DB_REGION }}
+          CDM_ASTRA_TOKEN: ${{ secrets.ASTRA_DB_TOKEN }}
+          # Astra names the keyspace at creation; override the default through a repository
+          # variable rather than editing this file.
+          CDM_ASTRA_KEYSPACE: ${{ vars.ASTRA_DB_KEYSPACE }}
+          # The suite prints its resume progress to stderr. Without this a fifteen-minute wait
+          # looks identical to a hang.
+          RUST_LOG: cdm_cql=debug,info
+        run: |
+          cargo test -p cdm-cql --test astra_it -- --ignored --test-threads=1 --nocapture
+
+      - name: Explain a failure
+        if: failure()
+        run: |
+          echo "::notice::If this failed on connectivity, check in this order:"
+          echo "  1. the database still exists and is not terminated (a hibernating one is fine —"
+          echo "     the suite waits it out and says so);"
+          echo "  2. the token has not been rotated or revoked, and carries a role that can read"
+          echo "     and write the keyspace;"
+          echo "  3. ASTRA_DB_REGION matches a region the database is actually deployed in — a"
+          echo "     valid token for the wrong region fails at the DevOps API, not at auth;"
+          echo "  4. ASTRA_DB_KEYSPACE, if set, names a keyspace that exists."
