@@ -51,6 +51,8 @@ enum Behaviour {
     Finish(RangeVerdict),
     /// Return an error, failing the range (`ENG-008`).
     Fail,
+    /// Return an error of a fatal kind, which must stop the whole run (`ENG-015`).
+    FailFatal(ErrorKind),
     /// Panic, which the scheduler must contain (`ENG-013`).
     Panic,
     /// Never finish. Only a kill ends this range (`ENG-010`).
@@ -215,6 +217,11 @@ impl RangeProcessor for FaultProcessor {
                 Err(CdmError::new(ErrorKind::Write, "injected write timeout")
                     .with_context(|c| c.with_range(ctx.range())))
             }
+            Behaviour::FailFatal(kind) => {
+                finish(self);
+                Err(CdmError::new(kind, "injected fatal condition")
+                    .with_context(|c| c.with_range(ctx.range())))
+            }
             Behaviour::Panic => {
                 finish(self);
                 panic!("injected panic in range {}", ctx.range().min())
@@ -328,8 +335,15 @@ async fn run_stopped_early(reason: StopReason) -> (RunReport, Arc<RecordingObser
     let mut processor = FaultProcessor::migrate()
         .with_rows(rows)
         .with_tickets(Arc::clone(&tickets));
-    if reason == StopReason::ErrorLimit {
-        processor = processor.with_default(Behaviour::Fail);
+    match reason {
+        StopReason::ErrorLimit => processor = processor.with_default(Behaviour::Fail),
+        // ENG-015: ten read and ten written is nothing lost, so this range stops the run on its
+        // kind alone and cannot also trip the error limit — which would make the assertion below
+        // about `stopped_by` a coin toss between the two reasons.
+        StopReason::Fatal => {
+            processor = processor.with_default(Behaviour::FailFatal(ErrorKind::SchemaChanged));
+        }
+        StopReason::Signal | StopReason::Operator => {}
     }
     let processor = Arc::new(processor);
 
@@ -342,9 +356,9 @@ async fn run_stopped_early(reason: StopReason) -> (RunReport, Arc<RecordingObser
         match reason {
             StopReason::Signal => control.signalled(),
             StopReason::Operator => control.stop(StopReason::Operator),
-            // The error limit stops the run by itself; releasing the gate is the whole of the
-            // operator's part in it.
-            StopReason::ErrorLimit => {}
+            // The error limit and a fatal range both stop the run by themselves; releasing the
+            // gate is the whole of the operator's part in either.
+            StopReason::ErrorLimit | StopReason::Fatal => {}
         }
         tickets.add_permits(Semaphore::MAX_PERMITS);
     };
@@ -372,10 +386,11 @@ async fn run_stopped_early(reason: StopReason) -> (RunReport, Arc<RecordingObser
     (report, observer)
 }
 
-/// The three ways a run stops early. Every test that must hold on all of them iterates this.
-const STOP_REASONS: [StopReason; 3] = [
+/// The four ways a run stops early. Every test that must hold on all of them iterates this.
+const STOP_REASONS: [StopReason; 4] = [
     StopReason::Signal,
     StopReason::ErrorLimit,
+    StopReason::Fatal,
     StopReason::Operator,
 ];
 
@@ -1851,6 +1866,146 @@ async fn eng_014_stopping_a_paused_run_releases_its_workers() {
     assert_eq!(report.stopped_by(), Some(StopReason::Operator));
     assert!(!report.unclaimed_ranges().is_empty());
     assert!(!control.is_paused(), "a stop clears the pause");
+}
+
+// =================================================================================================
+// ENG-015 — a fatal range failure stops the run
+// =================================================================================================
+
+#[tokio::test]
+async fn eng_015_a_fatal_range_failure_stops_the_run_instead_of_failing_every_range() {
+    // The defect this test exists for: `is_fatal` was documented as "must abort the whole run" and
+    // honoured nowhere, so a schema change mid-run failed all 100 ranges in turn.
+    let plan = plan(100);
+    let processor = Arc::new(
+        FaultProcessor::migrate()
+            .with_default(Behaviour::FailFatal(ErrorKind::SchemaChanged))
+            .with_rows(Rows::new(10, 0, 0)),
+    );
+
+    let scheduler = Scheduler::new(settings(2)).unwrap();
+    let report = scheduler
+        .run(
+            &plan,
+            Arc::clone(&processor) as Arc<dyn RangeProcessor>,
+            Arc::new(NoopObserver),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.stopped_by(), Some(StopReason::Fatal));
+    // The bound is what makes this a regression test rather than a restatement: two workers were
+    // in flight when the first fatal error landed, so at most two ranges can fail. Before the fix
+    // this was 100.
+    assert!(
+        report.ranges_failed() <= 2,
+        "a fatal error must not be re-discovered range by range: {} failed",
+        report.ranges_failed()
+    );
+    assert!(!report.unclaimed_ranges().is_empty());
+    // SCH-009 is only useful if the operator can tell what happened, so the diagnostic survives.
+    let failed = report
+        .outcomes()
+        .iter()
+        .find(|o| o.status == RunStatus::Fail)
+        .unwrap();
+    assert_eq!(
+        failed.diagnostic.as_ref().unwrap().code,
+        ErrorKind::SchemaChanged.diagnostic_code()
+    );
+}
+
+#[tokio::test]
+async fn eng_015_the_fatal_range_is_still_accounted_for_as_a_failure() {
+    // ENG-015 adds a stop; it does not remove the ENG-008 accounting. A range whose rows were lost
+    // must still say so, or an operator resuming has no idea what the aborting range cost.
+    let plan = plan(20);
+    let processor = Arc::new(
+        FaultProcessor::migrate()
+            .with_default(Behaviour::FailFatal(ErrorKind::Auth))
+            .with_rows(Rows::new(10, 4, 1)),
+    );
+
+    let scheduler = Scheduler::new(settings(1)).unwrap();
+    let report = scheduler
+        .run(&plan, processor, Arc::new(NoopObserver))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report.ranges_failed(),
+        1,
+        "one worker, so exactly one range"
+    );
+    let total = |kind| report.counters().count_of(kind, CounterView::Committed);
+    assert_eq!(total(CounterKind::PartitionsFailed), 1);
+    // read − written − skipped = 10 − 4 − 1.
+    assert_eq!(total(CounterKind::Error), 5);
+    assert_eq!(report.exit_code(), 1);
+}
+
+#[tokio::test]
+async fn eng_015_every_fatal_kind_stops_the_run_and_no_containable_kind_does() {
+    // Rather than asserting one kind, walk the classification: whatever `is_fatal` says today is
+    // what the scheduler must do today, so adding a kind to that list cannot silently do nothing.
+    for kind in ErrorKind::ALL {
+        let plan = plan(8);
+        let processor =
+            Arc::new(FaultProcessor::migrate().with_default(Behaviour::FailFatal(kind)));
+        let report = Scheduler::new(settings(1))
+            .unwrap()
+            .run(&plan, processor, Arc::new(NoopObserver))
+            .await
+            .unwrap();
+
+        if kind.is_fatal() {
+            assert_eq!(
+                report.stopped_by(),
+                Some(StopReason::Fatal),
+                "{kind} is fatal and must stop the run"
+            );
+            assert_eq!(report.status(), RunStatus::Aborted, "{kind}");
+        } else {
+            assert_eq!(report.stopped_by(), None, "{kind} must be contained");
+            assert_eq!(report.status(), RunStatus::Ended, "{kind}");
+            assert_eq!(report.ranges_failed(), plan.len(), "{kind}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn eng_013_a_panic_is_contained_even_though_it_becomes_a_fatal_kind() {
+    // The one exception to ENG-015, and the reason the check lives on the returned-error branch
+    // rather than inside `fail_range`: ENG-013 converts a panic to `Internal`, which is fatal, but
+    // requires the run to carry on. Getting this wrong would turn every job panic into a run abort.
+    assert!(ErrorKind::Internal.is_fatal());
+
+    let plan = plan(10);
+    let processor = Arc::new(FaultProcessor::migrate().with_default(Behaviour::Panic));
+    let report = Scheduler::new(settings(2))
+        .unwrap()
+        .run(&plan, processor, Arc::new(NoopObserver))
+        .await
+        .unwrap();
+
+    assert_eq!(report.status(), RunStatus::Ended);
+    assert_eq!(report.stopped_by(), None);
+    assert_eq!(report.ranges_failed(), plan.len());
+}
+
+#[tokio::test]
+async fn eng_015_a_fatal_abort_does_not_rewrite_an_earlier_signal() {
+    // A run already interrupted by an operator stays INTERRUPTED — that is the resumable code, and
+    // a fatal error discovered while draining must not downgrade it to a non-retryable abort.
+    let control = RunControl::new();
+    control.stop(StopReason::Signal);
+    control.stop(StopReason::Fatal);
+    assert_eq!(control.stop_reason(), Some(StopReason::Signal));
+    assert_eq!(
+        control.stop_reason().unwrap().run_status(),
+        RunStatus::Interrupted
+    );
 }
 
 // =================================================================================================

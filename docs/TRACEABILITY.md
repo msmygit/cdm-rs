@@ -209,6 +209,7 @@ test, fails CI.
 | `ENG-012` <sup>P</sup> | The range span MUST additionally carry Java's `min:max` `ThreadLabel`, padding included, when `logging.format = pretty` | `cdm-engine` | `eng_012_*` | #20 |
 | `ENG-013` <sup>N</sup> | Panics inside a worker MUST be caught at the range boundary, converted to a range failure, and MUST NOT poison the run | `cdm-engine` | `eng_013_*` | #20 |
 | `ENG-014` <sup>N</sup> | A pause/resume control stops issuing new work without losing the plan, and an operator stop drains in-flight work and marks the run `ABORTED` | `cdm-engine::scheduler` | `eng_014_*` | #26 |
+| `ENG-015` <sup>N</sup> | A range failing with an `ErrorKind::is_fatal` kind stops the whole run and marks it `ABORTED`, while still being accounted for under `ENG-008`; a caught panic stays contained per `ENG-013` | `cdm-engine::scheduler` | `eng_015_*` | #46 |
 
 ### MIG
 

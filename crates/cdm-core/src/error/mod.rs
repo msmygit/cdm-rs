@@ -144,6 +144,12 @@ impl ErrorKind {
     /// transient. `Connect` joins them: cdm-rs establishes its sessions at startup, so a
     /// connection error is a misconfiguration rather than a blip — in-run node failures surface
     /// as `Read`/`Write` instead. `Internal` aborts because the process is in an unknown state.
+    ///
+    /// The engine honours this in `cdm-engine::scheduler` (`ENG-015`): a range that returns a
+    /// fatal error is accounted for as a range failure *and* stops the run. The one exception is
+    /// a panic, which `ENG-013` requires to stay contained even though the scheduler converts it
+    /// to an `Internal` — the scheduler applies the rule to errors a job returns, not to ones it
+    /// synthesises from a caught payload.
     pub const fn is_fatal(&self) -> bool {
         matches!(
             self,

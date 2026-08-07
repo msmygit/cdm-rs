@@ -252,12 +252,12 @@ async fn tst_040_every_transport_fault_is_contained_at_the_range_boundary() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tst_040_a_schema_change_fails_every_range_rather_than_one() {
-    // `SCH-009` is the fault that cannot be contained, and the way it stops a run is worth being
-    // explicit about: the scheduler contains *every* error, so a schema change does not abort the
-    // run from the inside — it fails each range's opening check in turn, and the run ends having
-    // written nothing. That is the shape `sch_009_a_schema_change_aborts_the_run` sees against a
-    // real node, reproduced here without one.
+async fn tst_040_a_schema_change_aborts_the_run_rather_than_failing_every_range() {
+    // `SCH-009` is the fault that must not be contained, and `ENG-015` is what stops it being.
+    // The distinction matters because both behaviours end with nothing written: the difference is
+    // whether the operator gets one error or `num_parts` copies of it, and whether the run row
+    // says `ABORTED` — which is the only durable record that the schema, not the data, was wrong.
+    // This is the shape `sch_009_a_schema_change_aborts_the_run` sees against a real node.
     let job = Arc::new(FaultyJob::new(
         FaultPlan::none().always(
             "SELECT schema_version",
@@ -267,15 +267,24 @@ async fn tst_040_a_schema_change_fails_every_range_rather_than_one() {
     ));
     let report = run(Arc::clone(&job), SchedulerSettings::default()).await;
 
+    assert_eq!(report.status(), RunStatus::Aborted);
+    assert_eq!(report.stopped_by(), Some(StopReason::Fatal));
     assert_eq!(report.ranges_passed(), 0);
-    assert_eq!(report.ranges_failed(), usize::try_from(RANGES).unwrap());
+    // One worker, so the first range to hit it is the only one that can: the rest are never
+    // claimed and are left for a resume once the schema is settled.
+    assert_eq!(report.ranges_failed(), 1);
+    assert_eq!(
+        report.unclaimed_ranges().len(),
+        usize::try_from(RANGES).unwrap() - 1
+    );
     assert_eq!(job.write_attempts(), 0, "not one row was written");
     assert_eq!(
         total(&report, CounterKind::Error),
         0,
         "a range that failed before reading anything lost nothing"
     );
-    assert_eq!(total(&report, CounterKind::PartitionsFailed), RANGES);
+    assert_eq!(total(&report, CounterKind::PartitionsFailed), 1);
+    assert_eq!(report.exit_code(), 1, "and it is not a retryable exit");
 }
 
 #[tokio::test(flavor = "multi_thread")]
