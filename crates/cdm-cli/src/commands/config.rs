@@ -49,14 +49,17 @@ impl Report for ValidateReport {
 
 /// Validates a configuration to the requested tier (`CFG-020`, `CFG-021`).
 ///
-/// Tier 3 is not reachable from here yet: it needs a live schema, which arrives with `cdm-cql`'s
-/// `SchemaProvider` in PR #9. Asking for it is an error rather than a silent downgrade — quietly
-/// running fewer checks than requested is how a configuration reaches production unvalidated.
+/// Tier 3 is not reachable from here yet. `cdm-cql`'s `SchemaProvider` exists, but nothing in the
+/// CLI opens a session to feed it: that is the shared job harness (roadmap #21a), which the job
+/// commands are waiting on too. Asking for tier 3 is an error rather than a silent downgrade —
+/// quietly running fewer checks than requested is how a configuration reaches production
+/// unvalidated.
 pub fn validate(args: &ConfigArgs, tier: Tier) -> Result<ValidateReport, CdmError> {
     if tier == Tier::Schema {
         return Err(CdmError::new(
             ErrorKind::Config,
-            "tier 3 validation needs a live schema, which lands with `cdm-cql` in PR #9",
+            "tier 3 validation needs a live cluster session, which the CLI cannot yet open; \
+             it lands with the shared job harness (roadmap #21a)",
         )
         .with_context(|c| c.with_config_key("--tier")));
     }

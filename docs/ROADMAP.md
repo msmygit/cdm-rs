@@ -18,6 +18,23 @@ Every unit of work below is **one pull request**. Every PR:
 Parity (Phases 1–4) ships **before** the new interface surface (Phases 5–7). That ordering is
 deliberate: functional parity is the hard gate, everything else is additive.
 
+## Where delivery has reached
+
+Roadmap PR numbers below are **not** GitHub pull-request numbers; several roadmap items were
+delivered as one PR where splitting them would have merged a knowingly-wrong intermediate state.
+
+| Roadmap PRs | State |
+|---|---|
+| #1–#20, #27–#31, #36–#38 | **Delivered.** Docs and scaffolding, the driver spike, `cdm-core`, all of `cdm-config`, all of `cdm-codec`, `cdm-cql` through statement construction, the CLI skeleton, the testkit, the token planner, the scheduler, and metrics through the event bus. |
+| #21–#26 | **Delivered.** The three jobs (migrate with counters, validate with autocorrect, guardrail), run tracking with resume and rerun, the error limit and graceful shutdown. |
+| #32–#35, #39–#58 | **Not started.** The SIT parity suite, the property and differential harnesses, `--compat-java`, the terminal UI, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
+
+**The gap between "delivered" and "usable" is the CLI.** Every job command in `cdm-cli` still
+returns "not yet": the jobs are libraries, and the shared *connect → introspect → plan → run* path
+they all need has no roadmap PR of its own. It was assumed into #21–#24 and fell between them,
+because each job could be built and tested against a `RangeProcessor` seam without it. That work is
+tracked as **#21a** below and blocks `cdm migrate`, `cdm validate`, `cdm guardrail` and `cdm plan`.
+
 ---
 
 ## Phase 0 — Foundation
@@ -65,6 +82,7 @@ deliberate: functional parity is the hard gate, everything else is additive.
 | #24 | `feat(engine): guardrail job` | `GRD-001`..`GRD-004` |
 | #25 | `feat(track): run tracking, resume and rerun` | `TRK-001`..`TRK-003`, `TRK-010`, `TRK-012`, `TRK-020`..`TRK-036` |
 | #26 | `feat(engine): error limit and graceful shutdown` | `ENG-009`, `ENG-010`, `ENG-014` |
+| #21a | `feat(cli): the shared job harness — connect, introspect, plan, run` | `CLI-001`, `CON-008`, `SCH-001`, `SCH-008`, `TOK-001`, `MET-005` (wiring only; no new requirements) — **the one piece standing between the implemented jobs and a usable `cdm` binary.** Turns a validated `CdmConfig` into two sessions, an introspected schema, a conversion plan, a token plan and a scheduler run, then renders the counter block and maps the terminal status onto a `CLI-004` exit code. Wires `cdm migrate`, `cdm validate`, `cdm guardrail`, `cdm plan` and tier-3 `cdm config validate`, all of which currently return "not yet". |
 
 ## Phase 4 — Features and parity certification
 
