@@ -1124,6 +1124,205 @@ mod tests {
         );
     }
 
+    /// One origin cell, as the generator produces it.
+    ///
+    /// The four states a migration actually meets. Collapsing any two of them is the mistake
+    /// `MIG-012` exists to prevent: *absent* and *null* mean different things to the projection,
+    /// and *empty* and *null* mean different things to the storage engine.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum CellState {
+        /// The row is narrower than the projection.
+        Absent,
+        /// CQL `NULL`.
+        Null,
+        /// An empty value: `""` for text, a zero-element collection otherwise.
+        Empty,
+        /// A value with content.
+        Populated,
+    }
+
+    impl CellState {
+        /// The bytes this state contributes at `index` of [`schema`], or `None` for `Absent`.
+        ///
+        /// The nested `Option` is the point rather than an accident: the outer one is "the row is
+        /// this narrow", the inner one is CQL `NULL`, and `MIG-012` exists because those two are
+        /// not the same thing. `SourceRow::cell` has the same shape for the same reason.
+        #[allow(clippy::option_option)]
+        fn cell(self, index: usize) -> Option<Option<Vec<u8>>> {
+            let populated = match index {
+                0 => 7i32.to_be_bytes().to_vec(),
+                1 => b"payload".to_vec(),
+                2 => collection(&["a", "b"]),
+                _ => map(&[("k", Some("v"))]),
+            };
+            let empty = match index {
+                0 | 1 => Vec::new(),
+                2 => collection(&[]),
+                _ => map(&[]),
+            };
+            match self {
+                Self::Absent => None,
+                Self::Null => Some(None),
+                Self::Empty => Some(Some(empty)),
+                Self::Populated => Some(Some(populated)),
+            }
+        }
+
+        /// Whether `MIG-012` says the bind marker for column `index` must be left `UNSET`.
+        ///
+        /// The rule, written out rather than asked of the code under test: a null is `UNSET`, an
+        /// empty *collection* is `UNSET`, and an empty *string* is a value. `Absent` never reaches
+        /// this: a row narrower than the projection is a bind failure, not an unset column, which
+        /// is `MIG-011`'s rule and is asserted separately below.
+        fn must_be_unset(self, index: usize) -> bool {
+            let is_collection = index >= 2;
+            match self {
+                Self::Absent | Self::Null => true,
+                Self::Empty => is_collection,
+                Self::Populated => false,
+            }
+        }
+    }
+
+    /// The wire form of a bound row: `-2` for unset, `-1` for null, a length otherwise.
+    ///
+    /// This is where the structural claim of `MIG-012` becomes an observable one. [`BoundValue`]
+    /// has no `Null` variant, so a null bind should be unrepresentable — but "should be" is a
+    /// claim about the source, and what reaches the server is bytes.
+    fn wire_lengths(write: &BoundWrite<'_>) -> Vec<i32> {
+        let mut buffer = Vec::new();
+        let mut writer = RowWriter::new(&mut buffer);
+        for value in write.values() {
+            let cell = writer.make_cell_writer();
+            match value {
+                BoundValue::Unset => {
+                    cell.set_unset();
+                }
+                BoundValue::Value(bytes) => {
+                    cell.set_value(bytes).unwrap();
+                }
+            }
+        }
+
+        let mut lengths = Vec::new();
+        let mut offset = 0usize;
+        while offset + 4 <= buffer.len() {
+            let length = i32::from_be_bytes(buffer[offset..offset + 4].try_into().unwrap());
+            lengths.push(length);
+            offset += 4;
+            if length > 0 {
+                offset += usize::try_from(length).unwrap_or(0);
+            }
+        }
+        lengths
+    }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `TST-010`, `MIG-012`: whatever shape the origin row is, the write that leaves the
+        /// binder contains no null bind — at the wire level, not merely in the type.
+        ///
+        /// The module claims a null bind is structurally impossible because [`BoundValue`] has no
+        /// `Null` variant. That is a claim about the *source*, and a source-level claim is exactly
+        /// the kind that survives a refactor while quietly ceasing to be true. So this asserts the
+        /// bytes: every marker is `-2` (unset) or a length `>= 0`, and `-1` — CQL's null — never
+        /// appears, over every row shape the four cell states produce across the four columns.
+        #[test]
+        fn tst_010_mig_012_no_generated_row_can_produce_a_null_bind(
+            states in proptest::collection::vec(
+                proptest::sample::select(
+                    &[
+                        CellState::Absent,
+                        CellState::Null,
+                        CellState::Empty,
+                        CellState::Populated,
+                    ][..],
+                ),
+                4..=4,
+            ),
+        ) {
+            let binder = binder(MissingKeyPolicy::default(), false);
+            // A row is a prefix of the projection, so `Absent` truncates: everything from the
+            // first absent cell onwards is absent too, whatever the generator drew.
+            let mut cells = Vec::new();
+            for (index, state) in states.iter().enumerate() {
+                match state.cell(index) {
+                    Some(cell) => cells.push(cell),
+                    None => break,
+                }
+            }
+            let truncated = cells.len() < states.len();
+            let source = row(cells);
+
+            // Exactly two shapes may be refused, and both are refusals rather than silent
+            // nulls: a row narrower than the projection (`MIG-011` — the failure mode that
+            // would otherwise write the right data into the wrong column), and an `int`
+            // primary key with no value and no substitute (`MIG-013`).
+            let expected_refusal = truncated || states[0] == CellState::Null;
+            let Ok(bound) = binder.bind(&&source, BindInputs::default()) else {
+                prop_assert!(
+                    expected_refusal,
+                    "a bind must only fail for a short row or a missing key; states = {:?}",
+                    states,
+                );
+                return Ok(());
+            };
+            prop_assert!(
+                !expected_refusal,
+                "a short row or a null key must be refused, not bound; states = {:?}",
+                states,
+            );
+
+            let write = bound.values();
+            prop_assert_eq!(write.len(), 4, "every target column gets a marker (MIG-011)");
+
+            for (index, length) in wire_lengths(write).into_iter().enumerate() {
+                prop_assert_ne!(
+                    length,
+                    -1,
+                    "column {} was bound as NULL, which writes a tombstone (MIG-012)",
+                    index,
+                );
+                prop_assert_eq!(
+                    length == -2,
+                    states[index].must_be_unset(index),
+                    "column {} in state {:?} bound the wrong way",
+                    index,
+                    states[index],
+                );
+            }
+        }
+
+        /// `TST-010`, `MIG-012`: an empty *string* is a value and an empty *collection* is not.
+        ///
+        /// The pair a single "is it empty?" check would conflate, over generated content.
+        #[test]
+        fn tst_010_mig_012_emptiness_means_different_things_to_text_and_to_collections(
+            text in ".*",
+            elements in proptest::collection::vec("[a-z]{1,8}", 0..6),
+        ) {
+            let binder = binder(MissingKeyPolicy::default(), false);
+            let borrowed: Vec<&str> = elements.iter().map(String::as_str).collect();
+            let source = row(vec![
+                Some(1i32.to_be_bytes().to_vec()),
+                Some(text.as_bytes().to_vec()),
+                Some(collection(&borrowed)),
+                Some(map(&[])),
+            ]);
+            let bound = binder.bind(&&source, BindInputs::default()).unwrap();
+            let values = bound.values().values();
+
+            prop_assert!(
+                !values[1].is_unset(),
+                "a text value is never unset, however short"
+            );
+            prop_assert_eq!(values[1].bytes(), Some(text.as_bytes()));
+            prop_assert_eq!(values[2].is_unset(), elements.is_empty());
+            prop_assert!(values[3].is_unset(), "an empty map is always unset");
+        }
+    }
+
     #[test]
     fn mig_040_an_identity_plan_binds_the_frame_slice_itself() {
         let binder = binder(MissingKeyPolicy::default(), false);

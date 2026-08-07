@@ -40,6 +40,12 @@ cdm-testkit.workspace = true
 
 anyhow.workspace = true
 futures.workspace = true
+# `proptest` is the workspace's property-testing crate (`cdm-codec`, `cdm-engine` and
+# `cdm-feature` all dev-depend on it); `TST-010`'s `MIG-012` property lives beside the binder.
+proptest.workspace = true
 rcgen.workspace = true
 tempfile.workspace = true
 testcontainers.workspace = true
+# `test-util` pauses the runtime clock, so the retry-backoff fault tests are a function of the
+# program rather than of the CI machine's load (`TST-040`).
+tokio = { workspace = true, features = ["test-util"] }

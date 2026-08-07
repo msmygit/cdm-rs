@@ -19,6 +19,7 @@
 //! | [`seed`] | [`Seed`], [`SeedGuard`] | `TST-101` |
 //! | [`counters`] | [`CounterExpectation`], [`assert_counters!`], final-block parsing | `TST-100` |
 //! | [`session`] | [`TestSession`], [`MockSession`], [`TestRow`] | `TST-100` |
+//! | [`faults`] | [`FaultKind`], [`Fault`], [`FaultPlan`], [`FaultySession`] | `TST-040` |
 //!
 //! # The three things worth knowing before using it
 //!
@@ -61,10 +62,12 @@
 //!   [`CounterExpectation`], [`MockSession`]
 //! - `TST-101` — [`Seed`], [`SeedGuard`], [`DataGen`]
 //! - `TST-102` — [`ContainerRuntime`], [`skip_without_container_runtime!`], `cargo xtask it`
+//! - `TST-040` — [`FaultySession`], [`FaultPlan`], [`Fault`]
 
 pub mod containers;
 pub mod counters;
 pub mod data;
+pub mod faults;
 pub mod runtime;
 pub mod schema;
 pub mod seed;
@@ -76,6 +79,7 @@ pub use containers::{
 };
 pub use counters::{counts, parse_final_block, parse_metrics_string, CounterExpectation};
 pub use data::{quote, DataGen, DataGenOptions, GeneratedRow};
+pub use faults::{Fault, FaultKind, FaultPlan, FaultySession, InjectedFault};
 pub use runtime::{well_known_sockets, ContainerRuntime, NoContainerRuntime, RuntimeSource};
 pub use schema::{
     create_keyspace_statement, type_slug, ColumnKind, ColumnSpec, SchemaGen, TableSpec,

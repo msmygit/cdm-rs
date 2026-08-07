@@ -40,4 +40,7 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# `proptest` is the workspace's property-testing crate; `TST-010`'s configuration round-trip is
+# the one property that has to be expressed over the whole registry at once.
+proptest.workspace = true
 tempfile.workspace = true

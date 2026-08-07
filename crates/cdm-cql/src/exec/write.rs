@@ -224,7 +224,7 @@ impl<'a> TargetWriter<'a> {
                     return Ok((rows.rows_num() > 0).then(|| CounterRow { rows }));
                 }
                 Err(error) => {
-                    if !self.backoff.may_retry(attempts) || !error.is_retryable() {
+                    if !self.backoff.should_retry(&error, attempts) {
                         return Err(error);
                     }
                     tokio::time::sleep(self.backoff.delay_for(attempts)).await;
@@ -248,7 +248,7 @@ impl<'a> TargetWriter<'a> {
                 Ok(_) => return Ok(()),
                 Err(error) => {
                     let error = write_error("the target write failed", error);
-                    if !self.backoff.may_retry(attempts) || !error.is_retryable() {
+                    if !self.backoff.should_retry(&error, attempts) {
                         return Err(error);
                     }
                     let delay = self.backoff.delay_for(attempts);
