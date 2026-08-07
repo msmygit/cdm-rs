@@ -13,9 +13,15 @@
 //! * **CQL → internal** ([`unformat`]): strip the quotes and undouble; an unquoted name is
 //!   returned unchanged, exactly as Java does, with the case-insensitivity of an unquoted
 //!   identifier applied as the [`fold`] fallback in [`super::introspect`];
-//! * two passthroughs Java has and cdm-rs keeps for parity: a name that is *already* quoted is
-//!   returned unchanged, and a function form such as `TTL(data)` or `WRITETIME(data)` is returned
-//!   unchanged so that the virtual projection columns of `SCH-007` survive formatting.
+//! * one passthrough Java has and cdm-rs keeps for parity: a name that is *already* quoted is
+//!   returned unchanged.
+//!
+//! A function form such as `TTL(data)` or `WRITETIME(data)` survives formatting too, so the
+//! virtual projection columns of `SCH-007` can be formatted alongside real ones — but **its
+//! argument is formatted**, where Java's `formatName` returns the whole thing untouched
+//! (`return name; // function`). That is divergence 42: Java quotes the column in the projection
+//! list and leaves it bare inside the function, so a reserved-word column produces
+//! `SELECT col1,"order",TTL(order)` and the server rejects the statement outright.
 
 /// The reserved words of the CQL grammar, which must be quoted to be used as identifiers.
 ///
@@ -137,16 +143,60 @@ pub fn is_function_form(name: &str) -> bool {
 /// assert_eq!(format("token"), "\"token\"");
 /// assert_eq!(format("we\"ird"), "\"we\"\"ird\"");
 /// assert_eq!(format("TTL(data)"), "TTL(data)");
+/// // SCH-007: the argument of a virtual column is an identifier too, and obeys the same rule.
+/// assert_eq!(format("TTL(order)"), "TTL(\"order\")");
+/// assert_eq!(format("WRITETIME(Data)"), "WRITETIME(\"Data\")");
 /// ```
 pub fn format(name: &str) -> String {
-    if name.is_empty() || is_quoted(name) || is_function_form(name) {
+    if name.is_empty() || is_quoted(name) {
         return name.to_owned();
+    }
+    // SCH-007: a function form is not opaque. `TTL(col)` is a function *applied to an identifier*,
+    // and the identifier inside obeys `SCH-002` exactly as it does in the projection list — so
+    // `TTL(order)` is a syntax error where `TTL("order")` is what was meant. Formatting the
+    // argument here rather than at each call site is what keeps the two spellings of the same
+    // column from disagreeing: the projection already quotes it, and only this path did not.
+    if let Some((function, argument)) = split_function_form(name) {
+        // Idempotent: callers reach this both ways. `WritetimeTtlPlan` builds `TTL(col)` from an
+        // internal name, while an `OriginProjection` may be handed `WRITETIME("My Col")` already
+        // formatted. `is_quoted` cannot be the test — it is deliberately strict for Java parity
+        // and rejects a quoted name containing whitespace, which would double-quote exactly the
+        // names that most need quoting.
+        let formatted = if already_quoted(argument) {
+            argument.to_owned()
+        } else {
+            format(argument)
+        };
+        return format!("{function}({formatted})");
     }
     if needs_quoting(name) {
         quote(name)
     } else {
         name.to_owned()
     }
+}
+
+/// Whether `name` is already written with surrounding quotes, whitespace and all.
+///
+/// Deliberately more permissive than [`is_quoted`], which mirrors Java's `^"[^\s]*"$` and so does
+/// not recognise `"My Col"`. That strictness is right where it is used; here it would mean
+/// re-quoting a name that is already quoted.
+fn already_quoted(name: &str) -> bool {
+    name.len() >= 2 && name.starts_with('"') && name.ends_with('"')
+}
+
+/// Splits `TTL(col)` into `("TTL", "col")`, or `None` if `name` is not a function form.
+fn split_function_form(name: &str) -> Option<(&str, &str)> {
+    let open = name.find('(')?;
+    if !name.ends_with(')') {
+        return None;
+    }
+    let head = name.get(..open)?;
+    if head.is_empty() || !head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let argument = name.get(open + 1..name.len() - 1)?;
+    Some((head, argument))
 }
 
 /// Writes an internal identifier as a quoted CQL identifier, always.
@@ -223,6 +273,36 @@ pub fn qualified(keyspace: &str, table: &str) -> String {
     clippy::panic
 )]
 mod tests {
+    #[test]
+    fn sch_007_a_virtual_column_quotes_its_argument_like_any_other_identifier() {
+        // The defect: `format` treated a function form as opaque, so a reserved-word column was
+        // quoted in the projection list and left bare inside TTL()/WRITETIME(). The server saw
+        // `SELECT col1,"order",TTL(order)` and rejected the statement outright.
+        assert_eq!(format("TTL(order)"), "TTL(\"order\")");
+        assert_eq!(format("WRITETIME(order)"), "WRITETIME(\"order\")");
+        // Case-sensitive and awkward names go the same way.
+        assert_eq!(format("TTL(Data)"), "TTL(\"Data\")");
+        assert_eq!(format("TTL(we\"ird)"), "TTL(\"we\"\"ird\")");
+        // A name that needs no quoting is still left alone, so nothing that worked changes.
+        assert_eq!(format("TTL(data)"), "TTL(data)");
+        assert_eq!(format("WRITETIME(data)"), "WRITETIME(data)");
+        // An argument already quoted is not quoted twice — including one with whitespace, which
+        // `is_quoted` deliberately does not recognise.
+        assert_eq!(format("TTL(\"order\")"), "TTL(\"order\")");
+        assert_eq!(format("WRITETIME(\"My Col\")"), "WRITETIME(\"My Col\")");
+        // And an unquoted name with whitespace is still quoted once.
+        assert_eq!(format("WRITETIME(My Col)"), "WRITETIME(\"My Col\")");
+    }
+
+    #[test]
+    fn sch_002_a_name_that_merely_contains_a_bracket_is_not_a_function_form() {
+        // `split_function_form` must not turn an odd column name into a function call.
+        assert_eq!(split_function_form("(x)"), None);
+        assert_eq!(split_function_form("we(ird"), None);
+        assert_eq!(split_function_form("a b(c)"), None);
+        assert_eq!(split_function_form("TTL(col)"), Some(("TTL", "col")));
+    }
+
     use super::*;
 
     #[test]
