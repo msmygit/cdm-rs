@@ -52,7 +52,7 @@ pub enum Command {
     Migrate(JobArgs),
     /// Compare origin and target, optionally correcting differences.
     #[command(alias = "diff")]
-    Validate(JobArgs),
+    Validate(ValidateArgs),
     /// Report oversized columns on the origin.
     Guardrail(JobArgs),
     /// Compute the token-range plan without touching data.
@@ -141,9 +141,37 @@ pub struct JobArgs {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Write a machine-readable run summary here when the run ends.
+    /// Write a machine-readable run summary here when the run ends (`MET-033`).
     #[arg(long, value_name = "PATH")]
     pub summary_out: Option<PathBuf>,
+}
+
+/// Arguments for `cdm validate`, which is the only job with comparison flags of its own.
+///
+/// `--sample` and `--keys-only` live here rather than on [`JobArgs`] because `VAL-015` gives them
+/// to validate alone. A `cdm migrate --sample 5` that parsed would be a migration that silently
+/// moved a twentieth of the data, and clap refusing the flag is a better answer than a runtime
+/// error nobody reads.
+#[derive(Debug, Args, Clone)]
+pub struct ValidateArgs {
+    /// The arguments every job takes.
+    #[command(flatten)]
+    pub job: JobArgs,
+
+    /// Compare this percentage of each token range instead of all of it (`VAL-015`).
+    ///
+    /// Sugar for `filter.token_coverage_percent`, so the sampling is `TOK-005`'s: deterministic,
+    /// seeded, and the same one a configured coverage would have used. A sampled pass that finds
+    /// nothing has checked a sample, not the table.
+    #[arg(long, value_name = "PERCENT")]
+    pub sample: Option<u8>,
+
+    /// Compare existence only, not values (`VAL-015`).
+    ///
+    /// Sugar for `validate.keys_only`. Much faster on a wide table, and structurally incapable of
+    /// reporting a mismatch — a pass here means "the rows arrived", never "the rows are right".
+    #[arg(long)]
+    pub keys_only: bool,
 }
 
 /// `cdm runs …`
@@ -346,7 +374,7 @@ mod tests {
         let Command::Validate(args) = cli.command else {
             panic!("expected validate")
         };
-        assert_eq!(args.config.conf.len(), 2);
+        assert_eq!(args.job.config.conf.len(), 2);
     }
 
     #[test]
@@ -380,5 +408,39 @@ mod tests {
             Tier::Semantic,
             "the default must not silently require credentials"
         );
+    }
+
+    #[test]
+    fn val_015_sample_and_keys_only_are_validate_flags_and_nothing_elses() {
+        let cli = Cli::try_parse_from(["cdm", "validate", "--sample", "5", "--keys-only"]).unwrap();
+        let Command::Validate(args) = cli.command else {
+            panic!("expected validate")
+        };
+        assert_eq!(args.sample, Some(5));
+        assert!(args.keys_only);
+
+        // A migration that quietly moved a twentieth of the data is the failure this prevents.
+        assert!(Cli::try_parse_from(["cdm", "migrate", "--sample", "5"]).is_err());
+        assert!(Cli::try_parse_from(["cdm", "migrate", "--keys-only"]).is_err());
+    }
+
+    #[test]
+    fn cli_001_validate_still_takes_every_shared_job_argument() {
+        // The flags moved behind a `flatten`; an operator's existing invocation must not notice.
+        let cli = Cli::try_parse_from([
+            "cdm",
+            "validate",
+            "--config",
+            "cdm.toml",
+            "--dry-run",
+            "--summary-out",
+            "run.json",
+        ])
+        .unwrap();
+        let Command::Validate(args) = cli.command else {
+            panic!("expected validate")
+        };
+        assert!(args.job.dry_run);
+        assert_eq!(args.job.summary_out, Some(PathBuf::from("run.json")));
     }
 }

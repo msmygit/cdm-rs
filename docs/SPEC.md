@@ -1243,6 +1243,16 @@ cdm-rs (`PLG-001`).
 **CDC-031 [N]** — `cdm codecs list` MUST print all registered codecs and the type pairs they serve;
 `GET /v1/codecs` MUST return the same.
 
+The catalogue is what may be *asked for*, not what one registry can hold at once, and the two are
+not the same set. `TIMESTAMP_STRING_MILLIS` and `TIMESTAMP_STRING_FORMAT` both claim
+`timestamp → text`, so `PLG-010` refuses a registry containing both — correctly, since a run with
+both enabled has no defined answer for a timestamp column. Both MUST nonetheless be listed: an
+operator choosing between them has to be able to see that both exist, and a codec missing from the
+catalogue reads as "cdm-rs cannot do that conversion" rather than "not that one and this one
+together". The listing is therefore assembled from more than one registry, and no `(codec, from,
+to)` triple may appear twice — `BIGINT_BIGINTEGER` is registered unconditionally (`CDC-020`) and so
+occurs in every pass.
+
 **CDC-032 [N]** — Every codec MUST have a round-trip property test (`TST-031`).
 
 ---
@@ -1547,6 +1557,23 @@ command.
 **CLI-006 [N]** — `cdm config init` MUST run an interactive wizard (skippable with `--non-interactive`)
 that connects, introspects the schema, and produces a tuned config with explanatory comments —
 the CLI counterpart of the Config Builder UI.
+
+The generated file MUST NOT contain a credential. `Secret` serialises as `***` unconditionally
+(`SEC-001`), so the passwords in the output are placeholders and the command MUST say so in its
+report, pointing at the `env:`/`file:`/`exec:` indirection of `CFG-012` as the way to supply them.
+A generated configuration is a file people commit; one that carried a real password by default
+would be a worse defect than one that is incomplete.
+
+"Tuned" is bounded by what can be *observed*. The two tables, the contact points that worked and
+the local datacenter are observed and are filled in. `perfops.num_parts` is not: its honest input is
+the table's on-disk size, which the command cannot see, so it MUST be left at its default with a
+note saying what to divide rather than guessed. A generated number the operator would trust and that
+was wrong is worse than an absent one.
+
+Prompts MUST be written to stderr, so that `cdm config init > cdm.toml` produces a clean file while
+the questions are being asked, and end-of-input MUST be treated as accepting the remaining defaults
+rather than as an error — a wizard that hangs or fails on a redirected stdin is unusable from CI,
+which is the same path `--non-interactive` serves.
 
 **CLI-007 [N]** — Shell completions for bash/zsh/fish/powershell MUST be generated, plus a man page.
 

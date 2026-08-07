@@ -8,16 +8,22 @@
 cdm-rs migrates and validates data between Cassandra-compatible clusters — Apache Cassandra, DSE,
 HCD, Astra DB, ScyllaDB and Azure Cosmos DB Cassandra API — as a single static binary.
 
-> **Status: the engines work; the command line does not yet drive them.**
+> **Status: migrate, validate and plan run from the command line. The service surface does not
+> exist yet.**
 >
-> Migrate, validate and guardrail are implemented, unit tested and exercised against real
-> Cassandra nodes in CI — as libraries. The `cdm` binary still answers `cdm migrate` with "not yet",
-> because the shared *connect → introspect → plan → run* path that every job command needs has not
-> landed. Configuration, schema introspection, connectivity, token planning, scheduling, run
-> tracking, resume and metrics are all in place beneath it.
+> `cdm migrate`, `cdm validate` and `cdm plan` drive the engines end to end, over the shared
+> *connect → introspect → plan → run* path. So do `cdm config init|validate|explain|diff|convert`,
+> `cdm connect test`, `cdm schema show|diff`, `cdm codecs`, `cdm runs list|show|cancel`,
+> `cdm completions` and `cdm version`.
 >
-> In practical terms: you can depend on the crates today, and you cannot yet run a migration from a
-> terminal. The complete design is in [`docs/SPEC.md`](docs/SPEC.md) and
+> Four commands still answer "not yet", and each says which crate it is waiting on rather than
+> quoting a roadmap number: `cdm guardrail` needs a paged origin reader (the job itself is
+> implemented and tested); `cdm runs resume` needs the scheduler to accept a pre-computed range set;
+> `cdm cluster` needs `cdm-cluster`; and `cdm serve` and `cdm mcp` need the Phase 6 crates
+> `cdm-service`, `cdm-api`, `cdm-ui` and `cdm-mcp`. The terminal UI (`--tui`) is not built either.
+>
+> In practical terms: you can run a migration or a validation from a terminal today, and you cannot
+> yet drive one over HTTP. The complete design is in [`docs/SPEC.md`](docs/SPEC.md) and
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); delivery is tracked PR-by-PR in
 > [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -57,25 +63,51 @@ requirement in [`docs/SPEC.md`](docs/SPEC.md), traced to code and tests in
 
 ## Quick start
 
-Every command below is the intended interface, and the ones that touch a cluster are not wired up
-yet — see the status note above. They are shown now because the flags, property names and exit
-codes are already fixed by [`docs/SPEC.md`](docs/SPEC.md) and will not change when the wiring
-lands.
+Everything down to `cdm runs list` works today. The two commands after it are the intended
+interface and still answer "not yet"; they are shown because the flags, property names and exit
+codes are already fixed by [`docs/SPEC.md`](docs/SPEC.md) and will not change when the wiring lands.
+
+Any property can be set on the command line with `--set <canonical.name>=<value>`, or with Java's
+own spelling via `--conf spark.cdm.<name>=<value>`; `cdm config explain <name>` says where a value
+came from.
 
 ```bash
-# Generate a tuned configuration by introspecting your schema
-cdm config init --origin-host origin.example.com \
-                --target-host target.example.com \
-                --keyspace-table ks.tbl -o cdm.toml
+# Generate a tuned configuration by introspecting your schema. Passwords come out as `***` —
+# a generated file must never carry a credential — so supply them with an indirection.
+cdm config init --set connect.origin.host=origin.example.com \
+                --set connect.target.host=target.example.com \
+                --set schema.origin.keyspace_table=ks.tbl \
+                --non-interactive -o cdm.toml
+
+# Check the configuration without touching a cluster, then check it against the live schema
+cdm config validate --config cdm.toml
+
+# Confirm both sides are reachable, and see what was actually negotiated
+cdm connect test --config cdm.toml --side both
+
+# See how the two schemas line up, with the per-column conversion plan
+cdm schema diff --config cdm.toml
 
 # See exactly what would happen — no data touched
 cdm plan --config cdm.toml
 
-# Migrate, with a live terminal UI
-cdm migrate --config cdm.toml --tui
+# Migrate, writing a machine-readable run summary at the end
+cdm migrate --config cdm.toml --summary-out run.json
 
-# Validate and auto-correct
-cdm validate --config cdm.toml --autocorrect-missing --autocorrect-mismatch
+# A fast pre-flight: compare 5% of each token range, existence only
+cdm validate --config cdm.toml --sample 5 --keys-only
+
+# Validate in full and auto-correct, with a machine-readable discrepancy report
+cdm validate --config cdm.toml \
+             --set autocorrect.missing=true \
+             --set autocorrect.mismatch=true \
+             --set validate.report.format=ndjson \
+             --summary-out run.json
+
+# What has run against this table, and what did not finish?
+cdm runs list --config cdm.toml
+
+# --- not yet wired; see the status note above ---
 
 # Resume whatever did not finish
 cdm runs resume --config cdm.toml --auto

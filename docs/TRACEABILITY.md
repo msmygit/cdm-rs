@@ -99,7 +99,7 @@ test, fails CI.
 | `CFG-020` <sup>P+</sup> | Validation runs in three escalating tiers — syntactic, semantic (cross-field), schema-bound — each independently invocable | `cdm-config` | `cfg_020_*` | #4, #5, #6 |
 | `CFG-021` <sup>N</sup> | All three tiers MUST run *before* any data is read or written, and MUST report **every** violation at once (not fail-fast),… | `cdm-config` | `cfg_021_*` | #4, #5, #6 |
 | `CFG-022` <sup>P</sup> | `spark.cdm.schema.origin.keyspaceTable` (canonical `schema.origin.keyspace_table`) is the only unconditionally required property | `cdm-config` | `cfg_022_*` | #4, #5, #6 |
-| `CFG-023` <sup>P</sup> | If the target keyspace/table is unset it MUST default to the origin keyspace/table | `cdm-config` | `cfg_023_*` | #4, #5, #6 |
+| `CFG-023` <sup>P</sup> | If the target keyspace/table is unset it MUST default to the origin keyspace/table | `cdm-config` | `cfg_023_*` | #4, #5, #6, #21b |
 | `CFG-024` <sup>P</sup> | An origin connection MUST specify either a host or a secure-connect-bundle; likewise for target | `cdm-config` | `cfg_024_*` | #4, #5, #6 |
 | `CFG-025` <sup>P</sup> | When TLS is enabled on a side and no SCB is configured, all of `trustStore.path`, `trustStore.password`, `trustStore.type`,… | `cdm-config` | `cfg_025_*` | #4, #5, #6 |
 | `CFG-026` <sup>P</sup> | Empty username or password on either side MUST emit a warning, not an error | `cdm-config` | `cfg_026_*` | #4, #5, #6 |
@@ -144,7 +144,7 @@ test, fails CI.
 | `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*`, `astra_it` | #7, #8, #9, #41 |
 | `CON-006` <sup>P</sup> | Truststores/keystores MUST be readable in `JKS`, `PKCS12` and `PEM` formats | `cdm-cql` | `con_006_*` | #7, #8, #9 |
 | `CON-007` <sup>P</sup> | `tls.cipher_suites` MUST be honoured | `cdm-cql` | `con_007_*` | #7, #8, #9 |
-| `CON-008` <sup>N</sup> | `cdm connect test --side origin\|target\|both` MUST perform a full connect, report negotiated protocol version, TLS version… | `cdm-cql` | `con_008_*` | #10 |
+| `CON-008` <sup>N</sup> | `cdm connect test --side origin\|target\|both` MUST perform a full connect, report negotiated protocol version, TLS version… | `cdm-cql`, `cdm-cli::commands::connect` | `con_008_*` | #10, #21b |
 | `CON-009` <sup>N</sup> | Connections MUST use a token-aware, DC-aware, latency-aware load-balancing policy by default, with… | `cdm-cql` | `con_009_*` | #7, #8, #9 |
 | `CON-010` <sup>N</sup> | Speculative execution MUST be configurable per side and disabled by default for target writes | `cdm-cql` | `con_010_*` | #7, #8, #9 |
 | `CON-011` <sup>P+</sup> | Retry policy: idempotent reads retry on timeout/unavailable up to `perfops.retry.max_attempts` with exponential backoff and jitter; writes are idempotent only for non-counter tables | `cdm-cql::connect::policy`, `cdm-cql::exec` | `con_011_*` | #7, #22 |
@@ -159,7 +159,7 @@ test, fails CI.
 | `CON-026` <sup>N</sup> | Fallback strategy: single-endpoint mTLS using the host from `config.json` and the port from `cqlshrc` | `cdm-cql` | `con_026_*`, `astra_it` | #7, #8, #9, #41 |
 | `CON-027` <sup>N</sup> | The fallback warns prominently that token-aware routing is lost | `cdm-cql` | `con_027_*` | #7, #8, #9 |
 | `CON-028` <sup>N</sup> | Accept both Astra auth spellings, and detect an `AstraCS:` token supplied as the username | `cdm-cql` | `con_028_*` | #7, #8, #9 |
-| `CON-029` <sup>N</sup> | `cdm connect test` reports strategy, metadata URL, proxy address, local DC, host-id count and TLS parameters | `cdm-cql` | `con_029_*`, `astra_it` | #10, #41 |
+| `CON-029` <sup>N</sup> | `cdm connect test` reports strategy, metadata URL, proxy address, local DC, host-id count and TLS parameters | `cdm-cql`, `cdm-cli::commands::connect` | `con_029_*`, `astra_it` | #10, #41, #21b |
 
 ### SCH
 
@@ -172,7 +172,7 @@ test, fails CI.
 | `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql::statement::upsert` | `sch_005_*` | #18, #22 |
 | `SCH-006` <sup>P</sup> | The target primary key MUST be derivable from: mapped origin columns, constant columns, and explode-map key/value columns | `cdm-cql::statement::mapping` | `sch_006_*` | #18 |
 | `SCH-007` <sup>P</sup> | Virtual projection columns `TTL(col)` and `WRITETIME(col)` MUST be appendable to the origin select and addressable by index | `cdm-cql::statement::projection` | `sch_007_*` | #18 |
-| `SCH-008` <sup>N</sup> | `cdm schema diff` MUST print a side-by-side origin/target schema comparison with per-column mapping, conversion plan… | `cdm-cql` | `sch_008_*` | #10 |
+| `SCH-008` <sup>N</sup> | `cdm schema diff` MUST print a side-by-side origin/target schema comparison with per-column mapping, conversion plan… | `cdm-cql`, `cdm-cli::commands::schema` | `sch_008_*` | #10, #21b |
 | `SCH-009` <sup>N</sup> | Schema changes detected mid-run (via driver schema-agreement events) MUST abort the run with a distinct error kind rather than producing partial writes | `cdm-cql::exec::watch`, `cdm-core::error` | `sch_009_*` | #21 |
 | `SCH-010` <sup>P</sup> | Materialized views MUST be rejected as a target with a clear message | `cdm-cql` | `sch_010_*` | #7, #8, #9 |
 
@@ -250,9 +250,9 @@ test, fails CI.
 | `VAL-010` <sup>P</sup> | Validation MUST never delete data from the target | `cdm-engine::jobs::validate` | `val_010_*` | #23 |
 | `VAL-011` <sup>P</sup> | With `feature.extract_json` active and `overwrite = false`, an already-populated target extract column MUST be skipped rather… | `cdm-engine::jobs::validate` | `val_011_*` | #23 |
 | `VAL-012` <sup>P</sup> | The diff logger MUST write to a dedicated sink (`logging.diff_file`, default `cdm_logs/cdm_diff.log`) at ERROR level, separate… | `cdm-engine::jobs::validate` | `val_012_*` | #23 |
-| `VAL-013` <sup>N</sup> | A machine-readable discrepancy report, one record per discrepancy carrying the run, token range, primary key, kind and per-column values, in `json`, `ndjson` or `csv` (`parquet` deliberately not offered; see `SPEC.md`), with values hashed unless `validate.report.redact_values` is turned off | `cdm-engine::jobs::validate` (`report`) | `val_013_*` | #40 |
+| `VAL-013` <sup>N</sup> | A machine-readable discrepancy report, one record per discrepancy carrying the run, token range, primary key, kind and per-column values, in `json`, `ndjson` or `csv` (`parquet` deliberately not offered; see `SPEC.md`), with values hashed unless `validate.report.redact_values` is turned off | `cdm-engine::jobs::validate` (`report`) | `val_013_*` | #40, #21b |
 | `VAL-014` <sup>N</sup> | `GET /v1/runs/{id}/discrepancies` MUST page over that report | `cdm-engine::jobs::validate` | `val_014_*` | #40 |
-| `VAL-015` <sup>N</sup> | `--sample <percent>` is sugar for `filter.token_coverage_percent`, so `TOK-005` does the sampling; `--keys-only` (`validate.keys_only`) compares existence only and structurally cannot report a mismatch | `cdm-engine::jobs::validate` (`sample_percent`, `ComparisonPlan::with_keys_only`) | `val_015_*` | #40 |
+| `VAL-015` <sup>N</sup> | `--sample <percent>` is sugar for `filter.token_coverage_percent`, so `TOK-005` does the sampling; `--keys-only` (`validate.keys_only`) compares existence only and structurally cannot report a mismatch | `cdm-engine::jobs::validate` (`sample_percent`, `ComparisonPlan::with_keys_only`) | `val_015_*` | #40, #21b |
 | `VAL-016` <sup>P</sup> | Run status resolution: any discrepancy with `MISSING == CORRECTED_MISSING && MISMATCH == CORRECTED_MISMATCH` →… | `cdm-engine::jobs::validate` | `val_016_*` | #23 |
 | `VAL-017` <sup>P+</sup> | The diff log MUST NOT contain row values: every value position renders `<redacted>`, and a discrepancy is identified by its… | `cdm-engine::jobs::validate` | `val_017_*` | #23 |
 
@@ -320,7 +320,7 @@ test, fails CI.
 | `CDC-021` <sup>P</sup> | An empty `timestamp_format`, or an unparseable timezone, MUST be a Tier-1 configuration error | `cdm-codec` | `cdc_021_*` | #11, #12, #13, #14 |
 | `CDC-022` <sup>P</sup> | Java `SimpleDateFormat`/`DateTimeFormatter` patterns (e.g | `cdm-codec` | `cdc_022_*` | #11, #12, #13, #14 |
 | `CDC-030` <sup>N</sup> | Codecs MUST be pluggable: `CodecPlugin` registers `(from_type, to_type) → Converter` pairs into the registry, and third-party… | `cdm-codec` | `cdc_030_*` | #11, #12, #13, #14 |
-| `CDC-031` <sup>N</sup> | `cdm codecs list` MUST print all registered codecs and the type pairs they serve; `GET /v1/codecs` MUST return the same | `cdm-codec` | `cdc_031_*` | #11, #12, #13, #14 |
+| `CDC-031` <sup>N</sup> | `cdm codecs list` MUST print all registered codecs and the type pairs they serve; `GET /v1/codecs` MUST return the same | `cdm-codec`, `cdm-cli::commands::codecs` | `cdc_031_*` | #11, #12, #13, #14, #21b |
 | `CDC-032` <sup>N</sup> | Every codec MUST have a round-trip property test (`TST-031`) | `cdm-codec` | `cdc_032_*` | #11, #12, #13, #14 |
 
 ### TRK
@@ -342,7 +342,7 @@ test, fails CI.
 | `TRK-031` <sup>P</sup> | Resuming from a previous run MUST re-plan only ranges whose status is in `{NOT_STARTED, STARTED, FAIL, DIFF}`, shuffled | `cdm-track::resume` | `trk_031_*` | #25 |
 | `TRK-032` <sup>P</sup> | If the previous run's info row is missing or `NOT_STARTED`, resumption MUST fall back to a fresh full plan (Java's… | `cdm-track::resume` | `trk_032_*` | #25 |
 | `TRK-033` <sup>P</sup> | `track_run.rerun_multiplier > 1` MUST subdivide each pending range into that many sub-ranges at 100% coverage, to break up… | `cdm-track::resume`, `cdm-engine::planner` | `trk_033_*` | #17, #25 |
-| `TRK-034` <sup>N</sup> | `cdm runs list\|show\|resume\|cancel` MUST provide first-class run management, and `GET /v1/runs`, `GET /v1/runs/{id}` the API… — the operations live in `cdm-track::manage`; the CLI and REST renderings wire in with their own crates | `cdm-track::manage` | `trk_034_*` | #25 |
+| `TRK-034` <sup>N</sup> | `cdm runs list\|show\|resume\|cancel` MUST provide first-class run management, and `GET /v1/runs`, `GET /v1/runs/{id}` the API… — the operations live in `cdm-track::manage`; the CLI and REST renderings wire in with their own crates | `cdm-track::manage`, `cdm-cli::commands::runs` | `trk_034_*` | #25, #21b |
 | `TRK-035` <sup>N</sup> | Tracking writes MUST be batched and asynchronous with a bounded queue, so tracking never becomes the throughput bottleneck; on… | `cdm-track::tracker` | `trk_035_*` | #25 |
 | `TRK-036` <sup>N</sup> | Tracking MUST be storable in a pluggable backend (`TrackingStore` trait): the Cassandra target keyspace (default,… — all three backends are delivered; only the Cassandra one is Java-readable or usable under `cluster.enabled` | `cdm-track::store` | `trk_036_*` | #25 |
 | `TRK-037` <sup>N</sup> | A tracking write carrying no aggregate metrics string MUST leave the stored one intact, and every `TrackingStore` MUST agree; on Cassandra that means binding `UNSET`, not `NULL` | `cdm-track::store` | `trk_037_*` | #25 |
@@ -382,18 +382,18 @@ test, fails CI.
 | `MET-030` <sup>N</sup> | A structured event stream — `RunStarted`, `RangeStarted`, `RangeCompleted`, `Discrepancy`, `Warning`, `Error`, `RunCompleted` — on a bounded broadcast bus, serialisable as NDJSON to standard output or a file | `cdm-metrics` (`event`) | `met_030_*` | #38 |
 | `MET-031` <sup>N</sup> | An interactive terminal UI (`cdm migrate --tui`) MUST show live throughput, progress bar, ETA, per-node status in cluster… | `cdm-metrics` | `met_031_*` | #39 |
 | `MET-032` <sup>N</sup> | All logs are `tracing`-based, `logging.format = json` produces one structured record per event carrying the `ENG-011` span fields, and neither secrets nor row values are logged by default | `cdm-metrics` (`logging`) | `met_032_*` | #38 |
-| `MET-033` <sup>N</sup> | A run summary writable to a file (`--summary-out report.json`) carrying the config hash, the plan, every counter, timings, the per-node breakdown and a discrepancy summary pointing at the `VAL-013` report; assembled from a finished run by `RunReport::summary` | `cdm-metrics` (`summary`) | `met_033_*` | #40 |
+| `MET-033` <sup>N</sup> | A run summary writable to a file (`--summary-out report.json`) carrying the config hash, the plan, every counter, timings, the per-node breakdown and a discrepancy summary pointing at the `VAL-013` report; assembled from a finished run by `RunReport::summary` | `cdm-metrics` (`summary`) | `met_033_*` | #40, #21b |
 
 ### CLI
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CLI-001` <sup>N</sup> | The `cdm` binary and its subcommand tree | `cdm-cli` | `cli_001_*` | #10 |
+| `CLI-001` <sup>N</sup> | The `cdm` binary and its subcommand tree | `cdm-cli` | `cli_001_*` | #10, #21b |
 | `CLI-002` <sup>P</sup> | Java invocation shapes are accepted on every job subcommand, including a properties file and Spark-style conf overrides | `cdm-cli` | `cli_002_*` | #10 |
 | `CLI-003` <sup>N</sup> | `cdm config convert` translates a Java properties file to canonical TOML, annotating what it found | `cdm-cli` | `cli_003_*` | #10 |
-| `CLI-004` <sup>N</sup> | Exit codes are meaningful and documented: success, completed-with-findings, config, connect, interrupted, internal | `cdm-cli::exit` | `cli_004_*` | #10 |
-| `CLI-005` <sup>N</sup> | `--output json` renders every non-streaming command as one machine-readable document | `cdm-cli::output` | `cli_005_*` | #10 |
-| `CLI-006` <sup>N</sup> | `cdm config init` MUST run an interactive wizard (skippable with `--non-interactive`) that connects, introspects the schema,… | `cdm-cli` | `cli_006_*` | #10 |
+| `CLI-004` <sup>N</sup> | Exit codes are meaningful and documented: success, completed-with-findings, config, connect, interrupted, internal | `cdm-cli::exit` | `cli_004_*` | #10, #21b |
+| `CLI-005` <sup>N</sup> | `--output json` renders every non-streaming command as one machine-readable document | `cdm-cli::output` | `cli_005_*` | #10, #21b |
+| `CLI-006` <sup>N</sup> | `cdm config init` MUST run an interactive wizard (skippable with `--non-interactive`) that connects, introspects the schema,… | `cdm-cli` | `cli_006_*` | #10, #21b |
 | `CLI-007` <sup>N</sup> | Shell completions are generated for bash, zsh, fish and powershell | `cdm-cli` | `cli_007_*` | #10 |
 
 ### API

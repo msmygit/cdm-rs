@@ -133,14 +133,98 @@ fn cfg_020_tier_three_refuses_rather_than_silently_running_fewer_checks() {
 }
 
 #[test]
-fn cli_004_unimplemented_commands_name_the_pull_request() {
-    // "not implemented" leaves an evaluator unable to tell a gap from an oversight.
-    for (args, pr) in [(vec!["cdm", "serve"], "#42"), (vec!["cdm", "mcp"], "#45")] {
+fn cli_004_unimplemented_commands_name_what_is_missing() {
+    // "not implemented" leaves an evaluator unable to tell a gap from an oversight. A pull-request
+    // number was the first attempt and it aged badly: it makes the reader go and look the number
+    // up, and it becomes a lie the moment the roadmap is renumbered. Naming the missing crate
+    // answers the question in the message.
+    for (args, crate_name) in [
+        (vec!["cdm", "serve"], "cdm-api"),
+        (vec!["cdm", "mcp"], "cdm-mcp"),
+        (vec!["cdm", "cluster"], "cdm-cluster"),
+    ] {
         let error = run_err(&args);
+        let message = error.message();
         assert!(
-            error.message().contains(pr),
-            "{args:?} should name {pr}: {}",
-            error.message()
+            message.contains(crate_name),
+            "{args:?} should say that {crate_name} is what is missing: {message}"
+        );
+        assert!(
+            !message.contains("PR #"),
+            "a roadmap number is not an explanation: {message}"
+        );
+    }
+}
+
+#[test]
+fn cdc_031_the_codec_catalogue_needs_no_cluster() {
+    // The question "will cdm-rs convert my `text` column into a `timestamp`?" is asked *before*
+    // there is a configuration, let alone a cluster. A command that demanded either would not be
+    // usable at the moment it is needed.
+    let (exit, text) = run(&["cdm", "codecs"]);
+    assert_eq!(exit, Exit::Success);
+    assert!(text.contains("TIMESTAMP_STRING_MILLIS"), "{text}");
+    assert!(text.contains("->"), "the type pairs are the point: {text}");
+}
+
+#[test]
+fn cli_005_the_codec_catalogue_is_machine_readable() {
+    let (exit, text) = run(&["cdm", "--output", "json", "codecs"]);
+    assert_eq!(exit, Exit::Success);
+
+    let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+    let conversions = value["conversions"].as_array().expect("an array");
+    assert!(!conversions.is_empty());
+    for conversion in conversions {
+        assert!(conversion["from"].is_string(), "{conversion}");
+        assert!(conversion["to"].is_string(), "{conversion}");
+    }
+}
+
+#[test]
+fn trk_034_runs_resume_says_which_half_of_it_is_missing() {
+    // `cdm-track` computes the resume work list already; what is absent is the harness's ability
+    // to be handed one. A message that said only "not implemented" would hide the fact that
+    // `cdm runs show` can already answer what is outstanding.
+    let error = run_err(&["cdm", "runs", "resume"]);
+    let message = error.message();
+    assert!(message.contains("cdm runs show"), "{message}");
+}
+
+#[test]
+fn val_015_sample_is_rejected_before_a_session_is_opened() {
+    // `--sample 0` would plan a run that reads nothing and then report everything it did not look
+    // at as fine. It is Tier-1's rule for `filter.token_coverage_percent`, and the flag must not
+    // be able to smuggle past it.
+    let error = run_err(&[
+        "cdm",
+        "validate",
+        "--sample",
+        "0",
+        "--set",
+        "schema.origin.keyspace_table=ks.tbl",
+    ]);
+    let message = error.message();
+    assert!(
+        message.contains("between 1 and 100"),
+        "the diagnostic must state the range: {message}"
+    );
+}
+
+#[test]
+fn val_015_the_two_validate_flags_are_refused_on_the_other_jobs() {
+    // A `cdm migrate --sample 5` that parsed would be a migration that silently moved a twentieth
+    // of the data and reported success. clap refusing the flag is a better answer than a runtime
+    // error nobody reads, and `VAL-015` gives both flags to validate alone.
+    for args in [
+        vec!["cdm", "migrate", "--sample", "5"],
+        vec!["cdm", "migrate", "--keys-only"],
+        vec!["cdm", "guardrail", "--keys-only"],
+        vec!["cdm", "plan", "--sample", "5"],
+    ] {
+        assert!(
+            Cli::try_parse_from(&args).is_err(),
+            "{args:?} must not parse"
         );
     }
 }

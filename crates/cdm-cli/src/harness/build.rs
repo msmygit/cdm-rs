@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use cdm_codec::{CodecRegistry, Codecset, Planner as CodecPlanner, PlannerOptions};
 use cdm_config::EffectiveConfig;
-use cdm_core::{CdmError, ErrorKind, JobKind, Side, TableRef};
+use cdm_core::{CdmError, ErrorKind, JobKind, RunId, Side, TableRef};
 use cdm_cql::exec::{PreparedSetOptions, RunExecutor, TokenWidth};
 use cdm_cql::rows::{CqlRowSink, CqlRowSource};
 use cdm_cql::schema::introspect::fetch_table;
@@ -18,7 +18,9 @@ use cdm_cql::statement::{
     OriginSelectByPk, StatementOptions, StatementSet, TargetSelectByPk, TargetUpsert,
 };
 use cdm_engine::jobs::migrate::{MigrateFeatures, MigrateJob, MigratePlan, MigrateSettings};
-use cdm_engine::jobs::validate::{ComparisonPlan, DiffLog, ValidateJob, ValidateSettings};
+use cdm_engine::jobs::validate::{
+    ComparisonPlan, DiffLog, DiscrepancyReport, ValidateJob, ValidateSettings,
+};
 use cdm_engine::planner::Partitioner;
 use cdm_engine::scheduler::RangeProcessor;
 
@@ -153,6 +155,45 @@ pub trait JobBuilder {
     fn build(&self) -> Result<Arc<dyn RangeProcessor>, CdmError>;
 }
 
+/// A built job, plus the artefacts the harness has to close and report on afterwards.
+///
+/// The discrepancy report is the reason this is a struct rather than a bare processor: `VAL-013`'s
+/// file has to be *finished* when the run ends — a `json` report is an unterminated array until
+/// somebody writes the closing bracket — and `MET-033` wants a pointer to it in the run summary.
+/// Both need a handle that outlives the builder, and reaching back into the job to find one would
+/// mean downcasting a `dyn RangeProcessor`.
+pub struct BuiltJob {
+    /// The processor the scheduler runs.
+    pub processor: Arc<dyn RangeProcessor>,
+    /// The discrepancy report, for a validate run that was asked for one (`VAL-013`).
+    pub discrepancies: Option<Arc<DiscrepancyReport>>,
+}
+
+// `RangeProcessor` is not `Debug` — a job holds prepared statements and live sessions, and there is
+// no useful rendering of those — so the derive cannot apply. Written out rather than dropped
+// because `missing_debug_implementations` is a workspace lint and a public type without `Debug`
+// poisons every struct that contains one.
+impl std::fmt::Debug for BuiltJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltJob")
+            .field(
+                "discrepancies",
+                &self.discrepancies.as_ref().map(|r| r.format()),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl BuiltJob {
+    /// A job with nothing to close: everything but validate.
+    fn bare(processor: Arc<dyn RangeProcessor>) -> Self {
+        Self {
+            processor,
+            discrepancies: None,
+        }
+    }
+}
+
 /// Builds the job for `kind` (`CLI-001`).
 ///
 /// # Errors
@@ -165,9 +206,11 @@ pub(super) async fn job(
     tables: &ResolvedTables,
     config: &EffectiveConfig,
     args: &JobArgs,
-) -> Result<Arc<dyn RangeProcessor>, CdmError> {
+) -> Result<BuiltJob, CdmError> {
     match kind {
-        JobKind::Migrate => migrate(sessions, tables, config, args).await,
+        JobKind::Migrate => migrate(sessions, tables, config, args)
+            .await
+            .map(BuiltJob::bare),
         JobKind::Validate => validate(sessions, tables, config).await,
         // The guardrail job is implemented and tested, but its production row reader is not: the
         // only `OriginRows` that exists reads a range unpaged, which is fine for a test fixture
@@ -223,12 +266,12 @@ async fn migrate(
     Ok(Arc::new(MigrateJob::new(Arc::new(plan))))
 }
 
-/// Builds the validate job (`VAL-001`).
+/// Builds the validate job (`VAL-001`, `VAL-013`, `VAL-015`).
 async fn validate(
     sessions: &Sessions,
     tables: &ResolvedTables,
     config: &EffectiveConfig,
-) -> Result<Arc<dyn RangeProcessor>, CdmError> {
+) -> Result<BuiltJob, CdmError> {
     let target_select = TargetSelectByPk::new(&tables.mapping)?;
     let range_select = OriginRangeSelect::new(
         &tables.origin,
@@ -262,20 +305,41 @@ async fn validate(
     )
     .await?;
 
-    let plan = ComparisonPlan::resolve(&tables.mapping, &codecs, None, false)?;
+    // VAL-015: `--keys-only` arrived here as `validate.keys_only`, because the flag is a spelling
+    // of the property and nothing else. A keys-only plan compares existence, so `MISMATCH` is
+    // structurally zero in the run that follows.
+    let plan = ComparisonPlan::resolve(&tables.mapping, &codecs, None, false)?
+        .with_keys_only(config.config().validate.keys_only);
     let mut settings = ValidateSettings::read_only();
     settings.autocorrect = config.config().autocorrect.clone();
     settings.target_is_counter = tables.target.is_counter_table();
 
     let diff_log = DiffLog::open(&config.config().logging.diff_file)?;
 
-    Ok(Arc::new(ValidateJob::new(
+    // VAL-013. Opened before a row is read, because a report that cannot be created must be
+    // discovered now rather than after six hours; `format = none` — the default — creates no file
+    // and touches the filesystem not at all.
+    let reporting = &config.config().validate.report;
+    let report = Arc::new(DiscrepancyReport::open(
+        RunId::from_raw(0),
+        reporting.format,
+        &reporting.path,
+        reporting.redact_values,
+    )?);
+
+    let job = ValidateJob::new(
         Arc::new(source),
         Arc::new(sink),
         Arc::new(plan),
         settings,
         Arc::new(diff_log),
-    )))
+    )
+    .with_report(Arc::clone(&report));
+
+    Ok(BuiltJob {
+        processor: Arc::new(job),
+        discrepancies: report.is_enabled().then_some(report),
+    })
 }
 
 /// The conversion planner, with the configured codecs registered (`CDC-001`).

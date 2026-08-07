@@ -29,11 +29,16 @@ delivered as one PR where splitting them would have merged a knowingly-wrong int
 | #21–#26 | **Delivered.** The three jobs (migrate with counters, validate with autocorrect, guardrail), run tracking with resume and rerun, the error limit and graceful shutdown. |
 | #32–#35, #39–#58 | **Not started.** The SIT parity suite, the property and differential harnesses, `--compat-java`, the terminal UI, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
 
-**The gap between "delivered" and "usable" is the CLI.** Every job command in `cdm-cli` still
-returns "not yet": the jobs are libraries, and the shared *connect → introspect → plan → run* path
-they all need has no roadmap PR of its own. It was assumed into #21–#24 and fell between them,
-because each job could be built and tested against a `RangeProcessor` seam without it. That work is
-tracked as **#21a** below and blocks `cdm migrate`, `cdm validate`, `cdm guardrail` and `cdm plan`.
+**That gap is now closed.** The shared *connect → introspect → plan → run* path had no roadmap PR
+of its own: it was assumed into #21–#24 and fell between them, because each job could be built and
+tested against a `RangeProcessor` seam without it. It is tracked as **#21a** below and has landed,
+along with **#21b**, which wires the remaining commands and the flags that had been parsed and
+ignored. `cdm migrate`, `cdm validate` and `cdm plan` now run; so do `cdm connect test`,
+`cdm schema show|diff`, `cdm codecs`, `cdm config init` and `cdm runs list|show|cancel`.
+
+Four commands still return "not yet", and each is blocked on something nameable rather than on
+wiring: `cdm guardrail` on a paged origin reader, `cdm runs resume` on the scheduler accepting a
+pre-computed range set, `cdm cluster` on #50, and `cdm serve` and `cdm mcp` on #41–#45.
 
 ---
 
@@ -82,7 +87,8 @@ tracked as **#21a** below and blocks `cdm migrate`, `cdm validate`, `cdm guardra
 | #24 | `feat(engine): guardrail job` | `GRD-001`..`GRD-004` |
 | #25 | `feat(track): run tracking, resume and rerun` | `TRK-001`..`TRK-003`, `TRK-010`, `TRK-012`, `TRK-020`..`TRK-036` |
 | #26 | `feat(engine): error limit and graceful shutdown` | `ENG-009`, `ENG-010`, `ENG-014` |
-| #21a | `feat(cli): the shared job harness — connect, introspect, plan, run` | `CLI-001`, `CON-008`, `SCH-001`, `SCH-008`, `TOK-001`, `MET-005` (wiring only; no new requirements) — **the one piece standing between the implemented jobs and a usable `cdm` binary.** Turns a validated `CdmConfig` into two sessions, an introspected schema, a conversion plan, a token plan and a scheduler run, then renders the counter block and maps the terminal status onto a `CLI-004` exit code. Wires `cdm migrate`, `cdm validate`, `cdm guardrail`, `cdm plan` and tier-3 `cdm config validate`, all of which currently return "not yet". |
+| #21a | `feat(cli): the shared job harness — connect, introspect, plan, run` | `CLI-001`, `CON-008`, `SCH-001`, `SCH-008`, `TOK-001`, `MET-005` (wiring only; no new requirements) — **the one piece standing between the implemented jobs and a usable `cdm` binary.** Turns a validated `CdmConfig` into two sessions, an introspected schema, a conversion plan, a token plan and a scheduler run, then renders the counter block and maps the terminal status onto a `CLI-004` exit code. Wires `cdm migrate`, `cdm validate` and `cdm plan`. `cdm guardrail` is left blocked on a paged origin reader, and tier-3 `cdm config validate` on a caller for the session the harness now opens. |
+| #21b | `feat(cli): the discrepancy-report flags and the remaining commands` | `CLI-001`, `CLI-004`..`CLI-006`, `CFG-023`, `CON-008`, `CON-029`, `SCH-008`, `CDC-031`, `TRK-034`, `VAL-013`, `VAL-015`, `MET-033` (wiring only; no new requirements). Makes `--summary-out` write the `MET-033` document with the `CFG-023` hash and the `VAL-013` report pointer, and adds `--sample` and `--keys-only` as the configuration sugar `VAL-015` specifies. Implements `cdm connect test`, `cdm schema show\|diff`, `cdm codecs`, `cdm config init` and `cdm runs list\|show\|cancel`. `cdm runs resume`, `cdm cluster`, `cdm serve` and `cdm mcp` stay stubs, each naming the crate it waits on. |
 
 ## Phase 4 — Features and parity certification
 

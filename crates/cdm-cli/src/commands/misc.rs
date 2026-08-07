@@ -40,11 +40,14 @@ pub fn version() -> VersionReport {
 
 /// An operation that is specified but not yet built.
 ///
-/// Naming the pull request is deliberate. A bare "not implemented" leaves someone evaluating
-/// cdm-rs unable to tell a gap from an oversight, and the roadmap is public.
-pub fn not_yet(what: &str, pr: &str) -> CdmError {
+/// `missing` names **what is absent and where it will come from**, not a pull-request number. The
+/// number was the first attempt and it aged badly: an evaluator reading "delivered by PR #12" has
+/// to go and find PR #12 to learn whether the gap is a missing crate, a missing driver feature or
+/// an afternoon's wiring, and a renumbered roadmap makes the message a lie. Saying "the control
+/// plane lives in `cdm-service`, which is not built" answers the question in the message.
+pub fn not_yet(what: &str, missing: &str) -> CdmError {
     CdmError::new(
         ErrorKind::Internal,
-        format!("`{what}` is delivered by PR {pr}; see docs/ROADMAP.md"),
+        format!("`{what}` is specified but not yet available: {missing}. See docs/ROADMAP.md."),
     )
 }
