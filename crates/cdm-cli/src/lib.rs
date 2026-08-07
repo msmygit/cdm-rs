@@ -17,12 +17,14 @@
 pub mod cli;
 pub mod commands;
 pub mod exit;
+pub mod harness;
 pub mod loader;
 pub mod output;
 
 use std::io::Write;
 
 use cdm_core::CdmError;
+use cdm_core::JobKind;
 use clap::{CommandFactory, Parser};
 
 use crate::cli::{Cli, Command, ConfigCommand};
@@ -67,10 +69,13 @@ pub fn run(cli: &Cli, out: &mut dyn Write) -> Result<Exit, CdmError> {
         }
 
         // Specified, scheduled, not yet built. Each names the pull request that delivers it.
-        Command::Migrate(_) => Err(commands::misc::not_yet("cdm migrate", "#21")),
-        Command::Validate(_) => Err(commands::misc::not_yet("cdm validate", "#23")),
-        Command::Guardrail(_) => Err(commands::misc::not_yet("cdm guardrail", "#24")),
-        Command::Plan(_) => Err(commands::misc::not_yet("cdm plan", "#17 (CLI wiring)")),
+        Command::Migrate(args) => run_job(cli, args, JobKind::Migrate, out),
+        Command::Validate(args) => run_job(cli, args, JobKind::Validate, out),
+        Command::Guardrail(args) => run_job(cli, args, JobKind::Guardrail, out),
+        Command::Plan(args) => {
+            let report = harness::plan(args)?;
+            finish(&report, cli, out)
+        }
         Command::Runs { .. } => Err(commands::misc::not_yet("cdm runs", "#25")),
         Command::Schema { .. } => Err(commands::misc::not_yet("cdm schema", "#9")),
         Command::Connect { .. } => Err(commands::misc::not_yet("cdm connect", "#7")),
@@ -79,6 +84,41 @@ pub fn run(cli: &Cli, out: &mut dyn Write) -> Result<Exit, CdmError> {
         Command::Serve(_) => Err(commands::misc::not_yet("cdm serve", "#42")),
         Command::Mcp => Err(commands::misc::not_yet("cdm mcp", "#45")),
     }
+}
+
+/// Runs one of the three jobs through the shared harness (`CLI-001`, `CLI-004`).
+fn run_job(
+    cli: &Cli,
+    args: &crate::cli::JobArgs,
+    kind: JobKind,
+    out: &mut dyn Write,
+) -> Result<Exit, CdmError> {
+    let summary = harness::execute(args, kind)?;
+
+    // A summary is written before the exit code is decided, so a run that ends badly still
+    // reports what it did. Java prints its counter block and then throws; the numbers an operator
+    // needs are exactly the ones an early return would swallow.
+    if let Some(path) = &args.summary_out {
+        let json = serde_json::to_string_pretty(&summary).map_err(|error| {
+            CdmError::new(
+                cdm_core::ErrorKind::Internal,
+                format!("cannot render the run summary: {error}"),
+            )
+        })?;
+        std::fs::write(path, json).map_err(|error| {
+            CdmError::new(
+                cdm_core::ErrorKind::Internal,
+                format!("cannot write {}: {error}", path.display()),
+            )
+        })?;
+    }
+
+    // `finish` maps findings onto `Completed`, which is right for a validate discrepancy and
+    // wrong for an interruption: `CLI-004` reserves `4` for the one outcome a supervisor may
+    // retry unchanged.
+    let exit = summary.exit();
+    finish(&summary, cli, out)?;
+    Ok(exit)
 }
 
 fn run_config(cli: &Cli, command: &ConfigCommand, out: &mut dyn Write) -> Result<Exit, CdmError> {

@@ -17,14 +17,26 @@ workspace = true
 name = "cdm"
 path = "src/main.rs"
 
+# The CLI is the first caller that assembles a whole run, so it takes an edge to every layer the
+# run passes through: `cdm-cql` for the sessions and statements, `cdm-codec` for the conversion
+# plan, `cdm-engine` for the planner, scheduler and jobs, `cdm-feature` for the guardrail, and
+# `cdm-metrics` for the counter block. `ARCHITECTURE.md` §3 has all five edges; none of them is
+# `scylla`, which stays behind `cdm-cql`.
 [dependencies]
+cdm-codec.workspace = true
 cdm-config.workspace = true
 cdm-core.workspace = true
+cdm-cql.workspace = true
+cdm-engine.workspace = true
+cdm-feature.workspace = true
+cdm-metrics.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 toml.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
