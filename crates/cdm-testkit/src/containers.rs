@@ -4,13 +4,18 @@
 //! PR #2) lifted into a reusable fixture, because every hard-won detail in it was learned by
 //! watching half the version matrix fail:
 //!
-//! * **A fixed host port, and `broadcast_rpc_address = 127.0.0.1`.** A containerised node
-//!   advertises its Docker bridge address (`172.17.0.x`) in `system.local.rpc_address`. Drivers
-//!   honour that when building their connection pool, so the control connection succeeds on the
-//!   mapped port and every pooled connection is then refused, because the host cannot route to
-//!   the bridge network. Cassandra 3.11 and 4.0 happened to survive it; 4.1 and 5.0 did not.
-//!   Publishing the container port on the *same* host port and telling the node to advertise
-//!   `127.0.0.1` makes the address it reports one the host can actually reach.
+//! * **The host port equals the container port, and `broadcast_rpc_address = 127.0.0.1`.** A
+//!   containerised node advertises its Docker bridge address (`172.17.0.x`) in
+//!   `system.local.rpc_address`. Drivers honour that when building their connection pool, so the
+//!   control connection succeeds on the mapped port and every pooled connection is then refused,
+//!   because the host cannot route to the bridge network. Cassandra 3.11 and 4.0 happened to
+//!   survive it; 4.1 and 5.0 did not. Publishing the container port on the *same* host port and
+//!   telling the node to advertise `127.0.0.1` makes the address it reports one the host can
+//!   actually reach.
+//!
+//!   The two ports must agree; nothing says *which* port. It is chosen per fixture, from the
+//!   ephemeral range, because `9042` is one port and there are many test binaries — see
+//!   [`free_port`] and `TST-103`.
 //! * **`MAX_HEAP_SIZE` and `HEAP_NEWSIZE` are set together, or not at all.** Left alone, every
 //!   image sizes its heap from the machine's RAM and commits it with `-XX:+AlwaysPreTouch` — about
 //!   4 GiB per node on a developer laptop, which is fine for one container and fatal for two: the
@@ -57,8 +62,72 @@ use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-/// The default CQL port, and the one the origin fixture publishes.
+/// The CQL port a fixture uses when a caller pins one explicitly.
+///
+/// **Not** what [`ClusterFixture::start`] uses — see [`free_port`] and `TST-103`. It remains the
+/// default of [`FixtureOptions`] so that a caller who wants the well-known port can ask for it,
+/// and because it is the port a reader expects to see named in this file.
 pub const DEFAULT_NATIVE_PORT: u16 = 9042;
+
+/// A host port nothing is listening on, for a fixture to publish (`TST-103`).
+///
+/// # Why fixtures do not simply use 9042
+///
+/// Because there is more than one of them. Every `*_it.rs` suite is its own test binary, and
+/// while `cargo test` runs binaries one after another and CI adds `--test-threads=1`, container
+/// *teardown* is asynchronous: the previous binary can exit while Docker is still unbinding its
+/// port. The next binary then dies on
+///
+/// ```text
+/// Bind for 0.0.0.0:9042 failed: port is already allocated
+/// ```
+///
+/// which looks like a product failure and is not one. It is also load-dependent, so it appears as
+/// an intermittent red build on whichever suite happens to follow a slow one — and it gets more
+/// likely with every Docker-backed suite added.
+///
+/// # Why this is not simply "bind to port 0"
+///
+/// A Cassandra node advertises `127.0.0.1` and **its own** native port, and the driver honours the
+/// advertised address, so the host port and the container port have to agree — the fixture cannot
+/// let Docker pick a host port and map it. Instead it picks a free one itself and tells the node
+/// to listen on that same port, which [`FixtureOptions::with_native_port`] already supports.
+///
+/// The listener is bound and immediately dropped, so the port is free when the caller uses it.
+/// That leaves a race, which is why [`ClusterFixture::start`] retries on a *new* port.
+///
+/// # Errors
+///
+/// [`ErrorKind::Connect`] if no ephemeral port can be bound at all.
+pub fn free_port() -> Result<u16, CdmError> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| {
+        CdmError::new(
+            ErrorKind::Connect,
+            format!("cannot bind an ephemeral port for a fixture: {e}"),
+        )
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| {
+            CdmError::new(
+                ErrorKind::Connect,
+                format!("cannot read the ephemeral port back: {e}"),
+            )
+        })?
+        .port();
+    drop(listener);
+    Ok(port)
+}
+
+/// Whether a fixture failure was the host port being taken, rather than anything about the node.
+///
+/// Matched on the message because that is all Docker gives us: the daemon reports it as a 500 with
+/// prose. A miss costs a retry that would have succeeded, not a wrong result, so the match is
+/// deliberately broad.
+fn is_port_conflict(error: &CdmError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("port is already allocated") || message.contains("address already in use")
+}
 
 /// Cassandra lines cdm-rs supports, newest last (`TST-002`).
 pub const CASSANDRA_VERSIONS: &[&str] = &["3.11", "4.0", "4.1", "5.0"];
@@ -378,8 +447,39 @@ impl ClusterFixture {
     /// skip, per `TST-102`), or if it never becomes queryable within the readiness timeout. The
     /// latter carries the tail of the container's log, so a CI failure is diagnosable from the
     /// job output alone.
+    ///
+    /// The node is published on a free ephemeral port, not on `9042` (`TST-103`). See
+    /// [`free_port`] for why that matters.
     pub async fn start(engine: &Engine) -> Result<Self, CdmError> {
-        Self::start_with(engine, &FixtureOptions::default()).await
+        Self::start_on_a_free_port(engine, &FixtureOptions::default()).await
+    }
+
+    /// Starts `engine` on a port nothing else is using, retrying if it is taken in between.
+    ///
+    /// `TST-103`. There is an unavoidable gap between choosing a free port and Docker binding it,
+    /// so a conflict is possible however carefully the port is chosen; what makes it a non-issue
+    /// is that a *fresh* port is chosen on each attempt, so a retry does not simply collide again
+    /// the way retrying on `9042` would.
+    async fn start_on_a_free_port(
+        engine: &Engine,
+        options: &FixtureOptions,
+    ) -> Result<Self, CdmError> {
+        const ATTEMPTS: usize = 5;
+        let mut last = None;
+        for _ in 0..ATTEMPTS {
+            let options = options.clone().with_native_port(free_port()?);
+            match Self::start_with(engine, &options).await {
+                Ok(fixture) => return Ok(fixture),
+                Err(error) if is_port_conflict(&error) => last = Some(error),
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            CdmError::new(
+                ErrorKind::Connect,
+                "cannot find a free host port for the fixture",
+            )
+        }))
     }
 
     /// Starts `engine` with explicit options.
@@ -595,16 +695,12 @@ impl OriginTarget {
     ///
     /// As [`ClusterFixture::start`].
     pub async fn start_pair(origin: &Engine, target: &Engine) -> Result<Self, CdmError> {
-        let origin = ClusterFixture::start_with(
-            origin,
-            &FixtureOptions::default().with_native_port(DEFAULT_NATIVE_PORT),
-        )
-        .await?;
-        let target = ClusterFixture::start_with(
-            target,
-            &FixtureOptions::default().with_native_port(Self::TARGET_NATIVE_PORT),
-        )
-        .await?;
+        // TST-103: a free port each, not 9042 and 9043. The two are necessarily distinct because
+        // the origin is still holding its port when the target picks one.
+        let origin =
+            ClusterFixture::start_on_a_free_port(origin, &FixtureOptions::default()).await?;
+        let target =
+            ClusterFixture::start_on_a_free_port(target, &FixtureOptions::default()).await?;
 
         // Starting the second node is the moment the first one is most likely to die: two JVMs
         // that each committed their whole heap is what exhausts a Docker VM. Re-probing turns
@@ -855,6 +951,53 @@ mod tests {
         assert_eq!(CASSANDRA_VERSIONS, ["3.11", "4.0", "4.1", "5.0"]);
         assert_eq!(SCYLLA_VERSIONS, ["6.2"]);
         assert_eq!(ENGINES_ENV, "CDM_IT_ENGINES");
+    }
+
+    #[test]
+    fn tst_103_a_free_port_is_usable_and_is_not_the_well_known_one() {
+        // The bug this guards: every fixture asking for 9042, so any lingering container from the
+        // previous test binary makes the next one fail on a port conflict that has nothing to do
+        // with the code under test.
+        let port = free_port().unwrap();
+        assert!(port > 0, "an ephemeral port was expected, got {port}");
+        assert_ne!(
+            port, DEFAULT_NATIVE_PORT,
+            "an ephemeral port must not be the well-known one"
+        );
+        // And it really is free: binding it again must succeed, because the probe released it.
+        std::net::TcpListener::bind(("127.0.0.1", port))
+            .unwrap_or_else(|e| panic!("port {port} was reported free but cannot be bound: {e}"));
+    }
+
+    #[test]
+    fn tst_103_successive_free_ports_do_not_collide_while_both_are_held() {
+        // OriginTarget starts two nodes, and the second picks its port while the first still holds
+        // its own — which is what stops the pair landing on one port.
+        let first = free_port().unwrap();
+        let held = std::net::TcpListener::bind(("127.0.0.1", first)).unwrap();
+        let second = free_port().unwrap();
+        assert_ne!(first, second, "a held port must not be handed out again");
+        drop(held);
+    }
+
+    #[test]
+    fn tst_103_a_taken_port_is_recognised_so_it_can_be_retried() {
+        // Docker reports this as a 500 with prose, so the message is all there is to match on.
+        let taken = CdmError::new(
+            ErrorKind::Connect,
+            "Docker responded with status code 500: Bind for 0.0.0.0:9042 failed: \
+             port is already allocated",
+        );
+        assert!(is_port_conflict(&taken));
+        assert!(is_port_conflict(&CdmError::new(
+            ErrorKind::Connect,
+            "Address already in use (os error 48)"
+        )));
+        // A real startup failure must not be retried as though it were a port clash.
+        assert!(!is_port_conflict(&CdmError::new(
+            ErrorKind::Connect,
+            "the node never became queryable within the readiness timeout"
+        )));
     }
 
     #[test]
