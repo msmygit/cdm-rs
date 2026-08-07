@@ -573,9 +573,21 @@ mod tests {
 
     #[test]
     fn met_033_an_unwritable_path_is_reported_rather_than_panicking() {
-        let path = Path::new("/dev/null/report.json");
-        let error = full().write_to(path).unwrap_err();
+        // A path whose *parent* is a regular file, which no platform will create a directory
+        // beneath. `/dev/null/report.json` was the obvious spelling and is Unix-only: Windows has
+        // no `/dev/null`, so it reads as an ordinary relative path and the write succeeds.
+        let blocker = std::env::temp_dir().join(format!(
+            "cdm-metrics-blocker-{}-{}",
+            std::process::id(),
+            at().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let path = blocker.join("report.json");
+
+        let error = full().write_to(&path).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::Internal);
         assert!(error.to_string().contains("MET-033"), "{error}");
+
+        std::fs::remove_file(&blocker).ok();
     }
 }
