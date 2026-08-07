@@ -135,11 +135,7 @@ fn cfg_020_tier_three_refuses_rather_than_silently_running_fewer_checks() {
 #[test]
 fn cli_004_unimplemented_commands_name_the_pull_request() {
     // "not implemented" leaves an evaluator unable to tell a gap from an oversight.
-    for (args, pr) in [
-        (vec!["cdm", "migrate"], "#21"),
-        (vec!["cdm", "serve"], "#42"),
-        (vec!["cdm", "mcp"], "#45"),
-    ] {
+    for (args, pr) in [(vec!["cdm", "serve"], "#42"), (vec!["cdm", "mcp"], "#45")] {
         let error = run_err(&args);
         assert!(
             error.message().contains(pr),
@@ -147,6 +143,41 @@ fn cli_004_unimplemented_commands_name_the_pull_request() {
             error.message()
         );
     }
+}
+
+#[test]
+fn cli_001_a_job_command_validates_before_it_connects() {
+    // `cdm migrate` used to answer "not yet" while the migrate engine was finished. It now runs,
+    // which means the first thing it can fail on is the configuration -- and it must fail there
+    // rather than opening a session and discovering the same thing after a TLS handshake.
+    let error = run_err(&["cdm", "migrate"]);
+    let message = error.message();
+
+    assert!(
+        message.contains("schema.origin.keyspace_table"),
+        "the diagnostic must name the property to fix: {message}"
+    );
+    assert!(
+        !message.contains("not yet"),
+        "migrate is implemented; saying otherwise sends an evaluator away: {message}"
+    );
+}
+
+#[test]
+fn cfg_021_a_job_command_reports_every_blocking_problem_at_once() {
+    // One round trip per mistake is the complaint CFG-021 exists to answer, and a job command is
+    // where an operator meets it.
+    let error = run_err(&[
+        "cdm",
+        "validate",
+        "--set",
+        "perfops.consistency.read=NOT_A_LEVEL",
+    ]);
+    let message = error.message();
+    assert!(
+        message.contains("problem(s)"),
+        "the summary must count them: {message}"
+    );
 }
 
 #[test]

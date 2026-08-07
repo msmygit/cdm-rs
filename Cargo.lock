@@ -553,14 +553,19 @@ version = "0.1.0"
 name = "cdm-cli"
 version = "0.1.0"
 dependencies = [
+ "cdm-codec",
  "cdm-config",
  "cdm-core",
+ "cdm-cql",
+ "cdm-engine",
+ "cdm-metrics",
  "clap",
  "clap_complete",
  "pretty_assertions",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "toml",
 ]
 

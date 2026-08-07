@@ -678,20 +678,27 @@ impl RunReport {
     /// The numbers are `cdm-cli`'s `Exit` enum, which is a public contract with whatever runs the
     /// binary, and the distinction they draw is the one a supervisor acts on:
     ///
-    /// | Status | Code | Retry unchanged? |
-    /// |---|---|---|
-    /// | `ENDED` | `0` | nothing to retry |
-    /// | `INTERRUPTED` (`ENG-010`) | `4` | **yes** — the operator stopped it and it is resumable |
-    /// | `ABORTED` (`ENG-009`, `ENG-014`) | `1` | no |
+    /// | Status | Ranges failed | Code | Retry unchanged? |
+    /// |---|---|---|---|
+    /// | `ENDED` | none | `0` | nothing to retry |
+    /// | `ENDED` | some | `1` | no — the same ranges fail again |
+    /// | `INTERRUPTED` (`ENG-010`) | any | `4` | **yes** — the operator stopped it and it is resumable |
+    /// | `ABORTED` (`ENG-009`, `ENG-014`) | any | `1` | no |
     ///
     /// An error-limit abort deliberately does *not* get the retryable code. The run stopped
     /// because the data or the target was failing; running it again unchanged fails again, having
     /// first re-migrated everything up to the limit.
+    ///
+    /// `ENDED` with failed ranges is `1`, not `0`. A run reaches `ENDED` by processing every range
+    /// it claimed, whatever each range *concluded* — so a run in which every single range failed
+    /// and nothing was written still ends `ENDED`. Reporting that as success is the one answer a
+    /// pipeline must never get, and `CLI-004` reserves `1` for exactly it: the command ran, the
+    /// data did not arrive.
     #[must_use]
-    pub const fn exit_code(&self) -> u8 {
+    pub fn exit_code(&self) -> u8 {
         match self.status {
-            RunStatus::Ended => 0,
             RunStatus::Interrupted => 4,
+            RunStatus::Ended if self.ranges_failed() == 0 => 0,
             _ => 1,
         }
     }
