@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cdm_codec::{CodecRegistry, Codecset, Planner, PlannerOptions};
-use cdm_config::model::Autocorrect;
+use cdm_config::model::{Autocorrect, CdmConfig};
+use cdm_config::types::ReportFormat;
 use cdm_core::{
     CdmError, ErrorKind, JobKind, Plugin, PrimaryKey, RawCell, Record, Row, RowSink, RowSource,
     RowStream, RunId, TokenRange,
@@ -29,7 +30,7 @@ use cdm_core::{
 use cdm_cql::schema::{ClusteringOrder, ColumnKind, ColumnMeta, TableSchema};
 use cdm_cql::statement::{ColumnMapping, MappingOptions};
 use cdm_feature::{ExtractJson, FeatureSchema, FilterChain, TableFacts};
-use cdm_metrics::{CounterKind, CounterView, JobCounters};
+use cdm_metrics::{CounterKind, CounterView, EventBus, EventPayload, JobCounters, Redaction};
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -253,6 +254,7 @@ struct Run {
     counters: Arc<JobCounters>,
     diff: Arc<DiffLog>,
     target: Arc<FakeTarget>,
+    report: Arc<DiscrepancyReport>,
 }
 
 impl Run {
@@ -262,6 +264,12 @@ impl Run {
 
     fn diff_lines(&self) -> Vec<String> {
         self.diff.captured()
+    }
+
+    /// The discrepancy report's text, closed as a real run closes it (`VAL-013`).
+    fn report_text(&self) -> String {
+        self.report.finish().unwrap();
+        self.report.captured()
     }
 }
 
@@ -291,15 +299,43 @@ async fn run_full(
     fetch_size: u32,
     filters: FilterChain,
 ) -> Run {
+    run_reporting(
+        origin,
+        target,
+        plan,
+        settings,
+        fetch_size,
+        filters,
+        Arc::new(DiscrepancyReport::disabled()),
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // A test harness, and every argument is one run's setting.
+async fn run_reporting(
+    origin: Arc<FakeOrigin>,
+    target: Arc<FakeTarget>,
+    plan: ComparisonPlan,
+    settings: ValidateSettings,
+    fetch_size: u32,
+    filters: FilterChain,
+    report: Arc<DiscrepancyReport>,
+    events: Option<Arc<EventBus>>,
+) -> Run {
     let diff = Arc::new(DiffLog::in_memory());
-    let job = ValidateJob::new(
+    let mut job = ValidateJob::new(
         origin,
         Arc::clone(&target) as Arc<dyn RowSink>,
         Arc::new(plan),
         settings,
         Arc::clone(&diff),
     )
-    .with_filters(filters);
+    .with_filters(filters)
+    .with_report(Arc::clone(&report));
+    if let Some(events) = events {
+        job = job.with_events(events);
+    }
     let counters = Arc::new(JobCounters::new(JobKind::Validate));
     let ctx = context(&counters, fetch_size);
     let verdict = job.process(&ctx).await;
@@ -308,7 +344,33 @@ async fn run_full(
         counters,
         diff,
         target,
+        report,
     }
+}
+
+/// A run that writes a report of the given shape, over the `id int, data text` fixture.
+async fn run_reported(
+    origin: Vec<Record>,
+    target: Vec<(PrimaryKey, Row)>,
+    format: ReportFormat,
+    redact_values: bool,
+) -> Run {
+    let (src, dst) = simple();
+    run_reporting(
+        FakeOrigin::of(origin),
+        FakeTarget::with(target),
+        plan_for(&src, &dst, &MappingOptions::default()),
+        ValidateSettings::read_only(),
+        1000,
+        FilterChain::new(),
+        Arc::new(DiscrepancyReport::in_memory(
+            RunId::from_raw(7),
+            format,
+            redact_values,
+        )),
+        None,
+    )
+    .await
 }
 
 /// The common case: `id int PRIMARY KEY, data text`, no features, no autocorrect.
@@ -1191,4 +1253,520 @@ async fn eng_008_a_failing_validate_range_reports_an_error_count_java_would_repo
     );
     // The run did not abort: ENG-008 requires a failed range to be isolated, not fatal.
     assert!(report.is_complete());
+}
+
+// ---------------------------------------------------------------------------------------------
+// VAL-013 — the machine-readable discrepancy report, and what it is allowed to contain
+// ---------------------------------------------------------------------------------------------
+
+/// The origin, the target and the one thing that differs between them: a text column holding an
+/// address, which is the sort of value `SEC-002` exists for.
+const SECRET: &str = "alice@example.com";
+
+/// Its hex rendering, which is what a report with redaction off would contain.
+fn secret_hex() -> String {
+    RawCell::new(SECRET.as_bytes().to_vec()).to_string()
+}
+
+/// Row 1 differs (origin holds the secret, target holds something else) and row 2 is missing.
+async fn seeded(format: ReportFormat, redact_values: bool) -> Run {
+    run_reported(
+        vec![record(1, SECRET), record(2, "gone")],
+        vec![(key(1), Row::new(vec![int(1), text("tampered")]))],
+        format,
+        redact_values,
+    )
+    .await
+}
+
+fn parse_ndjson(text: &str) -> Vec<DiscrepancyRecord> {
+    text.lines()
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}")))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_a_record_names_the_run_the_range_the_key_the_kind_and_the_columns() {
+    let run = seeded(ReportFormat::Ndjson, true).await;
+    let mut records = parse_ndjson(&run.report_text());
+    records.sort_by(|a, b| a.key.cmp(&b.key));
+    assert_eq!(records.len(), 2, "one record per discrepancy");
+
+    let mismatch = &records[0];
+    assert_eq!(mismatch.run_id, RunId::from_raw(7));
+    // The range the context was built with, as decimal strings (TOK-002).
+    assert_eq!(mismatch.range.min, "-100");
+    assert_eq!(mismatch.range.max, "100");
+    assert_eq!(mismatch.key, key(1).to_string());
+    assert_eq!(mismatch.kind, DiscrepancyKind::Mismatch);
+    assert_eq!(mismatch.columns.len(), 1);
+    assert_eq!(mismatch.columns[0].column, "data");
+    assert!(mismatch.columns[0].error.is_none());
+
+    // VAL-002: a missing row has no columns, because nothing was compared.
+    let missing = &records[1];
+    assert_eq!(missing.kind, DiscrepancyKind::Missing);
+    assert!(missing.columns.is_empty());
+    assert_eq!(run.count(CounterKind::Valid), 0);
+    assert_eq!(run.report.records(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sec_002_a_report_redacts_row_values_by_default() {
+    // The property the whole feature turns on: a report written with the shipped defaults contains
+    // no row value, in any format. Asserted over the file's *bytes*, not over the record type, so
+    // a future field that carried a value would fail this too.
+    for format in [ReportFormat::Json, ReportFormat::Ndjson, ReportFormat::Csv] {
+        let run = seeded(format, true).await;
+        let text = run.report_text();
+        assert!(run.report.redacts_values());
+        assert!(!text.contains(SECRET), "{format}: a value leaked: {text}");
+        assert!(
+            !text.contains(&secret_hex()),
+            "{format}: a value leaked as hex: {text}"
+        );
+        assert!(
+            !text.contains(&RawCell::new(b"tampered".to_vec()).to_string()),
+            "{format}: the target's value leaked: {text}"
+        );
+        // What it does contain: the key, the column name, and a self-describing digest.
+        assert!(text.contains("data"), "{format}: {text}");
+        assert!(text.contains(REDACTED_PREFIX), "{format}: {text}");
+        assert!(text.contains(&key(1).to_string()), "{format}: {text}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sec_002_the_default_is_redaction_and_nothing_has_to_be_set_to_get_it() {
+    // The default lives in one place — `validate.report.redact_values` — and this is the assertion
+    // that it is the safe one. A future change to it fails here rather than in a customer's ticket.
+    let defaults = CdmConfig::default();
+    assert!(defaults.validate.report.redact_values);
+    assert_eq!(defaults.validate.report.format, ReportFormat::None);
+    assert!(!defaults.validate.keys_only);
+
+    let report = DiscrepancyReport::in_memory(
+        RunId::from_raw(1),
+        ReportFormat::Ndjson,
+        defaults.validate.report.redact_values,
+    );
+    assert!(report.redacts_values());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sec_002_values_appear_only_when_redaction_is_explicitly_turned_off() {
+    let run = seeded(ReportFormat::Ndjson, false).await;
+    let text = run.report_text();
+    assert!(text.contains(&secret_hex()), "{text}");
+    assert!(!text.contains(REDACTED_PREFIX), "{text}");
+
+    let records = parse_ndjson(&text);
+    let mismatch = records
+        .iter()
+        .find(|record| record.kind == DiscrepancyKind::Mismatch)
+        .unwrap();
+    assert!(!mismatch.values_redacted);
+    assert_eq!(mismatch.columns[0].origin, secret_hex());
+    assert_eq!(
+        mismatch.columns[0].target,
+        RawCell::new(b"tampered".to_vec()).to_string()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sec_002_a_redacted_value_is_a_stable_digest_rather_than_a_placeholder() {
+    // Why a digest and not `<redacted>`: two rows wrong in the same way must still look the same,
+    // which is what makes a redacted report worth reading at all.
+    let run = run_reported(
+        vec![record(1, SECRET), record(2, SECRET), record(3, "other")],
+        vec![
+            (key(1), Row::new(vec![int(1), text("t")])),
+            (key(2), Row::new(vec![int(2), text("t")])),
+            (key(3), Row::new(vec![int(3), text("t")])),
+        ],
+        ReportFormat::Ndjson,
+        true,
+    )
+    .await;
+    let text = run.report_text();
+    let mut origins: Vec<String> = parse_ndjson(&text)
+        .into_iter()
+        .map(|record| record.columns[0].origin.clone())
+        .collect();
+    origins.sort();
+    origins.dedup();
+    assert_eq!(origins.len(), 2, "two distinct values, two digests: {text}");
+    assert!(origins.iter().all(|o| o.starts_with(REDACTED_PREFIX)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_a_null_is_reported_as_null_in_both_modes() {
+    // Null-ness is metadata, not content — the same judgement `VAL-017` makes for the diff log —
+    // because "the target is empty" and "the target holds something else" are different problems.
+    for redact in [true, false] {
+        let run = run_reported(
+            vec![record(1, "value")],
+            vec![(key(1), Row::new(vec![int(1), RawCell::NULL]))],
+            ReportFormat::Ndjson,
+            redact,
+        )
+        .await;
+        let text = run.report_text();
+        let records = parse_ndjson(&text);
+        assert_eq!(records[0].columns[0].target, NULL_VALUE, "{text}");
+        assert_ne!(records[0].columns[0].origin, NULL_VALUE, "{text}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_the_json_report_is_one_closed_array() {
+    let run = seeded(ReportFormat::Json, true).await;
+    let text = run.report_text();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
+    assert_eq!(parsed.as_array().map(Vec::len), Some(2), "{text}");
+    assert!(text.starts_with("[\n  {"), "{text}");
+    assert!(text.ends_with("\n]\n"), "{text}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_a_run_that_finds_nothing_still_writes_a_readable_report() {
+    // An empty report and a missing report are different statements, and only one of them says
+    // "this run looked".
+    let run = run_reported(
+        vec![record(1, "a")],
+        vec![(key(1), Row::new(vec![int(1), text("a")]))],
+        ReportFormat::Json,
+        true,
+    )
+    .await;
+    assert_eq!(run.count(CounterKind::Valid), 1);
+    let text = run.report_text();
+    assert_eq!(text, "[]\n");
+    assert_eq!(
+        serde_json::from_str::<Vec<DiscrepancyRecord>>(&text)
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_the_csv_report_has_a_header_and_one_row_per_differing_column() {
+    let run = seeded(ReportFormat::Csv, true).await;
+    let text = run.report_text();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[0],
+        "run_id,range_min,range_max,key,kind,column,origin,target,error"
+    );
+    assert_eq!(lines.len(), 3, "a header, a mismatch and a missing: {text}");
+    assert!(
+        lines.iter().any(|line| line.contains(",mismatch,data,")),
+        "{text}"
+    );
+    // The missing row has no columns and still gets a row: a report in which a missing row simply
+    // did not appear would be worse than no report.
+    assert!(
+        lines.iter().any(|line| line.ends_with(",missing,,,,")),
+        "{text}"
+    );
+    assert_eq!(
+        run.report.records(),
+        2,
+        "records count discrepancies, not rows"
+    );
+}
+
+#[test]
+fn val_013_a_csv_field_is_quoted_when_it_has_to_be() {
+    // The key of a text partition key can contain anything, and a comma in an unquoted field
+    // silently shifts every column after it.
+    assert_eq!(super::report::csv_field("plain"), "plain");
+    assert_eq!(super::report::csv_field("a,b"), "\"a,b\"");
+    assert_eq!(super::report::csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+    assert_eq!(super::report::csv_field("two\nlines"), "\"two\nlines\"");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_no_report_is_written_when_the_format_is_none() {
+    // The default. A report nobody asked for must not appear, and must not cost the run anything.
+    let run = seeded(ReportFormat::None, true).await;
+    assert!(!run.report.is_enabled());
+    assert_eq!(run.report.records(), 0);
+    assert!(run.report_text().is_empty());
+    assert!(run.report.reference().is_none());
+    // The findings still reached the diff log, which is not optional.
+    assert_eq!(run.diff_lines().len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_a_corrected_row_is_recorded_as_corrected_rather_than_twice() {
+    let (src, dst) = simple();
+    let run = run_reporting(
+        FakeOrigin::of(vec![record(1, SECRET), record(2, "b")]),
+        FakeTarget::with(vec![(key(1), Row::new(vec![int(1), text("tampered")]))]),
+        plan_for(&src, &dst, &MappingOptions::default()),
+        ValidateSettings {
+            autocorrect: Autocorrect {
+                missing: true,
+                mismatch: true,
+                missing_counter: false,
+            },
+            target_is_counter: false,
+        },
+        1000,
+        FilterChain::new(),
+        Arc::new(DiscrepancyReport::in_memory(
+            RunId::from_raw(7),
+            ReportFormat::Ndjson,
+            true,
+        )),
+        None,
+    )
+    .await;
+
+    let text = run.report_text();
+    let mut kinds: Vec<DiscrepancyKind> = parse_ndjson(&text)
+        .into_iter()
+        .map(|record| record.kind)
+        .collect();
+    kinds.sort();
+    assert_eq!(
+        kinds,
+        vec![
+            DiscrepancyKind::CorrectedMissing,
+            DiscrepancyKind::CorrectedMismatch
+        ],
+        "a repaired row appears once, saying it was repaired: {text}"
+    );
+    assert_eq!(run.count(CounterKind::CorrectedMissing), 1);
+    assert_eq!(run.count(CounterKind::CorrectedMismatch), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_013_the_report_and_the_diff_log_agree_about_which_rows_are_wrong() {
+    // The two sinks are fed from one comparison; a discrepancy in one is a discrepancy in the
+    // other, identified by the same rendering of the same key.
+    let run = seeded(ReportFormat::Ndjson, true).await;
+    let report_keys: Vec<String> = parse_ndjson(&run.report_text())
+        .into_iter()
+        .map(|record| record.key)
+        .collect();
+    let lines = run.diff_lines().join("\n");
+    for key in &report_keys {
+        assert!(
+            lines.contains(key.as_str()),
+            "{key} is missing from {lines}"
+        );
+    }
+    assert_eq!(report_keys.len(), run.diff_lines().len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn met_030_each_finding_is_published_with_the_key_fingerprinted() {
+    // The third sink. The bus redacts the key at construction, so the event stream carries a
+    // correlation token and never a value — in either report mode.
+    let bus = Arc::new(EventBus::new(RunId::from_raw(7), "node-a"));
+    let mut events = bus.subscribe();
+    let (src, dst) = simple();
+    let run = run_reporting(
+        FakeOrigin::of(vec![record(1, SECRET), record(2, "gone")]),
+        FakeTarget::with(vec![(key(1), Row::new(vec![int(1), text("tampered")]))]),
+        plan_for(&src, &dst, &MappingOptions::default()),
+        ValidateSettings::read_only(),
+        1000,
+        FilterChain::new(),
+        // Values in the file, so the test can show they still do not reach the bus.
+        Arc::new(DiscrepancyReport::in_memory(
+            RunId::from_raw(7),
+            ReportFormat::Ndjson,
+            false,
+        )),
+        Some(Arc::clone(&bus)),
+    )
+    .await;
+
+    assert_eq!(bus.redaction(), Redaction::Fingerprint);
+    let mut published = Vec::new();
+    while let Ok(Some(event)) = events.try_recv() {
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(!json.contains(SECRET), "{json}");
+        assert!(!json.contains(&secret_hex()), "{json}");
+        assert!(json.contains("fingerprint"), "{json}");
+        if let EventPayload::Discrepancy { kind, columns, .. } = event.payload {
+            published.push((kind, columns));
+        }
+    }
+    published.sort();
+    assert_eq!(
+        published,
+        vec![
+            (DiscrepancyKind::Missing, Vec::new()),
+            (DiscrepancyKind::Mismatch, vec!["data".to_owned()]),
+        ]
+    );
+    // And the values the bus withheld are in the report, which is the sanctioned route.
+    assert!(run.report_text().contains(&secret_hex()));
+}
+
+#[test]
+fn met_033_the_report_hands_the_summary_a_pointer_to_itself() {
+    let report = DiscrepancyReport::in_memory(RunId::from_raw(7), ReportFormat::Ndjson, true);
+    let reference = report.reference().unwrap();
+    assert_eq!(reference.format, "ndjson");
+    assert_eq!(reference.records, 0);
+    assert!(reference.values_redacted, "SEC-002");
+    assert_eq!(reference.path, report.path());
+}
+
+#[test]
+fn val_013_an_unwritable_report_is_a_startup_error_not_a_surprise_at_the_end() {
+    // A path whose *parent* is a regular file, which no platform will create a directory beneath.
+    // `/dev/null/nested` was the obvious spelling and is Unix-only: Windows has no `/dev/null`, so
+    // the path reads as an ordinary relative directory and the open succeeds.
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let unwritable = file.path().join("nested").join("report.json");
+
+    let error = DiscrepancyReport::open(RunId::from_raw(1), ReportFormat::Json, &unwritable, true)
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Config);
+    assert!(error.to_string().contains("VAL-013"), "{error}");
+    assert!(
+        error.to_string().contains("validate.report.path"),
+        "{error}"
+    );
+}
+
+#[test]
+fn val_013_a_disabled_report_touches_the_filesystem_not_at_all() {
+    // `format = none` must not create — let alone truncate — the file at the configured path.
+    // The path is one `open` would fail on, so a report that quietly opened it anyway could not
+    // pass this test on any platform.
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let unwritable = file.path().join("nested").join("report.json");
+
+    let report =
+        DiscrepancyReport::open(RunId::from_raw(1), ReportFormat::None, &unwritable, true).unwrap();
+    assert!(!report.is_enabled());
+    report.finish().unwrap();
+    assert!(
+        !unwritable.exists(),
+        "a disabled report must not create {}",
+        unwritable.display()
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// VAL-015 — sampling and keys-only
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn val_015_sample_is_sugar_for_the_token_coverage_percent_property() {
+    let mut config = CdmConfig::default();
+    assert_eq!(config.filter.token_coverage_percent, 100);
+
+    sample_percent(&mut config, 5).unwrap();
+    assert_eq!(config.filter.token_coverage_percent, 5);
+    // No second setting is disturbed: the flag is one property, so `TOK-005` does the sampling.
+    assert_eq!(config, {
+        let mut expected = CdmConfig::default();
+        expected.filter.token_coverage_percent = 5;
+        expected
+    });
+}
+
+#[test]
+fn val_015_a_sample_outside_one_to_a_hundred_is_refused() {
+    let mut config = CdmConfig::default();
+    for percent in [0, 101, 255] {
+        let error = sample_percent(&mut config, percent).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Config);
+        assert!(error.to_string().contains("VAL-015"), "{error}");
+    }
+    // And nothing was changed on the way out.
+    assert_eq!(config.filter.token_coverage_percent, 100);
+    sample_percent(&mut config, 100).unwrap();
+    sample_percent(&mut config, 1).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_015_a_keys_only_run_compares_existence_and_nothing_else() {
+    let (src, dst) = simple();
+    let run = run_with(
+        FakeOrigin::of(vec![record(1, SECRET), record(2, "gone")]),
+        // Row 1 is present and completely different; row 2 is absent.
+        FakeTarget::with(vec![(key(1), Row::new(vec![int(1), text("tampered")]))]),
+        plan_for(&src, &dst, &MappingOptions::default()).with_keys_only(true),
+        ValidateSettings::read_only(),
+        1000,
+    )
+    .await;
+
+    assert_eq!(run.count(CounterKind::Read), 2);
+    assert_eq!(
+        run.count(CounterKind::Valid),
+        1,
+        "the row is there, which is all a keys-only run claims"
+    );
+    assert_eq!(run.count(CounterKind::Missing), 1);
+    assert_eq!(
+        run.count(CounterKind::Mismatch),
+        0,
+        "a keys-only run structurally cannot report a mismatch"
+    );
+    // The lookups still happen: existence is a question only the target can answer.
+    assert_eq!(run.target.ops().len(), 2);
+    assert_eq!(*run.verdict.as_ref().unwrap(), RangeVerdict::Diff);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_015_a_full_run_over_the_same_data_finds_what_keys_only_missed() {
+    // The pair that makes the trade-off explicit: same rows, same fixture, one comparison mode
+    // apart. A keys-only pass is a reason to run a full validation, not a substitute for one.
+    let (src, dst) = simple();
+    let full = run_with(
+        FakeOrigin::of(vec![record(1, SECRET)]),
+        FakeTarget::with(vec![(key(1), Row::new(vec![int(1), text("tampered")]))]),
+        plan_for(&src, &dst, &MappingOptions::default()),
+        ValidateSettings::read_only(),
+        1000,
+    )
+    .await;
+    assert_eq!(full.count(CounterKind::Mismatch), 1);
+    assert_eq!(full.count(CounterKind::Valid), 0);
+
+    let keys_only = run_with(
+        FakeOrigin::of(vec![record(1, SECRET)]),
+        FakeTarget::with(vec![(key(1), Row::new(vec![int(1), text("tampered")]))]),
+        plan_for(&src, &dst, &MappingOptions::default()).with_keys_only(true),
+        ValidateSettings::read_only(),
+        1000,
+    )
+    .await;
+    assert_eq!(keys_only.count(CounterKind::Mismatch), 0);
+    assert_eq!(keys_only.count(CounterKind::Valid), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn val_015_keys_only_still_repairs_a_missing_row_when_asked_to() {
+    let (src, dst) = simple();
+    let run = run_with(
+        FakeOrigin::of(vec![record(1, "a")]),
+        FakeTarget::with(Vec::new()),
+        plan_for(&src, &dst, &MappingOptions::default()).with_keys_only(true),
+        ValidateSettings {
+            autocorrect: Autocorrect {
+                missing: true,
+                mismatch: true,
+                missing_counter: false,
+            },
+            target_is_counter: false,
+        },
+        1000,
+    )
+    .await;
+    assert_eq!(run.count(CounterKind::CorrectedMissing), 1);
+    assert_eq!(run.target.writes(), vec!["write:(0x00000001)"]);
+    assert_eq!(*run.verdict.as_ref().unwrap(), RangeVerdict::DiffCorrected);
 }

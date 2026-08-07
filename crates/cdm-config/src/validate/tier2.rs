@@ -23,6 +23,7 @@ pub(super) fn check(config: &CdmConfig, _options: ValidationOptions) -> Vec<Diag
     extract_json(config, &mut out);
     batch_size(config, &mut out);
     event_sink_path(config, &mut out);
+    discrepancy_report(config, &mut out);
     out
 }
 
@@ -396,6 +397,56 @@ fn event_sink_path(config: &CdmConfig, out: &mut Vec<Diagnostic>) {
     );
 }
 
+/// `VAL-013` and `SEC-002`: the discrepancy report's two ways of being surprising.
+///
+/// A report with values in it is a copy of the affected rows, and the operator who turned
+/// redaction off is entitled to be reminded of that once, at startup, rather than discovering it
+/// when the file is already attached to a ticket. And a keys-only run (`VAL-015`) can only ever
+/// report missing rows, so a report configured for one is not wrong — it is just narrower than
+/// whoever configured it is likely to expect.
+fn discrepancy_report(config: &CdmConfig, out: &mut Vec<Diagnostic>) {
+    use crate::types::ReportFormat;
+
+    if config.validate.report.format == ReportFormat::None {
+        return;
+    }
+
+    if !config.validate.report.redact_values {
+        out.push(
+            warning(
+                "validate.report.redact_values",
+                "the discrepancy report will contain row values",
+                "SEC-002",
+            )
+            .with_value(config.validate.report.path.display().to_string())
+            .with_detail(
+                "redaction is off, so the origin and target values of every differing column are \
+                 written to the report in the clear; the file is then a copy of the affected rows \
+                 and must be handled like one",
+            )
+            .with_suggestion(
+                "leave `validate.report.redact_values` at its default of `true` unless the report \
+                 is going somewhere as protected as the data itself",
+            ),
+        );
+    }
+
+    if config.validate.keys_only {
+        out.push(
+            notice(
+                "validate.report.format",
+                "a keys-only run can only report missing rows",
+                "VAL-015",
+            )
+            .with_detail(
+                "`validate.keys_only` compares existence and nothing else, so no mismatch and no \
+                 per-column detail can appear in the report",
+            )
+            .with_suggestion("unset `validate.keys_only` to compare values as well"),
+        );
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -448,6 +499,51 @@ mod tests {
         assert!(!check(&valid(), ValidationOptions::default())
             .iter()
             .any(|d| d.location.as_deref() == Some("metrics.events.path")));
+    }
+
+    #[test]
+    fn sec_002_a_report_that_will_carry_values_says_so_at_startup() {
+        let mut config = valid();
+        config.validate.report.format = crate::types::ReportFormat::Ndjson;
+
+        // The default is redaction, and a redacted report is unremarkable.
+        assert!(!check(&config, ValidationOptions::default())
+            .iter()
+            .any(|d| d.location.as_deref() == Some("validate.report.redact_values")));
+
+        config.validate.report.redact_values = false;
+        let diagnostics = check(&config, ValidationOptions::default());
+        let warning = diagnostics
+            .iter()
+            .find(|d| d.location.as_deref() == Some("validate.report.redact_values"))
+            .unwrap_or_else(|| panic!("{diagnostics:#?}"));
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.rule.as_deref(), Some("SEC-002"));
+        // A warning, not an error: it is a supported choice, made explicitly.
+        assert!(!warning.is_blocking());
+    }
+
+    #[test]
+    fn sec_002_no_report_means_no_warning_about_one() {
+        let mut config = valid();
+        config.validate.report.redact_values = false;
+        assert!(!check(&config, ValidationOptions::default())
+            .iter()
+            .any(|d| d.rule.as_deref() == Some("SEC-002")));
+    }
+
+    #[test]
+    fn val_015_a_keys_only_run_with_a_report_is_told_what_the_report_can_hold() {
+        let mut config = valid();
+        config.validate.keys_only = true;
+        config.validate.report.format = crate::types::ReportFormat::Csv;
+
+        let diagnostics = check(&config, ValidationOptions::default());
+        let notice = diagnostics
+            .iter()
+            .find(|d| d.rule.as_deref() == Some("VAL-015"))
+            .unwrap_or_else(|| panic!("{diagnostics:#?}"));
+        assert_eq!(notice.severity, Severity::Info);
     }
 
     fn rules(config: &CdmConfig) -> Vec<String> {

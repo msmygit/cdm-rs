@@ -55,25 +55,59 @@
 //! - `VAL-005`, `VAL-006`, `VAL-009`, `VAL-011` — [`compare`]
 //! - `VAL-010` — nothing in this module deletes
 //! - `VAL-012`, `VAL-017` — [`difflog`]
+//! - `VAL-013` — [`report`]
+//! - `VAL-015` — [`ComparisonPlan::with_keys_only`], [`sample_percent`]
 //! - `VAL-016` — [`status::verdict`]
 
 pub mod compare;
 pub mod difflog;
+pub mod report;
 pub mod status;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use cdm_config::model::Autocorrect;
-use cdm_core::{CdmError, JobKind, PrimaryKey, Record, RowSink, RowSource};
+use cdm_config::model::{Autocorrect, CdmConfig};
+use cdm_core::{CdmError, ErrorKind, JobKind, PrimaryKey, Record, RowSink, RowSource, TokenRange};
 use cdm_feature::FilterChain;
-use cdm_metrics::{Counter, CounterKind, CounterView, JobCounters};
+use cdm_metrics::{Counter, CounterKind, CounterView, DiscrepancyKind, EventBus, JobCounters};
 use futures::stream::{FuturesOrdered, StreamExt};
 
 use crate::scheduler::{java_thread_label, RangeContext, RangeProcessor, RangeVerdict};
 
 pub use compare::{Comparison, ComparisonPlan, Mismatch, REDACTED};
 pub use difflog::{DiffLog, DEFAULT_DIFF_FILE};
+pub use report::{
+    ColumnRecord, DiscrepancyRecord, DiscrepancyReport, DEFAULT_REPORT_FILE, NULL_VALUE,
+    REDACTED_PREFIX,
+};
+
+/// Applies `validate --sample <percent>` (`VAL-015`).
+///
+/// The flag is sugar and nothing else: it sets `filter.token_coverage_percent`, so the sampling a
+/// `--sample 5` run performs is `TOK-005`'s, deterministic seeding and all, and there is no second
+/// implementation of range shrinking that could disagree with the first. A CLI that wants the flag
+/// calls this and then plans as usual.
+///
+/// # Errors
+///
+/// [`ErrorKind::Config`] when `percent` is outside 1–100, which is Tier-1's rule for the property
+/// itself (`CFG-020`). Rejecting it here as well means the flag cannot smuggle in a value the
+/// property would have refused — `--sample 0` in particular, which would plan a run that reads
+/// nothing and reports everything it did not look at as fine.
+pub fn sample_percent(config: &mut CdmConfig, percent: u8) -> Result<(), CdmError> {
+    if !(1..=100).contains(&percent) {
+        return Err(CdmError::new(
+            ErrorKind::Config,
+            format!(
+                "`--sample {percent}` is out of range: a sample is a percentage of each token \
+                 range, between 1 and 100 (VAL-015, TOK-005)"
+            ),
+        ));
+    }
+    config.filter.token_coverage_percent = percent;
+    Ok(())
+}
 
 /// Everything about a validate run that is not the two clusters (`CFG-140`, `VAL-004`).
 #[derive(Debug, Clone)]
@@ -154,6 +188,8 @@ pub struct ValidateJob {
     filters: FilterChain,
     settings: ValidateSettings,
     diff_log: Arc<DiffLog>,
+    report: Arc<DiscrepancyReport>,
+    events: Option<Arc<EventBus>>,
 }
 
 impl std::fmt::Debug for ValidateJob {
@@ -164,6 +200,7 @@ impl std::fmt::Debug for ValidateJob {
             .field("columns", &self.plan.len())
             .field("filters", &self.filters.names())
             .field("settings", &self.settings)
+            .field("report", &self.report.format())
             .finish_non_exhaustive()
     }
 }
@@ -190,7 +227,41 @@ impl ValidateJob {
             filters: FilterChain::new(),
             settings,
             diff_log,
+            report: Arc::new(DiscrepancyReport::disabled()),
+            events: None,
         }
+    }
+
+    /// Installs the machine-readable discrepancy report of `VAL-013`.
+    ///
+    /// Optional, and off unless `validate.report.format` says otherwise: a report is an export, and
+    /// an export happens when somebody asks for it. A job without one holds a disabled report
+    /// rather than an `Option`, so the discrepancy path has one shape either way.
+    #[must_use]
+    pub fn with_report(mut self, report: Arc<DiscrepancyReport>) -> Self {
+        self.report = report;
+        self
+    }
+
+    /// Publishes each finding to the run event bus (`MET-030`).
+    ///
+    /// The bus applies its own redaction to the key when the event is constructed, and an event
+    /// never carries a value in either mode; the report is where values live, under its own switch.
+    /// The two are populated from the same comparison, so a discrepancy that appears in one appears
+    /// in the other.
+    #[must_use]
+    pub fn with_events(mut self, events: Arc<EventBus>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    /// The discrepancy report this run writes (`VAL-013`).
+    ///
+    /// The caller needs it back in order to [`finish`](DiscrepancyReport::finish) it and to attach
+    /// its [`reference`](DiscrepancyReport::reference) to the run summary of `MET-033`.
+    #[must_use]
+    pub fn report(&self) -> &Arc<DiscrepancyReport> {
+        &self.report
     }
 
     /// Installs the row-level filters of `FEA-050`..`FEA-054`.
@@ -223,6 +294,7 @@ impl ValidateJob {
     async fn compare_batch(
         &self,
         label: &str,
+        range: TokenRange,
         counters: &JobCounters,
         handles: &ValidateCounters,
         batch: &mut Batch,
@@ -258,16 +330,26 @@ impl ValidateJob {
                 Comparison::Missing => {
                     counters.increment(handles.missing);
                     self.diff_log.missing(label, record.key());
-                    self.autocorrect_missing(label, counters, handles, &record)
+                    // The report and the event carry the *outcome*, so a row that was repaired
+                    // says so in one record rather than appearing twice with a correction implied
+                    // by the second. That is why the correction runs first.
+                    let corrected = self
+                        .autocorrect_missing(label, counters, handles, &record)
                         .await?;
+                    self.report.missing(range, record.key(), corrected);
+                    self.publish(range, record.key(), missing_kind(corrected), Vec::new());
                 }
                 // VAL-006.
                 Comparison::Mismatch(mismatch) => {
                     counters.increment(handles.mismatch);
                     self.diff_log
                         .mismatch(label, record.key(), &mismatch.detail());
-                    self.autocorrect_mismatch(label, counters, handles, record, target)
+                    let key = record.key().clone();
+                    let corrected = self
+                        .autocorrect_mismatch(label, counters, handles, record, target)
                         .await?;
+                    self.report.mismatch(range, &key, &mismatch, corrected);
+                    self.publish(range, &key, mismatch_kind(corrected), mismatch.columns());
                 }
             }
         }
@@ -285,22 +367,23 @@ impl ValidateJob {
     /// there is no correct repair available; the honest options are "do it anyway, knowing" and
     /// "do not". `autocorrect.missing_counter` is that choice, made explicitly, and Tier-2
     /// validation already warns about it at startup (`CFG-040`).
+    /// Returns whether the row was repaired, which is what the report and the event record.
     async fn autocorrect_missing(
         &self,
         label: &str,
         counters: &JobCounters,
         handles: &ValidateCounters,
         record: &Record,
-    ) -> Result<(), CdmError> {
+    ) -> Result<bool, CdmError> {
         if !self.settings.autocorrect.missing {
-            return Ok(());
+            return Ok(false);
         }
         // VAL-004: counted as MISSING, logged, and left alone. Not counted as CORRECTED_MISSING,
         // which is what makes `VAL-016` report the range `DIFF` rather than `DIFF_CORRECTED`.
         if self.settings.target_is_counter && !self.settings.autocorrect.missing_counter {
             self.diff_log
                 .counter_correction_skipped(label, record.key());
-            return Ok(());
+            return Ok(false);
         }
         // CON-012: issued once. A failure fails the range rather than being retried, because a
         // counter update that may or may not have landed must not be sent twice.
@@ -308,7 +391,7 @@ impl ValidateJob {
         self.target.flush().await?;
         counters.increment(handles.corrected_missing);
         self.diff_log.inserted_missing(label, record.key());
-        Ok(())
+        Ok(true)
     }
 
     /// `VAL-007`: rewrite a mismatched row.
@@ -317,6 +400,7 @@ impl ValidateJob {
     /// binds `origin − current_target` (`MIG-031`) and would otherwise double the delta. There is
     /// no counter guard here, matching Java: correcting a counter *mismatch* converges the counter
     /// on the origin's value rather than re-adding it, so it is safe in the way a re-insert is not.
+    /// Returns whether the row was rewritten, which is what the report and the event record.
     async fn autocorrect_mismatch(
         &self,
         label: &str,
@@ -324,9 +408,9 @@ impl ValidateJob {
         handles: &ValidateCounters,
         record: Record,
         target: Option<Record>,
-    ) -> Result<(), CdmError> {
+    ) -> Result<bool, CdmError> {
         if !self.settings.autocorrect.mismatch {
-            return Ok(());
+            return Ok(false);
         }
         let key = record.key().clone();
         let record = match target {
@@ -337,7 +421,23 @@ impl ValidateJob {
         self.target.flush().await?;
         counters.increment(handles.corrected_mismatch);
         self.diff_log.corrected_mismatch(label, &key);
-        Ok(())
+        Ok(true)
+    }
+
+    /// Publishes one finding to the event bus, when a run has one (`MET-030`).
+    ///
+    /// The key is handed over in the clear and redacted by [`EventBus::discrepancy`] before the
+    /// event exists; the column *names* travel, their values never do.
+    fn publish(
+        &self,
+        range: TokenRange,
+        key: &PrimaryKey,
+        kind: DiscrepancyKind,
+        columns: Vec<String>,
+    ) {
+        if let Some(events) = self.events.as_ref() {
+            events.discrepancy(chrono::Utc::now(), range, kind, &key.to_string(), columns);
+        }
     }
 
     /// Issues one record's target lookup and buffers it (`VAL-001`).
@@ -370,6 +470,24 @@ impl ValidateJob {
         }));
         batch.records.push_back(record);
         Ok(())
+    }
+}
+
+/// Which kind a missing row is reported as, once autocorrect has had its turn.
+const fn missing_kind(corrected: bool) -> DiscrepancyKind {
+    if corrected {
+        DiscrepancyKind::CorrectedMissing
+    } else {
+        DiscrepancyKind::Missing
+    }
+}
+
+/// Which kind a differing row is reported as, once autocorrect has had its turn.
+const fn mismatch_kind(corrected: bool) -> DiscrepancyKind {
+    if corrected {
+        DiscrepancyKind::CorrectedMismatch
+    } else {
+        DiscrepancyKind::Mismatch
     }
 }
 
@@ -433,7 +551,7 @@ impl RangeProcessor for ValidateJob {
                 // not: the lookups already issued are drained and counted, so `ENG-008`'s lost-row
                 // arithmetic is computed against what the range actually did.
                 let _drained = self
-                    .compare_batch(&label, counters, &handles, &mut batch)
+                    .compare_batch(&label, ctx.range(), counters, &handles, &mut batch)
                     .await?;
                 return Err(CdmError::new(
                     cdm_core::ErrorKind::Cancelled,
@@ -458,12 +576,12 @@ impl RangeProcessor for ValidateJob {
             self.enqueue(ctx, &mut batch, record).await?;
             if batch.len() >= fetch_size {
                 had_discrepancy |= self
-                    .compare_batch(&label, counters, &handles, &mut batch)
+                    .compare_batch(&label, ctx.range(), counters, &handles, &mut batch)
                     .await?;
             }
         }
         had_discrepancy |= self
-            .compare_batch(&label, counters, &handles, &mut batch)
+            .compare_batch(&label, ctx.range(), counters, &handles, &mut batch)
             .await?;
 
         tracing::debug!(

@@ -1901,3 +1901,96 @@ async fn eng_001_a_planner_settings_table_reference_does_not_change_scheduling()
         .unwrap();
     assert_eq!(report.outcomes().len(), plan.len());
 }
+
+// =================================================================================================
+// MET-033 — the run summary
+// =================================================================================================
+
+#[tokio::test(flavor = "multi_thread")]
+async fn met_033_a_finished_run_summarises_its_plan_counters_timings_and_node() {
+    // The scheduler fills in everything it knows, so wiring `--summary-out` is one call rather
+    // than a second model of what a run did.
+    let plan = plan(8);
+    let processor = Arc::new(FaultProcessor::migrate().with_rows(Rows::new(10, 10, 0)));
+    let scheduler = Scheduler::new(settings(4)).unwrap();
+    let report = scheduler
+        .run(
+            &plan,
+            processor as Arc<dyn RangeProcessor>,
+            Arc::new(NoopObserver),
+        )
+        .await
+        .unwrap();
+
+    let summary = report.summary(chrono::DateTime::UNIX_EPOCH);
+    assert_eq!(summary.job, JobKind::Migrate);
+    assert_eq!(summary.status, RunStatus::Ended);
+    assert_eq!(summary.node_id, "node-under-test");
+    assert_eq!(summary.run_id, Some(plan.run_id()));
+    let ranges = plan.len() as u64;
+    assert_eq!(summary.plan.ranges_planned, ranges);
+    assert_eq!(summary.plan.ranges_claimed, ranges);
+    assert_eq!(summary.plan.ranges_passed, ranges);
+    assert_eq!(summary.plan.ranges_failed, 0);
+    assert_eq!(summary.plan.ranges_unclaimed, 0);
+    assert_eq!(summary.counters["READ"], 10 * ranges);
+    assert_eq!(summary.counters["WRITE"], 10 * ranges);
+    // A migrate run has no discrepancy section at all — "none found" and "not looked for" must
+    // not render the same way.
+    assert!(summary.discrepancies.is_none());
+    assert_eq!(summary.nodes.len(), 1);
+    assert_eq!(summary.nodes[0].ranges_claimed, ranges);
+    assert_eq!(summary.timings.finished_at, chrono::DateTime::UNIX_EPOCH);
+    assert!(summary.timings.elapsed_secs >= 0.0);
+
+    // And it round-trips as the JSON `--summary-out` writes.
+    let json = summary.to_json().unwrap();
+    assert!(
+        json.contains("\"schema\": \"cdm.run-summary/v1\""),
+        "{json}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn met_033_a_run_that_was_stopped_says_what_it_did_not_do() {
+    // The summary of an interrupted run is the one somebody actually reads, so the ranges that
+    // were never claimed have to be in it: they are what a resume has to re-plan (`TRK-031`).
+    for reason in STOP_REASONS {
+        let (report, _observer) = run_stopped_early(reason).await;
+        let summary = report.summary(chrono::DateTime::UNIX_EPOCH);
+
+        assert_eq!(summary.status, reason.run_status());
+        assert!(summary.plan.ranges_unclaimed > 0, "{reason:?}");
+        assert_eq!(
+            summary.plan.ranges_claimed + summary.plan.ranges_unclaimed,
+            summary.plan.ranges_planned,
+            "no range may fall between the claimed and the unclaimed: {reason:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn met_033_a_validate_run_summarises_what_is_still_wrong() {
+    let plan = plan(4);
+    let processor = Arc::new(
+        FaultProcessor::new(JobKind::Validate)
+            .with_default(Behaviour::Finish(RangeVerdict::Diff))
+            .with_rows(Rows::new(4, 0, 0)),
+    );
+    let scheduler = Scheduler::new(settings(2)).unwrap();
+    let report = scheduler
+        .run(
+            &plan,
+            processor as Arc<dyn RangeProcessor>,
+            Arc::new(NoopObserver),
+        )
+        .await
+        .unwrap();
+
+    let summary = report.summary(chrono::DateTime::UNIX_EPOCH);
+    let discrepancies = summary.discrepancies.expect("a validate run has a section");
+    assert!(discrepancies.is_clean(), "this fixture reports no rows");
+    assert_eq!(discrepancies.outstanding, 0);
+    // No report was written, so there is nothing to point at.
+    assert!(discrepancies.report.is_none());
+}
