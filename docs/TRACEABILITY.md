@@ -140,7 +140,7 @@ test, fails CI.
 | `CON-001` <sup>P</sup> | cdm-rs MUST connect independently to origin and target with fully separate credentials, TLS material, consistency levels and… | `cdm-cql` | `con_001_*` | #7, #8, #9 |
 | `CON-002` <sup>P</sup> | Four connection modes MUST be supported per side, selected exactly as Java's `ConnectionFetcher` does: 1 | `cdm-cql` | `con_002_*` | #7, #8, #9 |
 | `CON-003` <sup>P</sup> | Astra secure-connect-bundles MUST be supported, including SNI-proxy address translation and per-node SNI names obtained from… | `cdm-cql` | `con_003_*`, `astra_it` | #7, #8, #9, #41 |
-| `CON-004` <sup>P</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain | `cdm-cql` | `con_004_*`, `astra_it` | #7, #8, #9, #41 |
+| `CON-004` <sup>P+</sup> | When `astra.database_id` is set and no bundle path is given, the bundle is downloaded from the Astra DevOps API, selected by type, region and custom domain; with no region the primary datacenter (`datacenterID` `-1`) is chosen rather than the first entry | `cdm-cql` | `con_004_*`, `astra_it` | #7, #8, #9, #41 |
 | `CON-005` <sup>P</sup> | Downloaded/generated bundles MUST be written to a process-scoped temporary directory and deleted on run completion **and** on… | `cdm-cql` | `con_005_*`, `astra_it` | #7, #8, #9, #41 |
 | `CON-006` <sup>P</sup> | Truststores/keystores MUST be readable in `JKS`, `PKCS12` and `PEM` formats | `cdm-cql` | `con_006_*` | #7, #8, #9 |
 | `CON-007` <sup>P</sup> | `tls.cipher_suites` MUST be honoured | `cdm-cql` | `con_007_*` | #7, #8, #9 |

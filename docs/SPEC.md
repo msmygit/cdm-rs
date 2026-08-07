@@ -490,12 +490,19 @@ translation and per-node SNI names obtained from the bundle's metadata service. 
 `scylla-rust-driver` does **not** natively support the Astra SCB mechanism, cdm-rs implements it in
 `cdm-cql`; the full procedure is normative in §4.1 (`CON-020`–`CON-029`) and `ADR-0009`.
 
-**CON-004 [P]** — When `astra.database_id` is set and no SCB path is given, the bundle MUST be
+**CON-004 [P+]** — When `astra.database_id` is set and no SCB path is given, the bundle MUST be
 downloaded from the Astra DevOps API
 (`POST https://api.astra.datastax.com/v2/databases/{id}/secureBundleURL?all=true`, `Authorization:
 Bearer <password>`), selecting by `scb_type` (`default` / `custom`) and `region`, and matching
 `custom_domain` for custom bundles. `all=true` returns bundles for every region and every custom
 domain, so selection happens client-side.
+
+When no `region` is configured, the **primary** datacenter MUST be selected: the response entry
+whose `datacenterID` is `{database_id}-1`. Astra numbers datacenters from one and promises no
+ordering for the array, so the first entry is not reliably the primary — **CON-004 is therefore
+[P+]**, since Java takes the first entry and connects to whatever region that turns out to be. A
+response carrying no `datacenterID` falls back to the first entry, which is Java's answer and the
+only one available.
 
 **CON-005 [P]** — Downloaded/generated bundles MUST be written to a process-scoped temporary
 directory with `0700` permissions and deleted on run completion **and** on abnormal termination
