@@ -24,7 +24,10 @@ jobs:
         # driver's home turf and runs nightly — claimed support must still be exercised.
         engine:
           - cassandra:3.11
-          #- cassandra:4.0
+          # Temporarily paused. TST-002 wants every claimed-supported engine exercised, so this
+          # is a coverage gap with a clock on it rather than a decision — restore it when the
+          # reason for the pause is gone.
+          # - cassandra:4.0
           - cassandra:4.1
           - cassandra:5.0
         include:
