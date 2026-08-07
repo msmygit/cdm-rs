@@ -44,6 +44,7 @@ use scylla::serialize::SerializationError;
 use crate::schema::ColumnMeta;
 
 use super::mapping::{ColumnMapping, TargetSource};
+use super::select::TargetSelectByPk;
 use super::upsert::{BindSlot, TargetUpsert};
 
 /// One bound parameter: a serialised value, or `UNSET` (`MIG-012`).
@@ -299,6 +300,71 @@ impl Binder {
         })
     }
 
+    /// Resolves the target key columns [`TargetSelectByPk`] binds, once (`MIG-031`, `VAL-001`).
+    ///
+    /// The lookup is by name, which is why it happens here and not per row: the select statement
+    /// reports the columns it left bind markers for — a constant key component is inlined, so it
+    /// is *not* among them (`FEA-012`) — and those names have to be turned into positions in this
+    /// binder's plan exactly once.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Internal`] if a key column the statement binds is not a target column of this
+    /// binder, which can only happen if the two were built from different mappings.
+    pub fn key_binding(&self, select: &TargetSelectByPk) -> Result<KeyBinding, CdmError> {
+        let mut indices = Vec::with_capacity(select.bound_key_columns().len());
+        for name in select.bound_key_columns() {
+            let index = self
+                .columns
+                .iter()
+                .position(|column| &column.name == name)
+                .ok_or_else(|| {
+                    CdmError::new(
+                        ErrorKind::Internal,
+                        format!(
+                            "the target lookup binds key column `{name}`, which is not a target \
+                             column of this binder; the statement and the binder were built from \
+                             different mappings"
+                        ),
+                    )
+                })?;
+            indices.push(index);
+        }
+        Ok(KeyBinding { indices })
+    }
+
+    /// Binds one row's primary key into [`TargetSelectByPk`] (`MIG-031`, `VAL-001`).
+    ///
+    /// Shares [`Binder::bind`]'s conversion plans and missing-key policy, so the key the lookup
+    /// searches for is byte-identical to the key the write would use — which is the whole point:
+    /// a counter delta read against a differently-encoded key silently reads zero and doubles the
+    /// counter.
+    ///
+    /// # Errors
+    ///
+    /// A [`BindFailure`], on the same terms as [`Binder::bind`].
+    pub fn bind_key<'frame, R>(
+        &self,
+        binding: &KeyBinding,
+        row: &R,
+        inputs: BindInputs<'frame>,
+    ) -> Result<BoundWrite<'frame>, BindFailure>
+    where
+        R: SourceRow<'frame>,
+    {
+        let mut values = Vec::with_capacity(binding.indices.len());
+        for (bind_index, &index) in binding.indices.iter().enumerate() {
+            let column = self.columns.get(index).ok_or_else(|| {
+                self.failure(bind_index, index, "<unknown>", "internal", &inputs, None)
+            })?;
+            let value = self
+                .bind_column(column, row, &inputs)
+                .map_err(|cause| self.column_failure(bind_index, index, column, &inputs, cause))?;
+            values.push(value);
+        }
+        Ok(BoundWrite { values })
+    }
+
     /// One column's value, before it becomes a [`BoundValue`].
     fn bind_column<'frame, R>(
         &self,
@@ -412,6 +478,31 @@ impl Binder {
     }
 }
 
+/// The target key columns [`TargetSelectByPk`] binds, resolved to binder positions.
+///
+/// Held rather than recomputed because `MIG-031` performs one target lookup *per row* on a counter
+/// table: a name lookup there would be a string comparison per key column per row, which
+/// `ARCHITECTURE.md` §5.5 exists to keep off the hot path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyBinding {
+    indices: Vec<usize>,
+}
+
+impl KeyBinding {
+    /// How many key columns are bound. Shorter than the target primary key whenever a constant
+    /// column supplies a component (`FEA-012`).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.indices.len()
+    }
+
+    /// Whether every key component is inlined, so the lookup binds nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.indices.is_empty()
+    }
+}
+
 /// The outcome of binding: a write, typed by whether it may be retried.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Bound<'a> {
@@ -447,12 +538,30 @@ impl<'a> IdempotentWrite<'a> {
     pub const fn values(&self) -> &BoundWrite<'a> {
         &self.0
     }
+
+    /// Copies every borrowed value so the write no longer depends on the frame it was read from.
+    ///
+    /// The zero-copy path of `MIG-040` is the default and must stay so; this is the escape hatch
+    /// for the case where it cannot hold — a feature that rewrites the row produces values owned by
+    /// a per-row buffer, and a write that outlives that buffer has to own them. Calling it on a
+    /// passthrough write would silently undo `MIG-040`, so it is called in exactly one place, from
+    /// the migrate job's feature path, and never from its fast path.
+    #[must_use]
+    pub fn into_owned(self) -> IdempotentWrite<'static> {
+        IdempotentWrite(self.0.into_owned())
+    }
 }
 
 impl<'a> CounterWrite<'a> {
     /// The bound values.
     pub const fn values(&self) -> &BoundWrite<'a> {
         &self.0
+    }
+
+    /// Copies every borrowed value; see [`IdempotentWrite::into_owned`].
+    #[must_use]
+    pub fn into_owned(self) -> CounterWrite<'static> {
+        CounterWrite(self.0.into_owned())
     }
 }
 
@@ -486,6 +595,24 @@ impl<'a> BoundWrite<'a> {
     /// How many parameters were bound.
     pub fn len(&self) -> usize {
         self.values.len()
+    }
+
+    /// Copies every borrowed value, detaching the write from the frame it was read from.
+    ///
+    /// A `Cow::Owned` value is moved rather than copied, so a write that was already owned costs
+    /// nothing here.
+    #[must_use]
+    pub fn into_owned(self) -> BoundWrite<'static> {
+        BoundWrite {
+            values: self
+                .values
+                .into_iter()
+                .map(|value| match value {
+                    BoundValue::Unset => BoundValue::Unset,
+                    BoundValue::Value(bytes) => BoundValue::Value(Cow::Owned(bytes.into_owned())),
+                })
+                .collect(),
+        }
     }
 
     /// Whether nothing was bound.
@@ -1382,6 +1509,95 @@ mod tests {
             Bound::Idempotent(write) => only_idempotent(write),
             Bound::Counter(_) => panic!("a plain table must not produce a counter write"),
         }
+    }
+
+    #[test]
+    fn mig_031_the_key_binding_binds_the_target_lookups_key_columns_in_its_order() {
+        use crate::statement::TargetSelectByPk;
+
+        let mapping = ColumnMapping::resolve(
+            &counter_origin(),
+            &counter_target(),
+            &MappingOptions::default(),
+        )
+        .unwrap();
+        let statement = TargetUpsert::new(&mapping, StatementOptions::default()).unwrap();
+        let binder = Binder::new(
+            &mapping,
+            statement,
+            &planner(),
+            MissingKeyPolicy::default(),
+            false,
+        )
+        .unwrap();
+        let select = TargetSelectByPk::new(&mapping).unwrap();
+        let binding = binder.key_binding(&select).unwrap();
+        assert_eq!(binding.len(), 2);
+        assert!(!binding.is_empty());
+
+        let source = row(vec![
+            Some(7i32.to_be_bytes().to_vec()),
+            Some(b"cc".to_vec()),
+            Some(5i64.to_be_bytes().to_vec()),
+        ]);
+        let key = binder
+            .bind_key(&binding, &&source, BindInputs::default())
+            .unwrap();
+        assert_eq!(key.len(), 2, "the counter column is not part of the key");
+        assert_eq!(key.values()[0].bytes(), Some(&7i32.to_be_bytes()[..]));
+        assert_eq!(key.values()[1].bytes(), Some(&b"cc"[..]));
+    }
+
+    #[test]
+    fn mig_031_a_constant_key_component_is_inlined_and_so_is_not_bound() {
+        use crate::statement::TargetSelectByPk;
+
+        let mut target = counter_target();
+        target
+            .columns
+            .push(column("tenant", "text", ColumnKind::PartitionKey, 1));
+        let options = MappingOptions {
+            constants: vec![("tenant".to_owned(), "'acme'".to_owned())],
+            ..MappingOptions::default()
+        };
+        let mapping = ColumnMapping::resolve(&counter_origin(), &target, &options).unwrap();
+        let statement = TargetUpsert::new(&mapping, StatementOptions::default()).unwrap();
+        let binder = Binder::new(
+            &mapping,
+            statement,
+            &planner(),
+            MissingKeyPolicy::default(),
+            false,
+        )
+        .unwrap();
+        let binding = binder
+            .key_binding(&TargetSelectByPk::new(&mapping).unwrap())
+            .unwrap();
+        assert_eq!(binding.len(), 2, "`tenant` is a literal, not a bind marker");
+    }
+
+    #[test]
+    fn mig_040_into_owned_detaches_a_write_from_the_frame_it_borrowed() {
+        let binder = binder(MissingKeyPolicy::default(), false);
+        let payload = row(vec![
+            Some(1i32.to_be_bytes().to_vec()),
+            Some(b"borrowed".to_vec()),
+            None,
+            None,
+        ]);
+        let Bound::Idempotent(write) = binder.bind(&&payload, BindInputs::default()).unwrap()
+        else {
+            panic!("a plain table binds an idempotent write")
+        };
+        let borrowed = write.values().values()[1].bytes().unwrap().as_ptr();
+        let owned = write.into_owned();
+        assert_eq!(owned.values().values()[1].bytes(), Some(&b"borrowed"[..]));
+        assert_ne!(
+            owned.values().values()[1].bytes().unwrap().as_ptr(),
+            borrowed,
+            "into_owned must copy, or the write still depends on the frame"
+        );
+        assert!(owned.values().values()[2].is_unset(), "UNSET survives");
     }
 
     #[test]

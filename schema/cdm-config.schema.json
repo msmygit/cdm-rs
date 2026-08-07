@@ -124,6 +124,21 @@
       },
       "type": "object"
     },
+    "BatchGrouping": {
+      "description": "How rows are grouped into a write batch (`MIG-022`).\n\nA Cassandra `UNLOGGED` batch that spans partitions is not an optimisation: the coordinator\nfans it out to every replica set involved and the batch finishes no sooner than its slowest\nparticipant. The only batch that is faster than the individual writes it replaces is a\nsingle-partition one, which the coordinator applies as a single mutation.",
+      "oneOf": [
+        {
+          "const": "strict",
+          "description": "Rows belonging to different partitions are never batched together.",
+          "type": "string"
+        },
+        {
+          "const": "legacy",
+          "description": "Java's behaviour: rows are appended in the order they are read, whatever partition they\nbelong to, and the batch is sent once it reaches `perfops.batch_size`.",
+          "type": "string"
+        }
+      ]
+    },
     "Cluster": {
       "additionalProperties": false,
       "description": "Distributed mode (`CFG-200`, `DST-001`).",
@@ -799,6 +814,11 @@
           "default": false,
           "description": "Reduce the rate limit automatically when the target signals overload.",
           "type": "boolean"
+        },
+        "batch_grouping": {
+          "$ref": "#/$defs/BatchGrouping",
+          "default": "strict",
+          "description": "How rows are grouped into a write batch (`MIG-022`).\n\n`strict` never puts two partitions in one batch, which is the only batching that\nis faster than the writes it replaces. `legacy` reproduces Java's index-order\nbatching exactly."
         },
         "batch_size": {
           "default": 5,
@@ -1653,6 +1673,7 @@
       "$ref": "#/$defs/PerfOps",
       "default": {
         "adaptive_ratelimit": false,
+        "batch_grouping": "strict",
         "batch_size": 5,
         "connection_pool_size": 4,
         "consistency": {

@@ -19,6 +19,9 @@
 //!   on.
 //! * [`statement`] — the CQL a run executes: the column mapping, the origin projection, the read
 //!   and write statements, and binding a row into one without ever writing a tombstone.
+//! * [`exec`] — running those statements: paging a token range off the origin without decoding a
+//!   cell, writing the target with the retry policy each kind of write is entitled to, and
+//!   noticing a schema that moved underneath the run.
 //!
 //! # Specification
 //!
@@ -36,6 +39,8 @@
 //! - `FEA-060`..`FEA-062` — [`statement::OriginRangeSelect`], [`statement::StatementSet`]
 //! - `MIG-010`..`MIG-014` — [`statement::TargetUpsert`], [`statement::Binder`]
 //! - `ERR-005` — [`statement::BindFailure`]
+//! - `ENG-003`, `CON-011`, `CON-012` — [`exec::RangeScan`], [`exec::TargetWriter`]
+//! - `SCH-009` — [`exec::SchemaWatch`]
 //!
 //! # A driver limitation you will meet
 //!
@@ -46,6 +51,7 @@
 
 pub mod astra;
 pub mod connect;
+pub mod exec;
 pub mod raw;
 pub mod rows;
 pub mod schema;

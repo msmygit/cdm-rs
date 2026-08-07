@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-124 properties.
+125 properties.
 
 
 ## `connect`
@@ -117,6 +117,7 @@ should not use it.
 |---|---|---|---|---|---|---|
 | `perfops.num_parts` | `spark.cdm.perfops.numParts` | integer | `5000` | parts | stable | Number of token-range splits the ring is divided into. |
 | `perfops.batch_size` | `spark.cdm.perfops.batchSize` | integer | `5` | rows | stable | Rows per write batch. |
+| `perfops.batch_grouping` | — | `strict` \| `legacy` | `strict` | — | stable | How rows are grouped into a write batch (`MIG-022`). |
 | `perfops.fetch_size` | `spark.cdm.perfops.fetchSizeInRows` | integer | `1000` | rows | stable | Rows read from the origin per page. |
 | `perfops.error_limit` | `spark.cdm.perfops.errorLimit` | integer | `0` | errors | stable | Stop the run after this many row-level errors. `0` means never stop. |
 | `perfops.workers` | — | integer | num_cpus | workers | stable | Concurrent range workers. |

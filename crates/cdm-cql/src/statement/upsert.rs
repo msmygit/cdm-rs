@@ -136,6 +136,21 @@ impl TargetUpsert {
         &self.slots
     }
 
+    /// Where the target column at `target_index` puts its value in a bound write (`MIG-022`).
+    ///
+    /// `None` for a constant column, which `MIG-010` inlines as a literal and which therefore
+    /// occupies no bind position at all.
+    ///
+    /// Exposed because `MIG-022`'s partition grouping has to compare the partition-key components
+    /// of two bound writes, and it cannot do that without knowing where they landed.
+    #[must_use]
+    pub fn bind_position(&self, target_index: usize) -> Option<usize> {
+        self.slots.iter().position(|slot| {
+            matches!(slot, BindSlot::Column(index) | BindSlot::KeyColumn(index)
+                if *index == target_index)
+        })
+    }
+
     /// `INSERT INTO ks.tbl (bound…, const…) VALUES (?, …, <literals>)[ USING …]` (`MIG-010`).
     fn insert(mapping: &ColumnMapping, options: StatementOptions) -> Self {
         let mut bound_names = Vec::new();
@@ -491,6 +506,40 @@ pub(crate) mod tests {
         let err = TargetUpsert::new(&mapping, StatementOptions::default()).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::SchemaMismatch);
         assert!(err.message().contains("write nothing"), "{err}");
+    }
+
+    #[test]
+    fn mig_022_a_columns_bind_position_is_where_its_value_lands() {
+        let mut target = target();
+        target
+            .columns
+            .push(column("tenant", "text", ColumnKind::Regular, -1));
+        let options = MappingOptions {
+            constants: vec![("tenant".to_owned(), "'acme'".to_owned())],
+            ..MappingOptions::default()
+        };
+        let mapping = ColumnMapping::resolve(&origin(), &target, &options).unwrap();
+        let statement = TargetUpsert::new(&mapping, StatementOptions::default()).unwrap();
+
+        assert_eq!(statement.bind_position(0), Some(0), "id binds first");
+        assert_eq!(statement.bind_position(3), Some(3));
+        assert_eq!(
+            statement.bind_position(4),
+            None,
+            "a constant is inlined and occupies no bind position"
+        );
+        assert_eq!(statement.bind_position(99), None);
+
+        // The counter form puts the key columns in the WHERE clause, after the SET list.
+        let counter = ColumnMapping::resolve(
+            &counter_origin(),
+            &counter_target(),
+            &MappingOptions::default(),
+        )
+        .unwrap();
+        let update = TargetUpsert::new(&counter, StatementOptions::default()).unwrap();
+        assert_eq!(update.bind_position(2), Some(0), "the counter binds first");
+        assert_eq!(update.bind_position(0), Some(1), "then the WHERE clause");
     }
 
     #[test]

@@ -72,6 +72,10 @@ cdm config convert --from cdm.properties --to cdm.toml
 | 33 | A guardrail run always exits `0`, whatever it found | Exit `1` when any row was `LARGE`, `0` when none was (`CLI-004`) | A pipeline that gates a migration on a guardrail run can see only the exit code. The per-range tracking status stays `PASS`, so `cdm_run_details` remains byte-compatible either way (`TRK-012`) | read the `LARGE` counter instead of the code |
 | 34 | `Guardrail.guardrailChecks` accumulates into a `HashMap`, so two runs over the same row can print its oversized columns in different orders | Projection order (`GRD-003`) | The same finding either way, but a reproducible order makes two runs' logs comparable — the same reasoning as item 25 | — |
 | 35 | The guardrail is a job of its own and cannot run during a migration | It can, through `feature.guardrail.mode` (`GRD-004`); `block` withholds an oversized row from the target and counts it `SKIPPED` | A target with a hard column-size limit makes a migration that skips the handful of rows over it far more useful than one that fails on them. `SKIPPED` rather than `LARGE` because `MET-002` does not register `LARGE` for migrate — see the correction under `GRD-004` | leave `mode` at its `check` default |
+| 36 | A counter write is issued asynchronously alongside every other write, so several counter updates are in flight at once and a failure cannot be attributed to a row | Counter rows are read, computed, written and awaited one at a time (`MIG-031`, `MIG-032`) | The delta is only correct relative to the target value read a moment earlier, and an in-flight counter update whose outcome is unknown cannot be retried, replayed or reconciled. The target lookup already serialises the path, so there is nothing to overlap | — |
+| 37 | `TargetUpdateStatement` skips the bind index for a null origin counter, leaving the marker unset | Identical — the delta is simply not computed, so the marker is `UNSET` (`MIG-031`) | Same behaviour, reached by not producing a value rather than by skipping an index | — |
+| 38 | The migrate job's flush point is the end of a token range | The end of a page, or the flush threshold, whichever comes first (`MIG-004`) | The threshold is `<= perfops.fetch_size` by construction, so a full page always crosses it anyway; making the page the outer boundary is what bounds resident memory to `fetch_size` rows per worker (`NFR-003`) | — |
+| 39 | A schema altered underneath a running job goes unnoticed: statements, bind positions and conversion plans were resolved at startup and are silently applied to a schema that no longer matches | The run aborts with a distinct `SchemaChanged` error kind (`SCH-009`) | Rows written into the wrong columns are not detectable afterwards, and the run would report `Partitions Passed` for every range it touched | — |
 
 `--compat-java` enables items 1, 2, 3 and 6 together, and additionally restores Java's
 unconverted tuple elements (item 4) and its truncated guardrail sizes (item 30)
@@ -142,6 +146,23 @@ Items 15 and 16 above are not design differences; they are defects, and `--compa
 restore either. Reproducing an unbounded-memory bug or a permanently-zero error counter has no
 legitimate use, and both would defeat requirements cdm-rs is committed to (`NFR-003` bounded memory,
 `ENG-008` honest failure accounting).
+
+Item 15 is worth stating precisely, because the formula is *not* the difference. `CopyJobSession`
+computes `min(fetchSize, max(batchSize * 10, 100))` exactly as `MIG-004` specifies, and cdm-rs
+computes the same number. What Java then does is
+
+```java
+if (jobCounter.getCount(CounterType.UNFLUSHED) >= flushThreshold) { ... }
+```
+
+where the single-argument `getCount` is `getCount(type, false)` — the **committed** value.
+`UNFLUSHED` is only ever incremented at the *interim* level, and it is `reset()` rather than
+`flush()`ed, so its committed value is `0` for the life of the run and that branch is never taken.
+Java therefore flushes once, at the end of each range, having held every bound write for the range
+in memory. cdm-rs compares the interim count
+(`MigrateSettings::should_flush`, `WriteBuffer::count_issued`), and
+`mig_004_the_threshold_flushes_mid_range_where_javas_never_would` asserts the flush *count* rather
+than merely that a flush happened — a thousand rows at the default threshold flush ten times.
 
 Everything else that differs remains restorable with `--compat-java`.
 

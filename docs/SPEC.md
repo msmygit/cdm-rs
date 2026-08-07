@@ -353,6 +353,7 @@ The following table is the **normative parity list**. It is generated from the J
 |---|---|---|---|
 | `spark.cdm.perfops.numParts` | `perfops.num_parts` | u64 | `5000` |
 | `spark.cdm.perfops.batchSize` | `perfops.batch_size` | u32 | `5` |
+| — **[N]** | `perfops.batch_grouping` | enum `strict`/`legacy` | `strict` |
 | `spark.cdm.perfops.ratelimit.origin` | `perfops.ratelimit.origin` | u32 rows/s | `20000` |
 | `spark.cdm.perfops.ratelimit.target` | `perfops.ratelimit.target` | u32 rows/s | `20000` |
 | `spark.cdm.perfops.consistency.read` | `perfops.consistency.read` | enum | `LOCAL_QUORUM` |
@@ -611,9 +612,16 @@ target writes.
 
 **CON-011 [P+]** — Retry policy: idempotent reads retry on timeout/unavailable up to
 `perfops.retry.max_attempts` with exponential backoff and jitter. Writes MUST be treated as
-idempotent **only** for non-counter tables; counter writes MUST NOT be retried automatically
-(at-most-once), and a counter write failure MUST fail the partition range. **This is stricter than
-Java** and prevents silent counter drift — **CON-012 [P+]**.
+idempotent **only** for non-counter tables.
+
+**CON-012 [P+]** — Counter writes MUST NOT be retried automatically (at-most-once), and a counter
+write failure MUST fail the partition range. **This is stricter than Java** and prevents silent
+counter drift.
+
+> **Correction.** Earlier drafts stated `CON-012` as a trailing clause of `CON-011`'s paragraph
+> rather than as a requirement of its own, which made the traceability matrix render `CON-012`'s
+> requirement text as the *next* requirement's opening sentence. The two are now separate
+> paragraphs. Neither requirement's meaning has changed, and no ID has been renumbered.
 
 **CON-013 [N]** — Origin and target compatibility MUST be probed at startup: protocol version,
 whether `WRITETIME`/`TTL` on collections is supported, whether vector types are supported. Findings
