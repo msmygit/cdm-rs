@@ -34,7 +34,8 @@
 //!
 //! # Specification
 //!
-//! - `ENG-003` — [`RangeScan`] pages the origin at `perfops.fetch_size`
+//! - `ENG-003` — [`RangeScan`] and [`OwnedRangeScan`] page the origin at `perfops.fetch_size`
+//! - `GRD-001` — [`OriginReader`] holds an origin session and nothing that could reach a target
 //! - `CON-011` — [`TargetWriter::write`], [`RangeScan::next_page`]
 //! - `CON-012`, `MIG-032` — [`TargetWriter::write_counter`]
 //! - `MIG-020` — [`TargetWriter::write_batch`]
@@ -42,13 +43,15 @@
 //! - `SCH-009` — [`SchemaWatch`]
 
 mod executor;
+mod origin;
 mod scan;
 mod statements;
 mod watch;
 mod write;
 
 pub use executor::RunExecutor;
-pub use scan::{Page, PageRows, RangeScan, TokenWidth};
+pub use origin::{OriginReadOptions, OriginReader};
+pub use scan::{OwnedRangeScan, Page, PageRows, RangeScan, TokenWidth};
 pub use statements::{PreparedSet, PreparedSetOptions};
 pub use watch::SchemaWatch;
 pub use write::{BatchTemplate, CounterRow, TargetWriter};

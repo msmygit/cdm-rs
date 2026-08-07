@@ -21,6 +21,20 @@
 //! same-target/next-target retries and [`RangeScan::next_page`] covers the paced ones, which is
 //! also the only level at which a paged read *can* be retried: a page request that fails is
 //! re-issued with the same paging state, and re-reading a page is free of consequence.
+//!
+//! # Borrowed and owning scans are the same loop
+//!
+//! [`RangeScan`] borrows the session and the prepared statement from whatever holds them, which is
+//! what a job wants when it reads a range inside one `process` call. A reader that has to hand its
+//! scan out as a `Box<dyn ...>` — the guardrail's [`OriginRows`] is the case that exists — cannot
+//! use it: the boxed value is owned and `'static`, and a scan borrowing the reader that produced it
+//! would be self-referential. [`OwnedRangeScan`] is the same scan holding an `Arc<Session>` and its
+//! own clone of the statement, exactly as `rows::RangePager` already does per range.
+//!
+//! Both are one `ScanState` and one page loop; the difference is only where the two references
+//! come from, so there is no second retry path, no second paging path and nothing to keep in step.
+
+use std::sync::Arc;
 
 use cdm_core::{CdmError, ErrorKind, Side, TokenRange};
 use scylla::deserialize::result::TypedRowIterator;
@@ -106,33 +120,22 @@ impl<'page> Iterator for PageRows<'page> {
     }
 }
 
-/// A paged scan of one token range (`ENG-003`, `FEA-060`).
+/// Where a scan has got to, independently of who holds the session and the statement.
+///
+/// Private, and the only copy of the page loop: [`RangeScan`] and [`OwnedRangeScan`] differ in how
+/// they obtain the two references they pass in here and in nothing else.
 #[derive(Debug)]
-pub struct RangeScan<'a> {
-    session: &'a DriverSession,
-    prepared: &'a PreparedStatement,
+struct ScanState {
     bounds: TokenBinds,
     paging_state: PagingState,
     backoff: Backoff,
     finished: bool,
 }
 
-impl<'a> RangeScan<'a> {
-    /// Starts a scan of `range`, with token bounds typed for `partitioner`.
-    ///
-    /// Nothing is sent until the first [`RangeScan::next_page`], so constructing a scan for a
-    /// range the run then decides to skip costs nothing.
-    #[must_use]
-    pub fn new(
-        session: &'a DriverSession,
-        prepared: &'a PreparedStatement,
-        min: TokenBound,
-        max: TokenBound,
-        backoff: Backoff,
-    ) -> Self {
+impl ScanState {
+    /// A scan positioned at the start of the range.
+    fn new(min: TokenBound, max: TokenBound, backoff: Backoff) -> Self {
         Self {
-            session,
-            prepared,
             bounds: TokenBinds([min, max]),
             paging_state: PagingState::start(),
             backoff,
@@ -140,21 +143,9 @@ impl<'a> RangeScan<'a> {
         }
     }
 
-    /// Starts a scan of a range whose tokens are typed by `partitioner`.
-    ///
-    /// [`TokenRange`] carries `i128` bounds because a `RandomPartitioner` token runs to
-    /// `2^127 - 1`; a Murmur3 bound that does not fit an `i64` is a planner bug rather than a
-    /// datum, so it saturates rather than wrapping — a wrapped bound would silently scan the
-    /// wrong part of the ring.
-    #[must_use]
-    pub fn for_range(
-        session: &'a DriverSession,
-        prepared: &'a PreparedStatement,
-        range: TokenRange,
-        partitioner: TokenWidth,
-        backoff: Backoff,
-    ) -> Self {
-        let (min, max) = match partitioner {
+    /// The bounds a [`TokenRange`] has under `partitioner`.
+    fn bounds_of(range: TokenRange, partitioner: TokenWidth) -> (TokenBound, TokenBound) {
+        match partitioner {
             TokenWidth::Murmur3 => (
                 TokenBound::Murmur3(saturating_i64(range.min())),
                 TokenBound::Murmur3(saturating_i64(range.max())),
@@ -163,25 +154,22 @@ impl<'a> RangeScan<'a> {
                 TokenBound::Random(range.min()),
                 TokenBound::Random(range.max()),
             ),
-        };
-        Self::new(session, prepared, min, max, backoff)
+        }
     }
 
-    /// The next page, or `None` once the range is exhausted.
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorKind::Read`] once the attempts allowed by `perfops.retry.max_attempts` are used up,
-    /// or immediately for a failure the retry classification calls deterministic. The error fails
-    /// the range and only the range (`ENG-008`).
-    pub async fn next_page(&mut self) -> Result<Option<Page>, CdmError> {
+    /// The next page, retrying a failed page request in place (`CON-011`).
+    async fn next_page(
+        &mut self,
+        session: &DriverSession,
+        prepared: &PreparedStatement,
+    ) -> Result<Option<Page>, CdmError> {
         if self.finished {
             return Ok(None);
         }
         let mut attempts = 0u32;
         loop {
             attempts = attempts.saturating_add(1);
-            match self.attempt().await {
+            match self.attempt(session, prepared).await {
                 Ok(page) => return Ok(page),
                 Err(error) => {
                     if !self.backoff.should_retry(&error, attempts) {
@@ -202,10 +190,13 @@ impl<'a> RangeScan<'a> {
     }
 
     /// One attempt at the current paging state.
-    async fn attempt(&mut self) -> Result<Option<Page>, CdmError> {
-        let (result, next) = self
-            .session
-            .execute_single_page(self.prepared, &self.bounds, self.paging_state.clone())
+    async fn attempt(
+        &mut self,
+        session: &DriverSession,
+        prepared: &PreparedStatement,
+    ) -> Result<Option<Page>, CdmError> {
+        let (result, next) = session
+            .execute_single_page(prepared, &self.bounds, self.paging_state.clone())
             .await
             .map_err(|error: ExecutionError| {
                 read_error("the origin token-range scan failed", error)
@@ -220,6 +211,115 @@ impl<'a> RangeScan<'a> {
             .into_rows_result()
             .map_err(|error| read_error("the origin page carried no rows section", error))?;
         Ok(Some(Page { rows }))
+    }
+}
+
+/// A paged scan of one token range (`ENG-003`, `FEA-060`).
+#[derive(Debug)]
+pub struct RangeScan<'a> {
+    session: &'a DriverSession,
+    prepared: &'a PreparedStatement,
+    state: ScanState,
+}
+
+impl<'a> RangeScan<'a> {
+    /// Starts a scan of `range`, with token bounds typed for `partitioner`.
+    ///
+    /// Nothing is sent until the first [`RangeScan::next_page`], so constructing a scan for a
+    /// range the run then decides to skip costs nothing.
+    #[must_use]
+    pub fn new(
+        session: &'a DriverSession,
+        prepared: &'a PreparedStatement,
+        min: TokenBound,
+        max: TokenBound,
+        backoff: Backoff,
+    ) -> Self {
+        Self {
+            session,
+            prepared,
+            state: ScanState::new(min, max, backoff),
+        }
+    }
+
+    /// Starts a scan of a range whose tokens are typed by `partitioner`.
+    ///
+    /// [`TokenRange`] carries `i128` bounds because a `RandomPartitioner` token runs to
+    /// `2^127 - 1`; a Murmur3 bound that does not fit an `i64` is a planner bug rather than a
+    /// datum, so it saturates rather than wrapping — a wrapped bound would silently scan the
+    /// wrong part of the ring.
+    #[must_use]
+    pub fn for_range(
+        session: &'a DriverSession,
+        prepared: &'a PreparedStatement,
+        range: TokenRange,
+        partitioner: TokenWidth,
+        backoff: Backoff,
+    ) -> Self {
+        let (min, max) = ScanState::bounds_of(range, partitioner);
+        Self::new(session, prepared, min, max, backoff)
+    }
+
+    /// The next page, or `None` once the range is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Read`] once the attempts allowed by `perfops.retry.max_attempts` are used up,
+    /// or immediately for a failure the retry classification calls deterministic. The error fails
+    /// the range and only the range (`ENG-008`).
+    pub async fn next_page(&mut self) -> Result<Option<Page>, CdmError> {
+        self.state.next_page(self.session, self.prepared).await
+    }
+}
+
+/// A paged scan of one token range that borrows nothing (`ENG-003`, `FEA-060`).
+///
+/// The same scan as [`RangeScan`], holding the session and the statement rather than referring to
+/// them, so that it can be boxed, moved between tasks and returned from a trait method whose
+/// signature has nowhere to put a lifetime. Constructing one clones an `Arc` and a
+/// `PreparedStatement` — the latter shares the server's column specifications rather than copying
+/// them, which is why `rows::RangePager` already does this once per range and why doing it here is
+/// not a cost worth an API around.
+///
+/// It bounds memory the same way and for the same reason: one page is resident at a time, sized by
+/// `perfops.fetch_size` and never by the range (`NFR-003`).
+#[derive(Debug)]
+pub struct OwnedRangeScan {
+    session: Arc<DriverSession>,
+    prepared: PreparedStatement,
+    state: ScanState,
+}
+
+impl OwnedRangeScan {
+    /// Starts a scan of a range whose tokens are typed by `partitioner`.
+    ///
+    /// `pub(crate)` deliberately: the two arguments are driver types, and a caller outside this
+    /// crate reaches an owning scan through [`OriginReader::scan`](super::OriginReader::scan),
+    /// which is the seam `ARCHITECTURE.md` §3 asks for. Nothing is sent until the first
+    /// [`OwnedRangeScan::next_page`].
+    pub(super) fn for_range(
+        session: Arc<DriverSession>,
+        prepared: PreparedStatement,
+        range: TokenRange,
+        partitioner: TokenWidth,
+        backoff: Backoff,
+    ) -> Self {
+        let (min, max) = ScanState::bounds_of(range, partitioner);
+        Self {
+            session,
+            prepared,
+            state: ScanState::new(min, max, backoff),
+        }
+    }
+
+    /// The next page, or `None` once the range is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Exactly as [`RangeScan::next_page`]: [`ErrorKind::Read`] once the allowed attempts are used
+    /// up, failing this range and no other (`ENG-008`).
+    pub async fn next_page(&mut self) -> Result<Option<Page>, CdmError> {
+        self.state.next_page(&self.session, &self.prepared).await
     }
 }
 
