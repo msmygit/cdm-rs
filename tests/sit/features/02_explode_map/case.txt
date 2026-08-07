@@ -1,4 +1,5 @@
 # Java: SIT/features/02_explode_map/execute.sh — migrateData, validateData, breakData.cql, fixData.
+blocked the derivability check no longer rejects this and the run now starts; the migrate half passes. Validate still issues one target lookup per record instead of one per exploded entry, so validate.assert gets Missing 3 / Valid 0 where it wants Valid 12. ComparisonPlan marks explode columns Unobtainable; cdm-engine::jobs::validate needs to explode a record and use the TargetKeyPlan::key_of this change introduces, once per entry
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert
