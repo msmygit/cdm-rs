@@ -345,6 +345,7 @@ test, fails CI.
 | `TRK-034` <sup>N</sup> | `cdm runs list\|show\|resume\|cancel` MUST provide first-class run management, and `GET /v1/runs`, `GET /v1/runs/{id}` the API… — the operations live in `cdm-track::manage`; the CLI and REST renderings wire in with their own crates | `cdm-track::manage` | `trk_034_*` | #25 |
 | `TRK-035` <sup>N</sup> | Tracking writes MUST be batched and asynchronous with a bounded queue, so tracking never becomes the throughput bottleneck; on… | `cdm-track::tracker` | `trk_035_*` | #25 |
 | `TRK-036` <sup>N</sup> | Tracking MUST be storable in a pluggable backend (`TrackingStore` trait): the Cassandra target keyspace (default,… — all three backends are delivered; only the Cassandra one is Java-readable or usable under `cluster.enabled` | `cdm-track::store` | `trk_036_*` | #25 |
+| `TRK-037` <sup>N</sup> | A tracking write carrying no aggregate metrics string MUST leave the stored one intact, and every `TrackingStore` MUST agree; on Cassandra that means binding `UNSET`, not `NULL` | `cdm-track::store` | `trk_037_*` | #25 |
 
 ### DST
 

@@ -457,3 +457,49 @@ against_a_cluster!(
             .all(|q| q.reason == QuarantineReason::CounterPartiallyApplied));
     }
 );
+
+against_a_cluster!(
+    trk_037_a_status_only_write_leaves_the_recorded_metrics_alone,
+    |session| {
+        // The regression this exists for: `TRK-022`'s statement is `UPDATE ... SET run_info = ?`,
+        // and `update_run` used to bind the `Option<&str>` straight through. `RunManager::cancel`
+        // passes `None` because it has no *new* metrics — and a bound `NULL` is a tombstone, so
+        // cancelling a run silently erased the only record of how far it had got. A cancelled run
+        // is precisely the one an operator opens to find that out.
+        let table = table("unset");
+        let store = CassandraStore::new(Arc::clone(&session), &table).unwrap();
+        store.initialise().await.unwrap();
+
+        let run_id = RunId::from_raw(5_001);
+        let run = new_run_record(run_id, None, table.clone(), JobKind::Migrate);
+        store
+            .create_run(&run, &[detail(range(0, 99), RunStatus::NotStarted)])
+            .await
+            .unwrap();
+
+        // A run that got far enough to have something to say.
+        let metrics = "Read: 1000; Write: 940; Error: 60";
+        store
+            .update_run(run_id, RunStatus::Started, Some(metrics))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.run(run_id).await.unwrap().unwrap().info.as_deref(),
+            Some(metrics)
+        );
+
+        // Now the status-only write that `cdm runs cancel` issues.
+        store
+            .update_run(run_id, RunStatus::Aborted, None)
+            .await
+            .unwrap();
+
+        let after = store.run(run_id).await.unwrap().unwrap();
+        assert_eq!(after.status, RunStatus::Aborted, "the status must be taken");
+        assert_eq!(
+            after.info.as_deref(),
+            Some(metrics),
+            "TRK-037: a write with no metrics must not erase the recorded ones"
+        );
+    }
+);
