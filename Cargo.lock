@@ -558,7 +558,6 @@ dependencies = [
  "cdm-core",
  "cdm-cql",
  "cdm-engine",
- "cdm-feature",
  "cdm-metrics",
  "clap",
  "clap_complete",
@@ -568,7 +567,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
- "tracing",
 ]
 
 [[package]]
