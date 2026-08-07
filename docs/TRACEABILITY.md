@@ -255,6 +255,7 @@ test, fails CI.
 | `VAL-015` <sup>N</sup> | `--sample <percent>` is sugar for `filter.token_coverage_percent`, so `TOK-005` does the sampling; `--keys-only` (`validate.keys_only`) compares existence only and structurally cannot report a mismatch | `cdm-engine::jobs::validate` (`sample_percent`, `ComparisonPlan::with_keys_only`) | `val_015_*` | #40, #21b |
 | `VAL-016` <sup>P</sup> | Run status resolution: any discrepancy with `MISSING == CORRECTED_MISSING && MISMATCH == CORRECTED_MISMATCH` →… | `cdm-engine::jobs::validate` | `val_016_*` | #23 |
 | `VAL-017` <sup>P+</sup> | The diff log MUST NOT contain row values: every value position renders `<redacted>`, and a discrepancy is identified by its… | `cdm-engine::jobs::validate` | `val_017_*` | #23 |
+| `VAL-018` <sup>P</sup> | An autocorrected row (`VAL-003`, `VAL-007`) MUST carry the origin's TTL and writetime, resolved as `FEA-040`..`FEA-046` resolve them for a migrate write: the validate projection selects the `TTL(…)`/`WRITETIME(…)` columns, the target upsert carries the `USING` clause, and the values are bound into it; omitted only where `FEA-045`/`FEA-046` omit it | `cdm-cli::harness::build` (`validate`), `cdm-cql::rows` (`CqlRowSink`), `cdm-engine::jobs::validate` | `val_018_*` | #21d |
 
 ### GRD
 

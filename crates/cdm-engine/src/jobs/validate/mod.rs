@@ -23,7 +23,7 @@
 //!    CORRECTED_MISSING   CORRECTED_MISMATCH
 //! ```
 //!
-//! # Four things that are easy to get wrong, and are not
+//! # Five things that are easy to get wrong, and are not
 //!
 //! **Validate never deletes** (`VAL-010`). There is no delete path in this module. A target row the
 //! origin does not have is invisible to a validate run — Java has the same blind spot, and it is
@@ -47,6 +47,18 @@
 //!
 //! **Row values are never logged** (`SEC-002`, `VAL-017`). See [`compare`] and [`difflog`].
 //!
+//! **A corrected row carries the origin's TTL and writetime** (`VAL-018`). It is the origin row
+//! that is authoritative about *when* a value was written, not the clock of the coordinator that
+//! happens to repair it: a correction stamped with wall-clock time shadows every later origin write
+//! whose timestamp is earlier, so the run after this one cannot put it right. This job does not
+//! compute the two values itself — `FEA-040`..`FEA-046` resolve them from `TTL(…)`/`WRITETIME(…)`
+//! cells of the origin projection, exactly as they do for migrate — but it is the job whose
+//! guarantee they belong to, and the three places they are supplied from are outside this module:
+//! the validate builder resolves the plan and extends the projection, the target upsert is
+//! generated with the `USING` clause the plan implies, and the row sink binds the per-row values
+//! into it. `FEA-045` disables all of that for a counter table on either side, which is why a
+//! counter correction is unaffected.
+//!
 //! # Specification
 //!
 //! - `VAL-001` — [`ValidateJob::process`], the read/filter/fetch/buffer loop
@@ -58,6 +70,7 @@
 //! - `VAL-013` — [`report`]
 //! - `VAL-015` — [`ComparisonPlan::with_keys_only`], [`sample_percent`]
 //! - `VAL-016` — [`status::verdict`]
+//! - `VAL-018` — supplied to [`ValidateJob`]'s sink by the harness; see the note above
 
 pub mod compare;
 pub mod difflog;
