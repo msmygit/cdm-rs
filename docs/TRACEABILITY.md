@@ -197,7 +197,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `ENG-001` <sup>N</sup> | The engine MUST be a Tokio-based work-stealing scheduler | `cdm-engine` | `eng_001_*` | #20 |
 | `ENG-002` <sup>P</sup> | A partition range is the unit of atomicity for tracking and resume: it is marked `STARTED` before work begins and… | `cdm-engine` | `eng_002_*` | #20 |
-| `ENG-003` <sup>P</sup> | Origin reads MUST be paged with page size `perfops.fetch_size` and streamed — never fully materialised | `cdm-engine`, `cdm-cql::exec::scan`, `cdm-cql::exec::origin`, `cdm-engine::jobs::guardrail::origin` | `eng_003_*` | #21, #49 |
+| `ENG-003` <sup>P</sup> | Origin reads MUST be paged with page size `perfops.fetch_size` and streamed — never fully materialised | `cdm-engine`, `cdm-cql::exec::scan`, `cdm-cql::exec::origin`, `cdm-engine::jobs::guardrail::origin` | `eng_003_*` | #21 |
 | `ENG-004` <sup>P</sup> | Two independent per-node rate limiters (origin rows read/s, target rows written/s), with an opt-in globally-divided mode | `cdm-engine` | `eng_004_*` | #20 |
 | `ENG-005` <sup>N</sup> | Rate limiting MUST use a token-bucket with burst = 1 second of budget, and MUST apply backpressure (await) rather than… | `cdm-engine` | `eng_005_*` | #20 |
 | `ENG-006` <sup>N</sup> | `perfops.adaptive_ratelimit = true` MUST reduce the effective rate when the target reports overload (write timeouts,… | `cdm-engine` | `eng_006_*` | #53 |
@@ -260,8 +260,8 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `GRD-001` <sup>P+</sup> | The guardrail job reads the **origin only**; no target connection is required or opened | `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin`, `cdm-cql::exec::origin`, `cdm-feature::guardrail` | `grd_001_*` | #24, #49 |
-| `GRD-002` <sup>P</sup> | For each row, every column's serialized size MUST be computed and compared against `feature.guardrail.column_size_kb * 1000`… | `cdm-feature::guardrail`, `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin` | `grd_002_*` | #24, #49 |
+| `GRD-001` <sup>P+</sup> | The guardrail job reads the **origin only**; no target connection is required or opened | `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin`, `cdm-cql::exec::origin`, `cdm-feature::guardrail` | `grd_001_*` | #24 |
+| `GRD-002` <sup>P</sup> | For each row, every column's serialized size MUST be computed and compared against `feature.guardrail.column_size_kb * 1000`… | `cdm-feature::guardrail`, `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin` | `grd_002_*` | #24 |
 | `GRD-003` <sup>P+</sup> | A row with at least one oversized column increments `LARGE` and logs `Large columns (KB): col(12.345),col2(...)` with… | `cdm-feature::guardrail` | `grd_003_*` | #24 |
 | `GRD-004` <sup>N</sup> | Guardrail MUST additionally be runnable *inline* during migrate/validate (`feature.guardrail.mode = check\|warn\|block`),… | `cdm-engine::jobs::guardrail`, `cdm-feature::guardrail` | `grd_004_*` | #24 |
 | `GRD-005` <sup>N</sup> | Additional guardrails MUST be pluggable via `PLG-003`: partition size, row count per partition, collection cardinality, and… | `cdm-engine::jobs::guardrail` | `grd_005_*` | #54 |
@@ -487,7 +487,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `NFR-001` | Static binary for `linux-x86_64` (gnu + musl), `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64` | `workspace` | `nfr_001_*` | #56 |
 | `NFR-002` | Cold start to first row read MUST be < 2 seconds for a single-table run | `workspace` | `nfr_002_*` | #55 |
-| `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace`, `cdm-engine::planner::report`, `cdm-cql::exec::scan`, `cdm-engine::jobs::guardrail::origin` | `nfr_003_*` | #17, #49, #55 |
+| `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace`, `cdm-engine::planner::report`, `cdm-cql::exec::scan`, `cdm-engine::jobs::guardrail::origin` | `nfr_003_*` | #17, #55 |
 | `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace` | `nfr_004_*` | #55 |
 | `NFR-005` | MSRV MUST be an explicitly declared, tested Rust version, bumped only in a minor release, and stated in `Cargo.toml`… | `workspace` | `nfr_005_*` | #57 |
 | `NFR-006` | Every public item in every crate MUST have rustdoc; `#![deny(missing_docs)]` on all library crates | `workspace` | `nfr_006_*` | #57 |
