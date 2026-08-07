@@ -1,0 +1,12 @@
+# Java: SIT/regression/03_performance. Four thousand rows over thirty-two token ranges with
+# `batchSize 1` — the case that catches a planner that loses a range, a paging bug that loses a
+# page, and a flush that never happens.
+#
+# Java loads the rows with `dsbulk`. This port inlines them as CQL, because a parity suite that
+# needs a second tool installed is a parity suite that gets skipped.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+cql   break.cql
+job   validate fix.properties      fix.assert
+check expected.cql expected.out

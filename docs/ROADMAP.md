@@ -27,7 +27,8 @@ delivered as one PR where splitting them would have merged a knowingly-wrong int
 |---|---|
 | #1–#20, #27–#31, #36–#38 | **Delivered.** Docs and scaffolding, the driver spike, `cdm-core`, all of `cdm-config`, all of `cdm-codec`, `cdm-cql` through statement construction, the CLI skeleton, the testkit, the token planner, the scheduler, and metrics through the event bus. |
 | #21–#26 | **Delivered.** The three jobs (migrate with counters, validate with autocorrect, guardrail), run tracking with resume and rerun, the error limit and graceful shutdown. |
-| #32–#35, #39–#58 | **Not started.** The SIT parity suite, the property and differential harnesses, `--compat-java`, the terminal UI, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
+| #32 | **Delivered.** All nineteen Java SIT cases ported to a declarative harness under `tests/sit/`, driven against a container by `cargo xtask sit`, with `sit.yml` restored to `push: [main]` and a nightly schedule. Ten cases run and pass; nine report `BLOCKED` and name the `cdm-cli` wiring they wait on — every one of them the same four defaulted arguments in `crates/cdm-cli/src/harness/build.rs`. |
+| #33–#35, #39–#58 | **Not started.** The property and differential harnesses, `--compat-java`, the terminal UI, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
 
 **That gap is now closed.** The shared *connect → introspect → plan → run* path had no roadmap PR
 of its own: it was assumed into #21–#24 and fell between them, because each job could be built and
@@ -99,7 +100,7 @@ pre-computed range set, `cdm cluster` on #50, and `cdm serve` and `cdm mcp` on #
 | #29 | `feat(feature): extract JSON` | `FEA-030`..`FEA-035` |
 | #30 | `feat(feature): TTL and writetime` | `FEA-040`..`FEA-046` |
 | #31 | `feat(feature): filter chain` | `FEA-050`..`FEA-054` |
-| #32 | `test(sit): port all 19 Java SIT cases` | `TST-003`, `S1` — **also re-enables the `pull_request`/`push` triggers on `sit.yml`** |
+| #32 | `test(sit): port all 19 Java SIT cases` | `TST-003`, `S1` — **also restores the `push`/`schedule` triggers on `sit.yml`**. Not `pull_request`: the suite is minutes of container time for a signal `integration.yml` mostly gives first on every PR, and what it adds — a counter block that changes only when a job's accounting changes — is a claim about `main`. |
 | #33 | `test: property, fault-injection and resume suites` | `TST-010`, `TST-040`, `TST-041` |
 | #34 | `test: differential harness against Java CDM` | `TST-020`, `COMPAT-003`, `COMPAT-004` — **also restores the nightly schedule on `differential.yml`** |
 | #35 | `feat: --compat-java behaviour bundle + migration guide` | `COMPAT-001`, `COMPAT-002` |
@@ -180,7 +181,7 @@ restoring the triggers.
 | Workflow | Dormant until | Reason |
 |---|---|---|
 | ~~`integration.yml`~~ | ~~#16~~ — **live**, restored early by #2 | the driver spike gave it something to run before #16 did |
-| `sit.yml` | #32 | no SIT cases are ported yet |
+| ~~`sit.yml`~~ | ~~#32~~ — **live** | restored by #32 to `push: [main]` plus a nightly schedule; deliberately not `pull_request`, because `integration.yml` already covers that ground faster |
 | `differential.yml` | #34 | no differential harness exists |
 | `bench.yml` | #55 | no benchmarks exist |
 

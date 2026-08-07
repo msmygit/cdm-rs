@@ -1,27 +1,60 @@
 name: SIT parity
 
-# NOTE: the ported SIT cases are delivered by PR #32. Until then this workflow is
-# manual-dispatch only. Restore the `pull_request` and `push` triggers in PR #32.
+# The ported Java SIT cases (TST-003, success criterion S1).
+#
+# Deliberately **not** `pull_request`. The suite starts a Cassandra 5.0 container, builds the `cdm`
+# binary and runs nineteen cases against one node in sequence — minutes of wall clock for a signal
+# that `integration.yml`, which already runs four Cassandra versions on every pull request, mostly
+# gives first. What this suite adds is *parity*: it fails when a final counter block changes, and a
+# counter block only changes when a job's accounting does. That is worth a run per merge and per
+# night rather than a run per push to a branch.
+#
+# `push: [main]` is the trigger that matters. Parity is a claim about what is on main, so a change
+# that breaks it has to be visible on the commit that broke it rather than at the next nightly.
+# `schedule` catches what a push cannot: a case can start failing without cdm-rs changing at all,
+# because the `cassandra:5.0` tag moves underneath it.
 on:
+  push:
+    branches: [main]
+  schedule:
+    # 04:30 UTC. `integration.yml`'s nightly starts at 03:00 and takes the better part of an hour
+    # over its five-engine matrix, so anything sooner contends with it for runners and for the
+    # registry's pull rate limit — and a SIT run that fails because it could not pull
+    # `cassandra:5.0` reports a parity break that never happened.
+    - cron: "30 4 * * *"
   workflow_dispatch:
 
 concurrency:
   group: sit-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   sit:
-    # TST-003 / success criterion S1: all 19 ported Java SIT cases must pass with
-    # byte-identical counter assertions.
+    # TST-003 / success criterion S1: all 19 ported Java SIT cases must pass with byte-identical
+    # counter assertions. Nine of them currently report BLOCKED rather than running, each naming
+    # the `cdm-cli` wiring it waits on; see `tests/sit/README.md`.
     name: Java SIT parity suite
     runs-on: ubuntu-latest
+    # The cases themselves take about two minutes. The budget is for a cold cargo cache and a cold
+    # image pull; reaching it means something hung, not that the suite is slow.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Builds the `cdm` binary, removes any leftover `cdm-sit-node` container, runs the cases
+      # single-threaded against one shared node, and removes it again.
       - run: cargo xtask sit
+      - name: Explain a BLOCKED case
+        if: always()
+        run: |
+          echo "::notice::A case reported BLOCKED is complete and waiting on production wiring."
+          echo "::notice::Each names the exact code that blocks it in its tests/sit/*/*/case.txt."
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: sit-output
-          path: tests/sit/**/output/
+          name: sit-cases
+          path: tests/sit/**

@@ -1,0 +1,7 @@
+# Java: SIT/features/04_udt_mapper/execute.sh — migrateData, validateData, breakData.cql, fixData.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+cql   break.cql
+job   validate fix.properties      fix.assert
+check expected.cql expected.out

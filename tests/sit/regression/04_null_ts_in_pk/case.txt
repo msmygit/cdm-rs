@@ -1,0 +1,12 @@
+# Java: SIT/regression/04_null_ts_in_pk. The origin's `ts` is an ordinary column; on the target
+# it is part of the primary key, and one origin row leaves it null. A null in a target primary
+# key cannot be written, so MIG-013 substitutes the configured replacement.
+
+# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
+# expected to pass unchanged once the wiring lands.
+blocked cdm-cli binds with MissingKeyPolicy::default() in both jobs (crates/cdm-cli/src/harness/build.rs), so transform.missing.key.ts.replace.value is parsed and discarded and the null-ts row is counted ERROR instead of substituted (MIG-013)
+
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+check expected.cql expected.out

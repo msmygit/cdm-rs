@@ -28,3 +28,10 @@ rand.workspace = true
 testcontainers.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+
+# The SIT parity suite (`TST-003`) renders each case's `.properties` template into a scratch
+# directory and hands the path to the `cdm` binary. Nothing is written to a fixed path: a suite
+# that wrote to `/tmp` by name would not run on Windows, which has broken this repository's CI
+# before.
+[dev-dependencies]
+tempfile.workspace = true

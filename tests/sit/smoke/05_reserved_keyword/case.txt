@@ -1,0 +1,6 @@
+# Java: SIT/smoke/05_reserved_keyword. `order` is a CQL reserved word, so every statement the
+# run generates has to quote it (SCH-002). Unquoted, the origin select is a syntax error.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+check expected.cql expected.out

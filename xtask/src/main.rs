@@ -69,7 +69,8 @@ fn run(task: &Task) -> anyhow::Result<()> {
         Task::Openapi { check } => openapi(*check),
         Task::Docs { check } => docs(*check),
         Task::It { engines } => integration(engines.as_deref()),
-        Task::InstallHooks | Task::Sit | Task::Differential => {
+        Task::Sit => sit(),
+        Task::InstallHooks | Task::Differential => {
             anyhow::bail!(not_yet(task))
         }
     }
@@ -96,11 +97,12 @@ fn repo_root() -> anyhow::Result<std::path::PathBuf> {
 fn not_yet(task: &Task) -> String {
     let pr = match task {
         Task::InstallHooks => "a #1 follow-up",
-        Task::Sit => "#32 (SIT parity suite)",
         Task::Differential => "#34 (differential harness)",
-        Task::CheckTraceability | Task::Openapi { .. } | Task::Docs { .. } | Task::It { .. } => {
-            "this build"
-        }
+        Task::CheckTraceability
+        | Task::Openapi { .. }
+        | Task::Docs { .. }
+        | Task::It { .. }
+        | Task::Sit => "this build",
     };
     format!("`{task:?}` is delivered by PR {pr}; see docs/ROADMAP.md")
 }
@@ -272,4 +274,86 @@ fn integration(engines: Option<&str>) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("cannot run the integration suite: {e}"))?;
     anyhow::ensure!(status.success(), "the integration suite failed: {status}");
     Ok(())
+}
+
+/// `TST-003`: the ported Java SIT parity suite.
+///
+/// Two steps, and the order matters. The suite drives the `cdm` **binary** as a subprocess — as
+/// Java's SIT drives `spark-submit` rather than `CopyJobSession` — so the binary has to exist
+/// before the tests look for it beside themselves. Building it here rather than leaving it to the
+/// caller is what makes `cargo xtask sit` the one command the workflow and a developer both run.
+///
+/// Single-threaded for the same reason as [`integration`], and one more: every case owns tables in
+/// the shared `origin` and `target` keyspaces, exactly as the Java harness does, so two cases
+/// running at once would drop each other's tables.
+///
+/// # Skipping is not failing
+///
+/// As `TST-102`: with no container runtime this reports why and returns success. A red suite that
+/// only means "no Docker here" trains people to ignore it.
+fn sit() -> anyhow::Result<()> {
+    match cdm_testkit::ContainerRuntime::detect() {
+        Ok(runtime) => println!("sit: using container runtime at {runtime}"),
+        Err(reason) => {
+            println!("{reason}");
+            println!("sit: skipped, not failed (TST-102). Nothing ran, and that is not an error.");
+            return Ok(());
+        }
+    }
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    let root = repo_root()?;
+
+    let status = std::process::Command::new(&cargo)
+        .current_dir(&root)
+        .args(["build", "-p", "cdm-cli", "--bin", "cdm"])
+        .status()
+        .map_err(|e| anyhow::anyhow!("cannot build the `cdm` binary: {e}"))?;
+    anyhow::ensure!(
+        status.success(),
+        "the `cdm` binary did not build, so no SIT case could run: {status}"
+    );
+
+    remove_sit_node();
+    let status = std::process::Command::new(&cargo)
+        .current_dir(&root)
+        .args([
+            "test",
+            "-p",
+            "cdm-testkit",
+            "--test",
+            "sit_it",
+            "--",
+            "--ignored",
+            "--test-threads=1",
+            "--nocapture",
+        ])
+        .status()
+        .map_err(|e| anyhow::anyhow!("cannot run the SIT parity suite: {e}"))?;
+    remove_sit_node();
+    anyhow::ensure!(status.success(), "the SIT parity suite failed: {status}");
+    Ok(())
+}
+
+/// The container name the SIT suite gives its shared node.
+const SIT_CONTAINER: &str = "cdm-sit-node";
+
+/// Stops and removes the SIT node, if one is left over.
+///
+/// The suite holds its node in a `static` so that nineteen cases share one container, and a
+/// `static` is never dropped — so the container outlives the test process, and the next run cannot
+/// bind the fixed CQL port. Java's harness has the same shape and the same answer: `environment.sh
+/// -m teardown`. This runs before and after, names exactly one container, and never fails the
+/// command: a runtime that cannot remove a container that is not there has nothing to report.
+fn remove_sit_node() {
+    for runtime in ["docker", "podman"] {
+        let removed = std::process::Command::new(runtime)
+            .args(["rm", "--force", SIT_CONTAINER])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if matches!(removed, Ok(status) if status.success()) {
+            return;
+        }
+    }
 }

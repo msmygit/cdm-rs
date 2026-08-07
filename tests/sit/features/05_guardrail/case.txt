@@ -1,0 +1,17 @@
+# Java: SIT/features/05_guardrail. One clean row and three rows over the 1 KB column-size
+# threshold — an oversized value, an oversized map key and an oversized map value.
+#
+# Two things here are *not* Java's behaviour, and both are deliberate:
+#   * divergence 33 — a guardrail run that found an oversized row exits 1, where Java always
+#     exits 0. CLI-004 reserves 1 for "completed with discrepancies", which is what the harness
+#     accepts alongside 0 for every job step.
+#   * divergence 32 — an unset threshold is a startup error rather than a run that reports the
+#     table clean, so this case's properties must set `colSizeInKB`.
+
+# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
+# expected to pass unchanged once the wiring lands.
+blocked cdm-cli rejects JobKind::Guardrail outright (crates/cdm-cli/src/harness/build.rs::job): the job needs a paged origin row source that has not landed. The job itself is implemented and covered by cdm-engine's guardrail_it
+
+cql   setup.cql
+job   guardrail migrate.properties guardrail.assert
+check expected.cql expected.out

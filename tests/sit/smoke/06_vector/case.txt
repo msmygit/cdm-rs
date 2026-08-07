@@ -1,0 +1,6 @@
+# Java: SIT/smoke/06_vector. `vector<float, 3>` is Cassandra 5.0 only (CDC-004), so the
+# harness skips this case — it does not fail it — on an older engine.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+job   validate migrate.properties  validate.assert
+check expected.cql expected.out

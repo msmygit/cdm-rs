@@ -1843,27 +1843,50 @@ failed — `vector<t, n>` is Cassandra 5.0 only (`CDC-004`).
 **TST-003** — **End-to-end SIT parity tests**: every Java SIT case MUST be ported to a declarative
 Rust harness and MUST assert the identical counter block.
 
-| Java SIT case | cdm-rs test | Covers |
+A case is a directory under `tests/sit/<phase>/<name>/` holding a `case.txt` step list — which
+replaces Java's `cdm.txt` and `execute.sh`, since the two always said the same thing twice — the
+CQL scripts and `.properties` templates it names, a counter-block expectation per job step, and an
+`expected.cql`/`expected.out` pair for the target's final state. `cdm-testkit::sit` parses a case;
+`cdm-testkit/tests/sit_it.rs` runs one against a container; `cargo xtask sit` is the one command.
+
+The harness MUST drive the `cdm` **binary** as a subprocess rather than the library, because Java's
+SIT drives `spark-submit` rather than `CopyJobSession`: a suite that reached past the command line
+would certify an engine nobody can invoke.
+
+The expectation files MUST be derived from this specification rather than copied from the Java
+tree. Java's `.assert` files record Java's behaviour, and cdm-rs deliberately does not reproduce all
+of it — copying them would encode the unreachable migrate flush threshold (`MIG-004`) and the
+permanently-zero validate error count (`ENG-008`) as cdm-rs's expected behaviour. Row **order** MUST
+NOT be asserted: Java's `expected.out` records `cqlsh`'s return order, which for a partition scan is
+murmur3 token order and a fact about the fixture's keys rather than about the migration. The
+harness compares the column list, the sorted row set and the `(N rows)` count.
+
+A case that cannot yet run MUST say so in its `case.txt` with a `blocked <reason>` line naming the
+exact code that blocks it, and the harness MUST report it rather than pass silently. `#[ignore]`
+cannot carry this: `--ignored` runs only ignored tests, and every case in this suite is ignored
+because every case needs a container.
+
+| Java SIT case | cdm-rs test (`cdm-testkit/tests/sit_it.rs`) | Covers |
 |---|---|---|
-| `smoke/00_test_harness` | `sit::harness` | harness self-check |
-| `smoke/01_basic_kvp` | `sit::basic_kvp` | MIG-001, VAL-001 |
-| `smoke/02_autocorrect_kvp` | `sit::autocorrect` | VAL-003, VAL-007 |
-| `smoke/03_ttl_writetime` | `sit::ttl_writetime` | FEA-040..046 |
-| `smoke/04_counters` | `sit::counters` | MIG-030..032, VAL-004 |
-| `smoke/05_reserved_keyword` | `sit::reserved_keyword` | SCH-002 |
-| `smoke/06_vector` | `sit::vector` | CDC-004 |
-| `features/01_constant_column` | `sit::constant_column` | FEA-010..013 |
-| `features/02_explode_map` | `sit::explode_map` | FEA-020..023 |
-| `features/03_codec` | `sit::codecs` | CDC-020..022 |
-| `features/04_udt_mapper` | `sit::udt` | CDC-013, CDC-014 |
-| `features/05_guardrail` | `sit::guardrail` | GRD-001..003 |
-| `features/06_constant_column_remove` | `sit::constant_column_remove` | FEA-014 |
-| `features/07_constant_column_replace` | `sit::constant_column_replace` | FEA-014 |
-| `features/08_map_columns_origin_target` | `sit::column_mapping` | SCH-003, SCH-004 |
-| `regression/01_explode_map_with_constants` | `sit::explode_with_constants` | FEA-010+FEA-020+CDC-020 |
-| `regression/02_ColumnRenameWithConstantsAndExplode` | `sit::quoted_identifiers` | SCH-002, SCH-003 |
-| `regression/03_performance` | `sit::bulk` | ENG-*, MIG-020 |
-| `regression/04_null_ts_in_pk` | `sit::null_ts_in_pk` | MIG-013 |
+| `smoke/00_test_harness` | `tst_003_the_harness_can_load_a_schema_and_read_it_back` | harness self-check |
+| `smoke/01_basic_kvp` | `tst_003_two_rows_migrate_and_then_validate_clean` | MIG-001, VAL-001 |
+| `smoke/02_autocorrect_kvp` | `tst_003_autocorrect_repairs_a_missing_row_and_a_mismatched_one` | VAL-003, VAL-007 |
+| `smoke/03_ttl_writetime` | `tst_003_ttl_and_writetime_are_carried_across_as_the_per_row_maximum` | FEA-040..046 |
+| `smoke/04_counters` | `tst_003_a_counter_delta_lands_once_and_a_deleted_counter_needs_the_explicit_opt_in` | MIG-030..032, VAL-004 |
+| `smoke/05_reserved_keyword` | `tst_003_a_column_named_after_a_reserved_word_is_quoted_everywhere` | SCH-002 |
+| `smoke/06_vector` | `tst_003_a_float_vector_column_round_trips` | CDC-004 |
+| `features/01_constant_column` | `tst_003_constant_columns_supply_target_columns_the_origin_does_not_have` | FEA-010..013 |
+| `features/02_explode_map` | `tst_003_a_map_column_explodes_into_one_target_row_per_entry` | FEA-020..023 |
+| `features/03_codec` | `tst_003_string_columns_convert_into_typed_target_columns` | CDC-020..022 |
+| `features/04_udt_mapper` | `tst_003_udts_nested_in_collections_are_converted_field_by_field` | CDC-013, CDC-014 |
+| `features/05_guardrail` | `tst_003_the_guardrail_finds_three_oversized_rows_and_exits_non_zero` | GRD-001..003 |
+| `features/06_constant_column_remove` | `tst_003_origin_columns_the_target_does_not_have_are_dropped` | FEA-014 |
+| `features/07_constant_column_replace` | `tst_003_constant_columns_replace_the_origins_own_key_columns` | FEA-014 |
+| `features/08_map_columns_origin_target` | `tst_003_columns_map_by_name_across_two_differently_shaped_tables` | SCH-003, SCH-004 |
+| `regression/01_explode_map_with_constants` | `tst_003_an_exploded_map_a_constant_column_and_a_codec_compose` | FEA-010+FEA-020+CDC-020 |
+| `regression/02_ColumnRenameWithConstantsAndExplode` | `tst_003_quoted_hyphenated_identifiers_survive_a_rename_and_an_explode` | SCH-002, SCH-003 |
+| `regression/03_performance` | `tst_003_four_thousand_rows_across_thirty_two_ranges_lose_nothing` | ENG-*, MIG-020 |
+| `regression/04_null_ts_in_pk` | `tst_003_a_null_in_a_target_key_column_is_substituted` | MIG-013 |
 
 **TST-010** — **Property-based tests** (`proptest`) MUST cover: the token splitter (`TOK-003`) —
 ranges are contiguous, non-overlapping, and cover exactly the requested span; codec round-trips

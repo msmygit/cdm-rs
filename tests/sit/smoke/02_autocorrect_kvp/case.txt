@@ -1,0 +1,10 @@
+# Java: SIT/smoke/02_autocorrect_kvp — migrateData, breakData.cql, validateData.
+#
+# The validate run carries `autocorrect.missing` and `autocorrect.mismatch`, so it both
+# reports and repairs (VAL-003, VAL-007). As in smoke/01 the counter blocks are new: Java
+# ships no `.assert` for this case.
+cql   setup.cql
+job   migrate  migrate.properties  migrate.assert
+cql   break.cql
+job   validate migrate.properties  fix.assert
+check expected.cql expected.out
