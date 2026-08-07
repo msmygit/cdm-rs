@@ -1622,13 +1622,14 @@ fn met_033_the_report_hands_the_summary_a_pointer_to_itself() {
 
 #[test]
 fn val_013_an_unwritable_report_is_a_startup_error_not_a_surprise_at_the_end() {
-    let error = DiscrepancyReport::open(
-        RunId::from_raw(1),
-        ReportFormat::Json,
-        "/dev/null/nested/report.json",
-        true,
-    )
-    .unwrap_err();
+    // A path whose *parent* is a regular file, which no platform will create a directory beneath.
+    // `/dev/null/nested` was the obvious spelling and is Unix-only: Windows has no `/dev/null`, so
+    // the path reads as an ordinary relative directory and the open succeeds.
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let unwritable = file.path().join("nested").join("report.json");
+
+    let error = DiscrepancyReport::open(RunId::from_raw(1), ReportFormat::Json, &unwritable, true)
+        .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Config);
     assert!(error.to_string().contains("VAL-013"), "{error}");
     assert!(
@@ -1639,16 +1640,21 @@ fn val_013_an_unwritable_report_is_a_startup_error_not_a_surprise_at_the_end() {
 
 #[test]
 fn val_013_a_disabled_report_touches_the_filesystem_not_at_all() {
-    // `format = none` must not create — let alone truncate — the file at the default path.
-    let report = DiscrepancyReport::open(
-        RunId::from_raw(1),
-        ReportFormat::None,
-        "/dev/null/nested/report.json",
-        true,
-    )
-    .unwrap();
+    // `format = none` must not create — let alone truncate — the file at the configured path.
+    // The path is one `open` would fail on, so a report that quietly opened it anyway could not
+    // pass this test on any platform.
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let unwritable = file.path().join("nested").join("report.json");
+
+    let report =
+        DiscrepancyReport::open(RunId::from_raw(1), ReportFormat::None, &unwritable, true).unwrap();
     assert!(!report.is_enabled());
     report.finish().unwrap();
+    assert!(
+        !unwritable.exists(),
+        "a disabled report must not create {}",
+        unwritable.display()
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
