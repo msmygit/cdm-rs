@@ -3,6 +3,12 @@ rules:
   line-length:
     max: 120
     level: warning
+  # `{ $ref: '#/components/schemas/Run' }` is how OpenAPI is written everywhere, and
+  # api/openapi.yaml has some two hundred of them. Reformatting all of it to satisfy a purely
+  # cosmetic default would make the file unidiomatic to anyone who has read another spec.
+  # One space is allowed; two is still an error, so alignment padding stays out.
+  braces:
+    max-spaces-inside: 1
   document-start: disable
   truthy:
     check-keys: false

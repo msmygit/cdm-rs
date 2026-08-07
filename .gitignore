@@ -27,3 +27,7 @@ cdm.local.*
 
 # Generated during local integration runs
 /tests/local/
+
+# Scratch git worktrees. A full second checkout of the repo lands here, so leaving it untracked
+# but unignored means every `git status` and every `--all-files` lint sweep walks into it.
+/.claude/worktrees/
