@@ -112,6 +112,13 @@ indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 zip = "2"
 
+# --- embedded storage (TRK-036) ---------------------------------------------
+# The SQLite tracking backend. `bundled` compiles the SQLite amalgamation that ships inside the
+# crate, so cdm-rs never links against whatever libsqlite3 a host happens to provide: one engine,
+# one version, identical behaviour on Linux, macOS and Windows, and no system package to install
+# before `cargo build` works. The C is built by `cc`, which every CI target already has.
+rusqlite = { version = "0.40", features = ["bundled"] }
+
 # --- utilities --------------------------------------------------------------
 governor = "0.7"
 parking_lot = "0.12"

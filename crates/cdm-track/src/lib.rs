@@ -41,7 +41,8 @@
 //! * [`schema`] — the two tables and every statement against them (`TRK-010`, `TRK-011`);
 //! * [`compat`] — the column values Java and cdm-rs must spell identically (`TRK-013`,
 //!   `TRK-014`);
-//! * [`store`] — the backends behind [`TrackingStore`](cdm_core::TrackingStore) (`TRK-036`);
+//! * [`store`] — the backends behind [`TrackingStore`](cdm_core::TrackingStore): Cassandra,
+//!   SQLite and in-memory (`TRK-036`);
 //! * [`tracker`] — the run lifecycle and the bounded, batched writer (`TRK-020`..`TRK-022`,
 //!   `TRK-035`);
 //! * [`resume`] — adopting a previous run and turning it into a work list
@@ -105,7 +106,7 @@
 //! - `TRK-033` — [`resume::subdivide`]
 //! - `TRK-034` — [`manage::RunManager`]
 //! - `TRK-035` — [`tracker::TrackerConfig`]
-//! - `TRK-036` — [`store::MemoryStore`], [`store::CassandraStore`]
+//! - `TRK-036` — [`store::CassandraStore`], [`store::SqliteStore`], [`store::MemoryStore`]
 //! - `DST-015` — [`resume::RerunPolicy`]
 
 pub mod compat;
@@ -124,7 +125,7 @@ pub use resume::{
 };
 pub use schema::TrackingTables;
 pub use settings::TrackingSettings;
-pub use store::{CassandraStore, MemoryStore};
+pub use store::{CassandraStore, MemoryStore, SqliteStore};
 pub use tracker::{committed_run_info, new_run_record, RunTracker, TrackerConfig};
 
 /// The version of this crate, as reported by `cdm version`.
