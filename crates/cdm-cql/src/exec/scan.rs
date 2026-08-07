@@ -184,7 +184,7 @@ impl<'a> RangeScan<'a> {
             match self.attempt().await {
                 Ok(page) => return Ok(page),
                 Err(error) => {
-                    if !self.backoff.may_retry(attempts) || !error.is_retryable() {
+                    if !self.backoff.should_retry(&error, attempts) {
                         return Err(error);
                     }
                     let delay = self.backoff.delay_for(attempts);

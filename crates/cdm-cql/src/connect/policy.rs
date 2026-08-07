@@ -161,6 +161,29 @@ impl Backoff {
     pub fn may_retry(&self, attempts: u32) -> bool {
         attempts < self.max_attempts
     }
+
+    /// The whole of `CON-011`'s caller-side decision: retry `error` after `attempts` tries?
+    ///
+    /// Two conditions, and both have to hold: the failure has to be one retrying could fix
+    /// ([`ErrorKind::is_retryable`](cdm_core::ErrorKind::is_retryable) — a transport failure, not
+    /// a syntax error), and the attempt budget has to have something left in it.
+    ///
+    /// It exists as a named function because it was written out three times — the range scan, the
+    /// target write and the counter lookup each had their own copy of `!may_retry || !retryable`
+    /// — and because that is the predicate `TST-040` has to be able to drive with an injected
+    /// fault. A rule reproduced at three call sites is a rule that will eventually differ at one
+    /// of them, and the one that would differ silently here is the counter lookup, whose retries
+    /// feed a delta that must be computed against a value read a moment ago.
+    ///
+    /// **Idempotence is not checked here, and must not be.** A counter write can fail with a
+    /// perfectly retryable [`ErrorKind::Write`](cdm_core::ErrorKind::Write) and must still never
+    /// be retried (`CON-012`); that half of the rule is carried by the type system, in
+    /// [`Idempotent`](crate::statement::Idempotent), which is why
+    /// [`TargetWriter::write_counter`](crate::exec::TargetWriter::write_counter) has no retry loop
+    /// for this function to appear in.
+    pub fn should_retry(&self, error: &cdm_core::CdmError, attempts: u32) -> bool {
+        self.may_retry(attempts) && error.is_retryable()
+    }
 }
 
 /// The retry policy of `CON-011` and `CON-012`.

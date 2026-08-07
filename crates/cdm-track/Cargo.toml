@@ -36,7 +36,14 @@ serde.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing.workspace = true
 
+# The resume suite drives the real migrate job against a real node, so it needs the codec planner
+# the job's conversion plans are built from. A *dev*-dependency is outside the production graph
+# `ARCHITECTURE.md` §3 governs, which is the same reason `cdm-engine` dev-depends on `scylla`.
 [dev-dependencies]
+cdm-codec.workspace = true
 cdm-testkit.workspace = true
+# `proptest` is the workspace's property-testing crate; `TST-041`'s coverage invariant has to hold
+# for *every* interruption point, which is a property rather than a case.
+proptest.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

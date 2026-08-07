@@ -595,6 +595,7 @@ dependencies = [
  "chrono-tz",
  "humantime-serde",
  "num_cpus",
+ "proptest",
  "regex",
  "schemars 1.2.2",
  "serde",
@@ -632,6 +633,7 @@ dependencies = [
  "cdm-testkit",
  "futures",
  "p12-keystore",
+ "proptest",
  "rand 0.8.7",
  "rcgen",
  "rustls",
@@ -734,6 +736,7 @@ name = "cdm-track"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cdm-codec",
  "cdm-config",
  "cdm-core",
  "cdm-cql",
@@ -742,6 +745,7 @@ dependencies = [
  "cdm-testkit",
  "chrono",
  "parking_lot",
+ "proptest",
  "scylla",
  "serde",
  "serde_json",

@@ -744,7 +744,7 @@ mod tests {
             .split("/// Reads the target row")
             .next()
             .unwrap();
-        for forbidden in ["retrying(", "may_retry", "loop {"] {
+        for forbidden in ["retrying(", "may_retry", "should_retry", "loop {"] {
             assert!(
                 !counter_fn.contains(forbidden),
                 "write_counter must issue exactly one attempt; found `{forbidden}` (CON-012)"
