@@ -953,6 +953,31 @@
       },
       "type": "object"
     },
+    "ReportFormat": {
+      "description": "The shape of the validate discrepancy report (`VAL-013`).\n\nThree shapes for three readers. `ndjson` is the one to reach for: it is written a record at\na time, so a run that is killed leaves a file that is still readable up to the last complete\nline, and every log pipeline already parses it. `json` is one array — friendlier to a\nsmall consumer that wants `serde_json::from_reader`, at the price of being unreadable if\nthe run does not reach the closing bracket. `csv` is for a spreadsheet, which is what a\ndiscrepancy report is opened in more often than anyone likes to admit.\n\nParquet is named by `docs/SPEC.md` and is deliberately not offered; the reasoning is\nrecorded there, under `VAL-013`.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No report is written. The default: a report is an export, and an export happens when\nsomebody asks for it.",
+          "type": "string"
+        },
+        {
+          "const": "json",
+          "description": "One JSON array of discrepancy records.",
+          "type": "string"
+        },
+        {
+          "const": "ndjson",
+          "description": "One JSON discrepancy record per line.",
+          "type": "string"
+        },
+        {
+          "const": "csv",
+          "description": "A header row and one row per differing column.",
+          "type": "string"
+        }
+      ]
+    },
     "Retry": {
       "additionalProperties": false,
       "description": "Retry policy for transient failures (`CFG-160`).",
@@ -1446,6 +1471,49 @@
       },
       "type": "object"
     },
+    "Validate": {
+      "additionalProperties": false,
+      "description": "How the validate job compares, and what it exports (`CFG-200`).\n\nNew to cdm-rs: Java CDM has no equivalent of either setting, so neither has a `spark.cdm.*`\nalias. [`autocorrect`](Autocorrect) is the older, Java-compatible half of validate's\nconfiguration and stays where it is.",
+      "properties": {
+        "keys_only": {
+          "default": false,
+          "description": "Compare only whether the target has a row, not what is in it (`VAL-015`).\n\nA pre-flight: it answers \"did everything arrive?\" without decoding or converting a\nsingle value, which on a wide table is most of the work. It cannot answer \"did\neverything arrive *intact*\", so a keys-only run that passes is a reason to run a\nfull one, not a substitute for it. `MISMATCH` is structurally zero in such a run —\nnothing is compared that could mismatch — and autocorrect therefore only ever\ninserts missing rows.",
+          "type": "boolean"
+        },
+        "report": {
+          "$ref": "#/$defs/ValidateReport",
+          "default": {
+            "format": "none",
+            "path": "cdm_logs/cdm_discrepancies.json",
+            "redact_values": true
+          },
+          "description": "The machine-readable discrepancy report (`VAL-013`)."
+        }
+      },
+      "type": "object"
+    },
+    "ValidateReport": {
+      "additionalProperties": false,
+      "description": "The machine-readable discrepancy report (`VAL-013`).\n\nThe diff log of `VAL-012` is for a human with `grep`; this is for a machine, and for the\nhuman who has to explain to someone else what went wrong. One record per discrepancy,\ncarrying the run, the token range, the primary key, the kind of difference and — subject\nto [`redact_values`](ValidateReport::redact_values) — the values themselves.",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/ReportFormat",
+          "default": "none",
+          "description": "The report's format. `none`, the default, writes no report."
+        },
+        "path": {
+          "default": "cdm_logs/cdm_discrepancies.json",
+          "description": "Where the report is written.\n\nThe format is chosen by [`format`](ValidateReport::format), never by this path's\nextension: a file named `.json` that is really NDJSON is a worse outcome than a\nmismatched extension. The file is replaced at the start of a run rather than\nappended to, because a report describes one run and two concatenated JSON documents\nare not a JSON document.",
+          "type": "string"
+        },
+        "redact_values": {
+          "default": true,
+          "description": "Hash the origin and target values instead of writing them (`SEC-002`, `VAL-017`).\n\n**On by default, and that default is the security posture of the whole tool.** A\ndiscrepancy report is a file somebody attaches to a ticket; one that carries row\ncontents by default is a worse leak than a log line, because it travels. Turning\nthis off is the single supported way to obtain values — the diff log never shows\nthem and `--compat-java` does not restore them — and it means \"this file is now a\ncopy of the affected rows and must be handled as such\".\n\nRedaction is a 64-bit FNV-1a digest, the same one the event bus applies to primary\nkeys, so two rows that are wrong in the same way are still visibly wrong in the same\nway. It is a correlation token, not a cryptographic commitment: a low-cardinality\ncolumn can be enumerated against it. Null-ness is never hashed — a null renders as\n`null` in both modes — because \"the target is empty\" and \"the target holds something\nelse\" call for different actions, and which one it is is metadata rather than\ncontent.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "WritetimeColumns": {
       "additionalProperties": false,
       "description": "Writetime source columns (`CFG-130`).",
@@ -1762,6 +1830,18 @@
         "missing_key_ts_replace": null
       },
       "description": "Changes applied to values on their way to the target (`CFG-170`)."
+    },
+    "validate": {
+      "$ref": "#/$defs/Validate",
+      "default": {
+        "keys_only": false,
+        "report": {
+          "format": "none",
+          "path": "cdm_logs/cdm_discrepancies.json",
+          "redact_values": true
+        }
+      },
+      "description": "How the validate job compares, and what it exports (`CFG-200`)."
     }
   },
   "title": "CdmConfig",

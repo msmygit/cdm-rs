@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use crate::secret::Secret;
 use crate::types::{
     AstraDatabaseId, AstraMode, AuthMode, BatchGrouping, ConsistencyLevel, DurationSetting,
-    EventSink, GuardrailMode, LogFormat, ScbType, TokenBound, TrustStoreType,
+    EventSink, GuardrailMode, LogFormat, ReportFormat, ScbType, TokenBound, TrustStoreType,
 };
 
 cdm_properties! {
@@ -37,6 +37,10 @@ cdm_properties! {
             /// What the validate job repairs when it finds a difference (`CFG-140`).
             #[cdm()]
             pub autocorrect: Autocorrect,
+
+            /// How the validate job compares, and what it exports (`CFG-200`).
+            #[cdm()]
+            pub validate: Validate,
 
             /// Run tracking, resume and rerun (`CFG-150`).
             #[cdm()]
@@ -466,6 +470,82 @@ cdm_properties! {
             /// Dangerous: re-inserting a deleted counter row double-counts it. Off by default.
             #[cdm(legacy = ["spark.cdm.autocorrect.missing.counter"])]
             pub missing_counter: bool = false,
+        }
+    }
+}
+
+// =================================================================================================
+// §3.5.11 Validate — CFG-200, VAL-013, VAL-015
+// =================================================================================================
+
+cdm_properties! {
+    /// How the validate job compares, and what it exports (`CFG-200`).
+    ///
+    /// New to cdm-rs: Java CDM has no equivalent of either setting, so neither has a `spark.cdm.*`
+    /// alias. [`autocorrect`](Autocorrect) is the older, Java-compatible half of validate's
+    /// configuration and stays where it is.
+    pub struct Validate {
+        fields {
+            /// Compare only whether the target has a row, not what is in it (`VAL-015`).
+            ///
+            /// A pre-flight: it answers "did everything arrive?" without decoding or converting a
+            /// single value, which on a wide table is most of the work. It cannot answer "did
+            /// everything arrive *intact*", so a keys-only run that passes is a reason to run a
+            /// full one, not a substitute for it. `MISMATCH` is structurally zero in such a run —
+            /// nothing is compared that could mismatch — and autocorrect therefore only ever
+            /// inserts missing rows.
+            #[cdm()]
+            pub keys_only: bool = false,
+        }
+        sections {
+            /// The machine-readable discrepancy report (`VAL-013`).
+            #[cdm()]
+            pub report: ValidateReport
+        }
+    }
+}
+
+cdm_properties! {
+    /// The machine-readable discrepancy report (`VAL-013`).
+    ///
+    /// The diff log of `VAL-012` is for a human with `grep`; this is for a machine, and for the
+    /// human who has to explain to someone else what went wrong. One record per discrepancy,
+    /// carrying the run, the token range, the primary key, the kind of difference and — subject
+    /// to [`redact_values`](ValidateReport::redact_values) — the values themselves.
+    pub struct ValidateReport {
+        fields {
+            /// The report's format. `none`, the default, writes no report.
+            #[cdm()]
+            pub format: ReportFormat = ReportFormat::None,
+
+            /// Where the report is written.
+            ///
+            /// The format is chosen by [`format`](ValidateReport::format), never by this path's
+            /// extension: a file named `.json` that is really NDJSON is a worse outcome than a
+            /// mismatched extension. The file is replaced at the start of a run rather than
+            /// appended to, because a report describes one run and two concatenated JSON documents
+            /// are not a JSON document.
+            #[cdm(example = "cdm_logs/run-2026-08-06-discrepancies.ndjson",)]
+            pub path: PathBuf = PathBuf::from("cdm_logs/cdm_discrepancies.json"),
+
+            /// Hash the origin and target values instead of writing them (`SEC-002`, `VAL-017`).
+            ///
+            /// **On by default, and that default is the security posture of the whole tool.** A
+            /// discrepancy report is a file somebody attaches to a ticket; one that carries row
+            /// contents by default is a worse leak than a log line, because it travels. Turning
+            /// this off is the single supported way to obtain values — the diff log never shows
+            /// them and `--compat-java` does not restore them — and it means "this file is now a
+            /// copy of the affected rows and must be handled as such".
+            ///
+            /// Redaction is a 64-bit FNV-1a digest, the same one the event bus applies to primary
+            /// keys, so two rows that are wrong in the same way are still visibly wrong in the same
+            /// way. It is a correlation token, not a cryptographic commitment: a low-cardinality
+            /// column can be enumerated against it. Null-ness is never hashed — a null renders as
+            /// `null` in both modes — because "the target is empty" and "the target holds something
+            /// else" call for different actions, and which one it is is metadata rather than
+            /// content.
+            #[cdm()]
+            pub redact_values: bool = true,
         }
     }
 }

@@ -450,6 +450,10 @@ never had an effect. Constant-column types are resolved from the target schema (
 | `metrics.otlp.endpoint` | url | — | `MET-021` |
 | `metrics.events.sink` | enum `none`\|`stdout_json`\|`file` | `none` | `MET-030` |
 | `metrics.events.path` | path | `cdm_logs/cdm_events.ndjson` | the file the `file` sink appends to, `MET-030` |
+| `validate.keys_only` | bool | `false` | compare existence only, `VAL-015` |
+| `validate.report.format` | enum `none`\|`json`\|`ndjson`\|`csv` | `none` | the machine-readable discrepancy report, `VAL-013` |
+| `validate.report.path` | path | `cdm_logs/cdm_discrepancies.json` | where that report is written; the format is chosen by `validate.report.format`, never by this path's extension |
+| `validate.report.redact_values` | bool | `true` | hash the reported row values rather than writing them, `SEC-002` |
 | `cluster.enabled` | bool | `false` | distributed mode `DST-001` |
 | `cluster.node_id` | string | hostname+pid | |
 | `cluster.lease_duration` | duration | `60s` | `DST-012` |
@@ -947,10 +951,39 @@ target extract column MUST be skipped rather than compared.
 key, discrepancy kind, and per-column origin/target values (redactable via
 `validate.report.redact_values`).
 
+`validate.report.redact_values` defaults to **`true`**, and a redacted value is a digest rather than
+an omission (`SEC-002`). Earlier revisions left the default unstated, which read as though a report
+would carry row contents unless the operator said otherwise. It is the other way round: this file is
+the artefact people attach to tickets, so it travels further than any log line, and a default that
+leaks travels with it. Turning redaction off is the supported route to the values — it is the only
+one, since `VAL-017` closes the diff log and `--compat-java` does not reopen it — and it produces a
+Tier-2 warning saying that the file is now a copy of the affected rows.
+
+Null-ness is never redacted, in either mode, for the reason `VAL-017` gives: it is metadata rather
+than content, and it changes what an operator does next.
+
+> **Correction — Parquet.** Earlier revisions named `parquet` as a fourth format. It is not
+> implemented, and the accepted formats are `none`, `json`, `ndjson` and `csv`. Parquet's Rust
+> implementation is `arrow-rs`, which is some forty additional crates in the dependency graph of a
+> tool whose supply chain is a stated requirement (`SEC-030`) — for a file that is written once per
+> run, read once, and is measured in megabytes. The properties Parquet is chosen for, columnar
+> scans and predicate pushdown, apply to a dataset that is queried repeatedly; a discrepancy report
+> is grepped, opened in a spreadsheet, or paged over by `VAL-014`, and NDJSON serves all three. The
+> licences would have passed `cargo deny`; the dependency count and the compile cost are the
+> objection, not the licences. If a user with a billion-row discrepancy set ever appears, the writer
+> in `cdm-engine::jobs::validate::report` is one `ReportWriter` implementation wide and Parquet can
+> be added behind an off-by-default cargo feature without disturbing anything else.
+
 **VAL-014 [N]** — `GET /v1/runs/{id}/discrepancies` MUST page over that report.
 
 **VAL-015 [N]** — `validate --sample <percent>` MUST be sugar for `filter.token_coverage_percent`,
 and `validate --keys-only` MUST compare existence only (much faster pre-flight).
+
+Both are CLI spellings of configuration: `--sample` sets `filter.token_coverage_percent`, so the
+sampling is `TOK-005`'s and no second implementation of it exists, and `--keys-only` sets
+`validate.keys_only`. A keys-only run cannot produce a `MISMATCH` — nothing is compared that could
+mismatch — so its `VALID` count means "the row is present", not "the row is right", and a keys-only
+pass is a reason to run a full validation rather than a substitute for one.
 
 **VAL-016 [P]** — Run status resolution: any discrepancy with
 `MISSING == CORRECTED_MISSING && MISMATCH == CORRECTED_MISMATCH` → `DIFF_CORRECTED`; any remaining

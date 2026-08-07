@@ -36,6 +36,15 @@
 //! keeps Java's shape, so existing log scrapers keep matching, but every value position renders as
 //! `<redacted>`. Null-ness is metadata rather than content and is reported, because "the target is
 //! null" and "the target differs" call for different actions.
+//!
+//! A [`Mismatch`] does *carry* the two cells, because the discrepancy report of `VAL-013` is
+//! entitled to them and re-reading the row to get them back would be absurd. They are carried
+//! `pub(crate)`, reachable only from [`report`](super::report), which applies
+//! `validate.report.redact_values` while building the record — the same discipline the event bus
+//! uses for primary keys. There is no public accessor, so [`Mismatch::detail`] and the diff log
+//! remain the only things this type renders in the clear, and neither of them renders a value.
+//! Holding the cells costs nothing measurable: a [`RawCell`] is a refcounted `Bytes`, and only
+//! differing columns of differing rows are kept at all.
 
 use cdm_codec::{ConversionPlan, CqlTypeInfo, Planner};
 use cdm_core::{CdmError, ErrorKind, RawCell, Record, Row, Side};
@@ -84,6 +93,7 @@ pub struct ComparisonPlan {
     columns: Vec<ColumnCompare>,
     extract_json: Option<ExtractJsonPlan>,
     extract_json_overwrites: bool,
+    keys_only: bool,
 }
 
 impl ComparisonPlan {
@@ -157,7 +167,29 @@ impl ComparisonPlan {
             columns,
             extract_json,
             extract_json_overwrites,
+            keys_only: false,
         })
+    }
+
+    /// Compares existence only (`VAL-015`, `validate.keys_only`).
+    ///
+    /// The pre-flight run: every column plan is still resolved, because a plan that cannot be
+    /// built is a configuration error and must surface at startup whether or not this run intends
+    /// to use it, but no column is compared and no value is converted. What remains is one target
+    /// lookup per origin row, which is the part of a validation that cannot be made cheaper.
+    ///
+    /// A run in this mode structurally cannot report `MISMATCH`, so its `VALID` count means "the
+    /// row is there", not "the row is right".
+    #[must_use]
+    pub const fn with_keys_only(mut self, keys_only: bool) -> Self {
+        self.keys_only = keys_only;
+        self
+    }
+
+    /// Whether this plan compares existence only (`VAL-015`).
+    #[must_use]
+    pub const fn is_keys_only(&self) -> bool {
+        self.keys_only
     }
 
     /// How many target columns the plan compares, constants included.
@@ -181,6 +213,10 @@ impl ComparisonPlan {
         let Some(target) = target else {
             return Comparison::Missing;
         };
+        // VAL-015: the target has a row, and that was the whole question.
+        if self.keys_only {
+            return Comparison::Valid;
+        }
         let mut differences = Vec::new();
         for column in &self.columns {
             if let Some(difference) = self.compare_column(column, record, target) {
@@ -207,6 +243,8 @@ impl ComparisonPlan {
             Rule::Constant => None,
             Rule::Unobtainable(why) => Some(ColumnDifference {
                 column: column.name.clone(),
+                origin: RawCell::NULL,
+                target: cell(target_cell),
                 kind: DifferenceKind::Error {
                     message: (*why).to_owned(),
                     target_index: column.target_index,
@@ -222,6 +260,8 @@ impl ComparisonPlan {
                     // says to capture it into the detail rather than fail the range.
                     return Some(ColumnDifference {
                         column: column.name.clone(),
+                        origin: RawCell::NULL,
+                        target: cell(target_cell),
                         kind: DifferenceKind::Error {
                             message: "the origin row is narrower than the projection".to_owned(),
                             target_index: column.target_index,
@@ -264,6 +304,8 @@ impl ComparisonPlan {
             // per-column comparison error, which `VAL-009` puts in the detail.
             Err(error) => Some(ColumnDifference {
                 column: column.name.clone(),
+                origin: RawCell::NULL,
+                target: cell(target_cell),
                 kind: DifferenceKind::Error {
                     message: error.to_string(),
                     target_index: column.target_index,
@@ -291,13 +333,17 @@ impl ComparisonPlan {
         if origin_null {
             return Some(ColumnDifference {
                 column: column.name.clone(),
+                origin: RawCell::NULL,
+                target: cell(target),
                 kind: DifferenceKind::OriginNull,
             });
         }
 
-        let Some(target_cell) = target.filter(|cell| !cell.is_null()) else {
+        let Some(target_cell) = target.filter(|value| !value.is_null()) else {
             return Some(ColumnDifference {
                 column: column.name.clone(),
+                origin: cell(origin),
+                target: RawCell::NULL,
                 kind: DifferenceKind::Value {
                     target_is_null: true,
                 },
@@ -314,6 +360,8 @@ impl ComparisonPlan {
                 Err(error) => {
                     return Some(ColumnDifference {
                         column: column.name.clone(),
+                        origin: cell(origin),
+                        target: target_cell.clone(),
                         kind: DifferenceKind::Error {
                             message: error.to_string(),
                             target_index: column.target_index,
@@ -324,17 +372,27 @@ impl ComparisonPlan {
             }
         };
 
-        if origin.is_some_and(|cell| cell.bytes() == converted.bytes()) {
+        if origin.is_some_and(|value| value.bytes() == converted.bytes()) {
             None
         } else {
             Some(ColumnDifference {
                 column: column.name.clone(),
+                origin: cell(origin),
+                // The target as it was *read*, not as it was converted: a report that showed the
+                // converted form would be showing a value that exists nowhere, and the operator
+                // who goes and looks at the row would not find it there.
+                target: target_cell.clone(),
                 kind: DifferenceKind::Value {
                     target_is_null: false,
                 },
             })
         }
     }
+}
+
+/// A cell, or `NULL` when the row does not have one at that position.
+fn cell(value: Option<&RawCell>) -> RawCell {
+    value.cloned().unwrap_or(RawCell::NULL)
 }
 
 /// What comparing one record concluded (`VAL-002`, `VAL-006`, `VAL-008`).
@@ -398,13 +456,48 @@ impl Mismatch {
         }
         detail
     }
+
+    /// The differences with their values attached, for the report of `VAL-013`.
+    ///
+    /// Crate-visible on purpose: these are row values, and the only thing allowed to see them is
+    /// the report writer, which redacts before it records. See the module documentation.
+    pub(crate) fn differences(&self) -> &[ColumnDifference] {
+        &self.differences
+    }
 }
 
-/// One column's disagreement.
+/// One column's disagreement, with the two cells that disagreed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ColumnDifference {
+pub(crate) struct ColumnDifference {
     column: String,
+    origin: RawCell,
+    target: RawCell,
     kind: DifferenceKind,
+}
+
+impl ColumnDifference {
+    /// The target column's name.
+    pub(crate) fn column(&self) -> &str {
+        &self.column
+    }
+
+    /// The origin's cell, `NULL` when the origin had nothing there.
+    pub(crate) const fn origin(&self) -> &RawCell {
+        &self.origin
+    }
+
+    /// The target's cell as it was read, `NULL` when the target had nothing there.
+    pub(crate) const fn target(&self) -> &RawCell {
+        &self.target
+    }
+
+    /// Why the column could not be compared at all (`VAL-009`), when that is what happened.
+    pub(crate) fn error(&self) -> Option<&str> {
+        match &self.kind {
+            DifferenceKind::Error { message, .. } => Some(message),
+            DifferenceKind::Value { .. } | DifferenceKind::OriginNull => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

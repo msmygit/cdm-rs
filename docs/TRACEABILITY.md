@@ -249,9 +249,9 @@ test, fails CI.
 | `VAL-010` <sup>P</sup> | Validation MUST never delete data from the target | `cdm-engine::jobs::validate` | `val_010_*` | #23 |
 | `VAL-011` <sup>P</sup> | With `feature.extract_json` active and `overwrite = false`, an already-populated target extract column MUST be skipped rather… | `cdm-engine::jobs::validate` | `val_011_*` | #23 |
 | `VAL-012` <sup>P</sup> | The diff logger MUST write to a dedicated sink (`logging.diff_file`, default `cdm_logs/cdm_diff.log`) at ERROR level, separate… | `cdm-engine::jobs::validate` | `val_012_*` | #23 |
-| `VAL-013` <sup>N</sup> | A machine-readable diff report MUST be produced when `validate.report.format` is `json`/`ndjson`/`csv`/`parquet`, one record… | `cdm-engine::jobs::validate` | `val_013_*` | #40 |
+| `VAL-013` <sup>N</sup> | A machine-readable discrepancy report, one record per discrepancy carrying the run, token range, primary key, kind and per-column values, in `json`, `ndjson` or `csv` (`parquet` deliberately not offered; see `SPEC.md`), with values hashed unless `validate.report.redact_values` is turned off | `cdm-engine::jobs::validate` (`report`) | `val_013_*` | #40 |
 | `VAL-014` <sup>N</sup> | `GET /v1/runs/{id}/discrepancies` MUST page over that report | `cdm-engine::jobs::validate` | `val_014_*` | #40 |
-| `VAL-015` <sup>N</sup> | `validate --sample <percent>` MUST be sugar for `filter.token_coverage_percent`, and `validate --keys-only` MUST compare… | `cdm-engine::jobs::validate` | `val_015_*` | #40 |
+| `VAL-015` <sup>N</sup> | `--sample <percent>` is sugar for `filter.token_coverage_percent`, so `TOK-005` does the sampling; `--keys-only` (`validate.keys_only`) compares existence only and structurally cannot report a mismatch | `cdm-engine::jobs::validate` (`sample_percent`, `ComparisonPlan::with_keys_only`) | `val_015_*` | #40 |
 | `VAL-016` <sup>P</sup> | Run status resolution: any discrepancy with `MISSING == CORRECTED_MISSING && MISMATCH == CORRECTED_MISMATCH` →… | `cdm-engine::jobs::validate` | `val_016_*` | #23 |
 | `VAL-017` <sup>P+</sup> | The diff log MUST NOT contain row values: every value position renders `<redacted>`, and a discrepancy is identified by its… | `cdm-engine::jobs::validate` | `val_017_*` | #23 |
 
@@ -380,7 +380,7 @@ test, fails CI.
 | `MET-030` <sup>N</sup> | A structured event stream — `RunStarted`, `RangeStarted`, `RangeCompleted`, `Discrepancy`, `Warning`, `Error`, `RunCompleted` — on a bounded broadcast bus, serialisable as NDJSON to standard output or a file | `cdm-metrics` (`event`) | `met_030_*` | #38 |
 | `MET-031` <sup>N</sup> | An interactive terminal UI (`cdm migrate --tui`) MUST show live throughput, progress bar, ETA, per-node status in cluster… | `cdm-metrics` | `met_031_*` | #39 |
 | `MET-032` <sup>N</sup> | All logs are `tracing`-based, `logging.format = json` produces one structured record per event carrying the `ENG-011` span fields, and neither secrets nor row values are logged by default | `cdm-metrics` (`logging`) | `met_032_*` | #38 |
-| `MET-033` <sup>N</sup> | A run summary MUST be writable to a file (`--summary-out report.json`) containing config hash, plan, all counters, timings,… | `cdm-metrics` | `met_033_*` | #40 |
+| `MET-033` <sup>N</sup> | A run summary writable to a file (`--summary-out report.json`) carrying the config hash, the plan, every counter, timings, the per-node breakdown and a discrepancy summary pointing at the `VAL-013` report; assembled from a finished run by `RunReport::summary` | `cdm-metrics` (`summary`) | `met_033_*` | #40 |
 
 ### CLI
 

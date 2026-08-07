@@ -32,6 +32,9 @@ chrono.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
+# `VAL-013`'s discrepancy report is JSON and NDJSON, so the serialiser is a production
+# dependency of this crate rather than a test one.
+serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "signal", "sync", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
@@ -47,7 +50,6 @@ cdm-testkit.workspace = true
 
 proptest.workspace = true
 scylla.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 # `test-util` is what makes the rate-limit and shutdown tests deterministic: it pauses the
 # runtime clock so elapsed time is a function of the program, not of the CI machine's load.

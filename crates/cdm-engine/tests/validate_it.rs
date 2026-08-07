@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use cdm_codec::{CodecRegistry, Planner, PlannerOptions};
 use cdm_config::model::{Autocorrect, CdmConfig};
+use cdm_config::types::ReportFormat;
 use cdm_core::{JobKind, RunId, Side};
 use cdm_cql::connect::{connect, ClusterSession};
 use cdm_cql::rows::{CqlRowSink, CqlRowSource, TokenKind};
@@ -38,7 +39,10 @@ use cdm_cql::statement::{
     Binder, ColumnMapping, MappingOptions, MissingKeyPolicy, OriginProjection, OriginRangeSelect,
     StatementOptions, TargetSelectByPk, TargetUpsert,
 };
-use cdm_engine::jobs::validate::{ComparisonPlan, DiffLog, ValidateJob, ValidateSettings};
+use cdm_engine::jobs::validate::{
+    ComparisonPlan, DiffLog, DiscrepancyRecord, DiscrepancyReport, ValidateJob, ValidateSettings,
+    REDACTED_PREFIX,
+};
 use cdm_engine::planner::{Partitioner, Planner as TokenPlanner, PlannerSettings};
 use cdm_engine::scheduler::{NoopObserver, Scheduler, SchedulerSettings};
 use cdm_metrics::{CounterKind, CounterView};
@@ -116,6 +120,7 @@ fn schema(table: &str, columns: Vec<ColumnMeta>) -> TableSchema {
 struct Harness {
     job: Arc<ValidateJob>,
     diff: Arc<DiffLog>,
+    report: Arc<DiscrepancyReport>,
 }
 
 async fn build(
@@ -124,6 +129,45 @@ async fn build(
     target: &TableSchema,
     settings: ValidateSettings,
     diff: Arc<DiffLog>,
+) -> Harness {
+    build_reporting(
+        session,
+        origin,
+        target,
+        settings,
+        diff,
+        Arc::new(DiscrepancyReport::disabled()),
+        false,
+    )
+    .await
+}
+
+/// A read-only harness whose comparison plan compares existence only (`VAL-015`).
+async fn build_keys_only(
+    session: &ClusterSession,
+    origin: &TableSchema,
+    target: &TableSchema,
+) -> Harness {
+    build_reporting(
+        session,
+        origin,
+        target,
+        ValidateSettings::read_only(),
+        Arc::new(DiffLog::in_memory()),
+        Arc::new(DiscrepancyReport::disabled()),
+        true,
+    )
+    .await
+}
+
+async fn build_reporting(
+    session: &ClusterSession,
+    origin: &TableSchema,
+    target: &TableSchema,
+    settings: ValidateSettings,
+    diff: Arc<DiffLog>,
+    report: Arc<DiscrepancyReport>,
+    keys_only: bool,
 ) -> Harness {
     let mapping = ColumnMapping::resolve(origin, target, &MappingOptions::default()).unwrap();
     let projection = OriginProjection::new(mapping.origin_columns(), &[]);
@@ -160,17 +204,23 @@ async fn build(
     )
     .await
     .unwrap();
-    let plan = ComparisonPlan::resolve(&mapping, &planner, None, false).unwrap();
+    let plan = ComparisonPlan::resolve(&mapping, &planner, None, false)
+        .unwrap()
+        .with_keys_only(keys_only);
 
     Harness {
-        job: Arc::new(ValidateJob::new(
-            Arc::new(source),
-            Arc::new(sink),
-            Arc::new(plan),
-            settings,
-            Arc::clone(&diff),
-        )),
+        job: Arc::new(
+            ValidateJob::new(
+                Arc::new(source),
+                Arc::new(sink),
+                Arc::new(plan),
+                settings,
+                Arc::clone(&diff),
+            )
+            .with_report(Arc::clone(&report)),
+        ),
         diff,
+        report,
     }
 }
 
@@ -519,5 +569,106 @@ against_every_engine!(
         assert_eq!(count(&report, CounterKind::Mismatch), 1);
         let lines = harness.diff.captured().join("\n");
         assert!(lines.contains("Target column:embedding"), "{lines}");
+    }
+);
+
+against_every_engine!(
+    val_013_met_033_a_seeded_difference_reaches_the_report_and_the_summary,
+    |session, fx, engine| {
+        // The end-to-end claim of this PR: a real difference on a real node becomes a record in a
+        // real file, with no row value in it, and the run summary points at that file.
+        let _ = (&fx, &engine);
+        let (src, dst) = seed_simple(&session, "report").await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cdm_logs").join("discrepancies.ndjson");
+        let harness = build_reporting(
+            &session,
+            &src,
+            &dst,
+            ValidateSettings::read_only(),
+            Arc::new(DiffLog::in_memory()),
+            Arc::new(
+                DiscrepancyReport::open(RunId::from_raw(7), ReportFormat::Ndjson, &path, true)
+                    .unwrap(),
+            ),
+            false,
+        )
+        .await;
+
+        let run = validate(&harness).await;
+        harness.report.finish().unwrap();
+
+        // One record per discrepancy: the tampered row and the absent one.
+        let written = std::fs::read_to_string(&path).unwrap();
+        let records: Vec<DiscrepancyRecord> = written
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}")))
+            .collect();
+        assert_eq!(records.len(), 2, "{written}");
+        assert_eq!(harness.report.records(), 2);
+
+        let mismatch = records
+            .iter()
+            .find(|record| record.kind == cdm_metrics::DiscrepancyKind::Mismatch)
+            .unwrap_or_else(|| panic!("{written}"));
+        assert_eq!(mismatch.columns.len(), 1);
+        assert_eq!(mismatch.columns[0].column, "data");
+        assert!(mismatch.values_redacted);
+        assert!(mismatch.columns[0].origin.starts_with(REDACTED_PREFIX));
+        assert!(records
+            .iter()
+            .any(|record| record.kind == cdm_metrics::DiscrepancyKind::Missing));
+
+        // SEC-002: the default carries no row value, and this is the file that would travel.
+        for leak in ["tampered", "row-4", "row-5"] {
+            assert!(!written.contains(leak), "a row value leaked: {written}");
+        }
+
+        // MET-033: the summary the CLI writes, with the report attached to it.
+        let summary = run
+            .summary(chrono::Utc::now())
+            .with_config_hash("0123456789abcdef")
+            .with_discrepancy_report(harness.report.reference().unwrap());
+        let discrepancies = summary.discrepancies.clone().unwrap();
+        assert_eq!(discrepancies.missing, 1);
+        assert_eq!(discrepancies.mismatch, 1);
+        assert_eq!(discrepancies.outstanding, 2);
+        let reference = discrepancies.report.unwrap();
+        assert_eq!(reference.path, path);
+        assert_eq!(reference.format, "ndjson");
+        assert_eq!(reference.records, 2);
+        assert!(reference.values_redacted);
+
+        let summary_path = dir.path().join("summary.json");
+        summary.write_to(&summary_path).unwrap();
+        let text = std::fs::read_to_string(&summary_path).unwrap();
+        assert!(text.contains("\"READ\": 5"), "{text}");
+        assert!(text.contains("cdm.run-summary/v1"), "{text}");
+        for leak in ["tampered", "row-4", "password", "cassandra"] {
+            assert!(!text.contains(leak), "the summary leaked {leak}: {text}");
+        }
+    }
+);
+
+against_every_engine!(
+    val_015_a_keys_only_run_finds_the_missing_row_and_not_the_tampered_one,
+    |session, fx, engine| {
+        let _ = (&fx, &engine);
+        let (src, dst) = seed_simple(&session, "keysonly").await;
+        let mapping_only = build_keys_only(&session, &src, &dst).await;
+
+        let run = validate(&mapping_only).await;
+        assert_eq!(count(&run, CounterKind::Read), 5);
+        assert_eq!(count(&run, CounterKind::Missing), 1);
+        assert_eq!(
+            count(&run, CounterKind::Mismatch),
+            0,
+            "existence is all a keys-only run compares"
+        );
+        assert_eq!(
+            count(&run, CounterKind::Valid),
+            4,
+            "including the row whose value was tampered with"
+        );
     }
 );

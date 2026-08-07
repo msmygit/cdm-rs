@@ -184,6 +184,32 @@ config_enum! {
 }
 
 config_enum! {
+    /// The shape of the validate discrepancy report (`VAL-013`).
+    ///
+    /// Three shapes for three readers. `ndjson` is the one to reach for: it is written a record at
+    /// a time, so a run that is killed leaves a file that is still readable up to the last complete
+    /// line, and every log pipeline already parses it. `json` is one array — friendlier to a
+    /// small consumer that wants `serde_json::from_reader`, at the price of being unreadable if
+    /// the run does not reach the closing bracket. `csv` is for a spreadsheet, which is what a
+    /// discrepancy report is opened in more often than anyone likes to admit.
+    ///
+    /// Parquet is named by `docs/SPEC.md` and is deliberately not offered; the reasoning is
+    /// recorded there, under `VAL-013`.
+    pub enum ReportFormat {
+        /// No report is written. The default: a report is an export, and an export happens when
+        /// somebody asks for it.
+        None => "none",
+        /// One JSON array of discrepancy records.
+        Json => "json",
+        /// One JSON discrepancy record per line.
+        Ndjson => "ndjson",
+        /// A header row and one row per differing column.
+        Csv => "csv",
+    }
+    default = None;
+}
+
+config_enum! {
     /// How rows are grouped into a write batch (`MIG-022`).
     ///
     /// A Cassandra `UNLOGGED` batch that spans partitions is not an optimisation: the coordinator

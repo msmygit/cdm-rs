@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-125 properties.
+129 properties.
 
 
 ## `connect`
@@ -100,6 +100,15 @@ should not use it.
 | `autocorrect.missing` | `spark.cdm.autocorrect.missing` | bool | `false` | — | stable | Write rows that are present on origin and absent on target. |
 | `autocorrect.mismatch` | `spark.cdm.autocorrect.mismatch` | bool | `false` | — | stable | Overwrite target rows whose values differ from origin. |
 | `autocorrect.missing_counter` | `spark.cdm.autocorrect.missing.counter` | bool | `false` | — | stable | Write missing rows even for a counter table. |
+
+## `validate`
+
+| canonical | legacy | type | default | unit | stability | description |
+|---|---|---|---|---|---|---|
+| `validate.keys_only` | — | bool | `false` | — | stable | Compare only whether the target has a row, not what is in it (`VAL-015`). |
+| `validate.report.format` | — | `none` \| `json` \| `ndjson` \| `csv` | `none` | — | stable | The report's format. `none`, the default, writes no report. |
+| `validate.report.path` | — | path | `cdm_logs/cdm_discrepancies.json` | — | stable | Where the report is written. |
+| `validate.report.redact_values` | — | bool | `true` | — | stable | Hash the origin and target values instead of writing them (`SEC-002`, `VAL-017`). |
 
 ## `track_run`
 

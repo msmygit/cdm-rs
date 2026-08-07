@@ -225,6 +225,8 @@ impl Scheduler {
     ) -> Result<RunReport, CdmError> {
         let run_id = plan.run_id();
         let job = processor.job();
+        let started = std::time::Instant::now();
+        let ranges_planned = plan.len();
         let queue = Arc::new(WorkQueue::new(plan.token_ranges()));
         let shared = Arc::new(WorkerShared {
             run_id,
@@ -330,6 +332,9 @@ impl Scheduler {
             job,
             status,
             stopped_by,
+            node_id: self.settings.node_id().to_owned(),
+            ranges_planned,
+            elapsed: started.elapsed(),
             counters: run_counters,
             outcomes,
             unclaimed: queue.unclaimed(),
@@ -598,6 +603,9 @@ pub struct RunReport {
     job: JobKind,
     status: RunStatus,
     stopped_by: Option<StopReason>,
+    node_id: String,
+    ranges_planned: usize,
+    elapsed: std::time::Duration,
     counters: JobCounters,
     outcomes: Vec<RangeOutcome>,
     unclaimed: Vec<TokenRange>,
@@ -696,6 +704,24 @@ impl RunReport {
         }
     }
 
+    /// The node that ran it (`DST-018`).
+    #[must_use]
+    pub fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    /// How many ranges the plan held (`TOK-003`).
+    #[must_use]
+    pub const fn ranges_planned(&self) -> usize {
+        self.ranges_planned
+    }
+
+    /// How long the run took, from the first worker starting to the last one stopping.
+    #[must_use]
+    pub const fn elapsed(&self) -> std::time::Duration {
+        self.elapsed
+    }
+
     /// Emits Java's final metrics block (`MET-006`).
     ///
     /// `run_id` is `Some` when run tracking is enabled, which is when Java prints the `RunId:`
@@ -703,6 +729,66 @@ impl RunReport {
     pub fn log_final_block(&self, run_id: Option<RunId>) {
         self.counters.log_final_block(run_id);
     }
+
+    /// The run summary of `MET-033`, ready to be written to `--summary-out`.
+    ///
+    /// Everything the scheduler knows is filled in here — status, plan, counters, timings, and the
+    /// single-node breakdown a local run has. What it does not know, the caller attaches:
+    /// [`RunSummary::with_config_hash`](cdm_metrics::RunSummary::with_config_hash) for `CFG-023`'s
+    /// digest, and
+    /// [`RunSummary::with_discrepancy_report`](cdm_metrics::RunSummary::with_discrepancy_report)
+    /// for the `VAL-013` report a validate run wrote. Both are one call, which is the point of
+    /// assembling the rest here: wiring `--summary-out` becomes three lines in a CLI rather than a
+    /// second model of what a run did.
+    ///
+    /// `finished_at` is taken rather than read from the clock so that the value stays a pure
+    /// function of its inputs; the start is derived from it and the run's elapsed time.
+    #[must_use]
+    pub fn summary(&self, finished_at: chrono::DateTime<chrono::Utc>) -> cdm_metrics::RunSummary {
+        let claimed = self.outcomes.len();
+        let passed = self.ranges_passed();
+        let failed = self.ranges_failed();
+        let read = self
+            .counters
+            .count_of(cdm_metrics::CounterKind::Read, CounterView::Committed);
+        let mut summary = cdm_metrics::RunSummary::new(
+            self.job,
+            self.status,
+            self.node_id.clone(),
+            finished_at,
+            self.elapsed,
+        )
+        .with_plan(cdm_metrics::PlanSummary {
+            ranges_planned: as_u64(self.ranges_planned),
+            ranges_claimed: as_u64(claimed),
+            ranges_passed: as_u64(passed),
+            ranges_failed: as_u64(failed),
+            ranges_abandoned: as_u64(self.ranges_abandoned()),
+            ranges_unclaimed: as_u64(self.unclaimed.len()),
+        })
+        .with_counters(&self.counters)
+        .with_node(cdm_metrics::NodeSummary {
+            node_id: self.node_id.clone(),
+            ranges_claimed: as_u64(claimed),
+            ranges_passed: as_u64(passed),
+            ranges_failed: as_u64(failed),
+        });
+        summary.timings = summary.timings.with_rows(read);
+        // TRK-001: the sentinel means run tracking allocated nothing, and a summary that printed
+        // `"run_id": 0` would invite somebody to go and look it up.
+        if self.run_id != RunId::UNSET {
+            summary = summary.with_run_id(self.run_id);
+        }
+        summary
+    }
+}
+
+/// A range count as the summary carries it.
+///
+/// Saturating rather than fallible: a plan with more than `u64::MAX` ranges does not exist, and
+/// `ERR-004` forbids expressing an impossibility as a panic.
+fn as_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
