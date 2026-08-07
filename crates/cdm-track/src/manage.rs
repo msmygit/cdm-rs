@@ -78,6 +78,21 @@ impl RunCatalog for crate::store::CassandraStore {
     }
 }
 
+#[async_trait]
+impl RunCatalog for crate::store::SqliteStore {
+    async fn runs(
+        &self,
+        _table: &TableRef,
+        job: Option<JobKind>,
+    ) -> Result<Vec<RunRecord>, CdmError> {
+        let mut runs = self.all_runs().await?;
+        if let Some(job) = job {
+            runs.retain(|run| run.job == job);
+        }
+        Ok(runs)
+    }
+}
+
 /// One line of `cdm runs list` (`TRK-034`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunSummary {

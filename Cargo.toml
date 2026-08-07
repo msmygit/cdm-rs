@@ -112,6 +112,21 @@ indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 zip = "2"
 
+# --- embedded storage (TRK-036) ---------------------------------------------
+# The SQLite tracking backend. `bundled` compiles the SQLite amalgamation that ships inside the
+# crate, so cdm-rs never links against whatever libsqlite3 a host happens to provide: one engine,
+# one version, identical behaviour on Linux, macOS and Windows, and no system package to install
+# before `cargo build` works. The C is built by `cc`, which every CI target already has.
+#
+# Held at 0.37 by NFR-005, not by preference. rusqlite 0.38+ resolves libsqlite3-sys 0.38, whose
+# build script uses `cfg_select!` — stable only since Rust 1.91, where our declared MSRV is 1.88.
+# Being a *build script*, nothing in our own code can work around it, and cargo cannot predict it
+# either: libsqlite3-sys declares no `rust-version`, so version selection never sees the
+# constraint and the first sign of trouble is a hard compile error in CI's MSRV job.
+#
+# Raise this only together with `rust-version` in this file, and only in a minor release.
+rusqlite = { version = "0.37", features = ["bundled"] }
+
 # --- utilities --------------------------------------------------------------
 governor = "0.7"
 parking_lot = "0.12"

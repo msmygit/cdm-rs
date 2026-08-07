@@ -7,14 +7,14 @@
 //! | Backend | When | Requirement |
 //! |---|---|---|
 //! | [`CassandraStore`] | the default — Java's two tables in the target keyspace | `TRK-010` |
+//! | [`SqliteStore`] | a target that cannot host extra tables; tracking goes to a local file | `TRK-036` |
 //! | [`MemoryStore`] | tests, dry runs, and any run whose tracking must not outlive the process | `TRK-036` |
 //!
-//! `TRK-036` also names a local SQLite file as a third backend, for targets that cannot host
-//! extra tables. That one is not in this pull request: it needs a new workspace dependency and
-//! the `cargo deny` review that comes with it, and the requirement's substance — that tracking is
-//! reachable through a trait with more than one implementation behind it, so the store can be
-//! swapped without touching the tracker — is delivered and tested by the two above. See the
-//! report on `TRK-036` in `docs/TRACEABILITY.md`.
+//! Which one a deployment gets is a wiring decision, not a behavioural one: the tracker, the
+//! resume and `cdm runs` name only [`TrackingStore`](cdm_core::TrackingStore), so swapping the
+//! backend changes where a run is recorded and nothing about what is recorded. Only the Cassandra
+//! backend is readable by Java CDM (`COMPAT-003`) and only it can back a distributed run
+//! (`DST-001`), because the other two are local to one process or one machine.
 //!
 //! # What every backend owes the tracker
 //!
@@ -27,9 +27,11 @@
 
 pub mod cassandra;
 pub mod memory;
+pub mod sqlite;
 
 pub use cassandra::CassandraStore;
 pub use memory::MemoryStore;
+pub use sqlite::SqliteStore;
 
 use cdm_core::RunStatus;
 

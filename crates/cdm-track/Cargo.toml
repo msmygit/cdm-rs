@@ -31,6 +31,7 @@ cdm-engine.workspace = true
 cdm-metrics.workspace = true
 chrono.workspace = true
 parking_lot.workspace = true
+rusqlite.workspace = true
 scylla.workspace = true
 serde.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
@@ -46,4 +47,8 @@ cdm-testkit.workspace = true
 # for *every* interruption point, which is a property rather than a case.
 proptest.workspace = true
 serde_json.workspace = true
+# `TRK-036`'s SQLite backend is file-backed, so its tests need a real file. `tempfile` gives them
+# one in the platform's temporary directory, which is the only portable way to say that: CI runs
+# this suite on Windows, where no `/tmp` exists.
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
