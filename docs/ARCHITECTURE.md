@@ -734,20 +734,30 @@ never blocked.
 ```mermaid
 flowchart TD
     E[Error in worker] --> K{Kind}
-    K -->|Config / Auth / Tls / SchemaMismatch| ABORT["Abort run<br/>these are never transient"]
+    K -->|Config / Connect / Auth / Tls / SchemaMismatch / SchemaChanged| FATAL["is_fatal: never transient<br/>ENG-015"]
     K -->|Read / Write timeout, Unavailable, Overloaded| RETRY{attempts left<br/>&amp; idempotent?}
     RETRY -->|yes| BACK[Backoff + jitter, retry]
     RETRY -->|no| RANGEFAIL
     K -->|TypeConversion on one column| RECORD["Record-level: count ERROR,<br/>log PK + column, continue"]
-    K -->|Panic| CATCH[Catch at range boundary] --> RANGEFAIL
+    K -->|Panic| CATCH["Catch at range boundary<br/>ENG-013: contained, not fatal"] --> RANGEFAIL
+    FATAL --> RANGEFAIL
     RANGEFAIL["Range FAIL<br/>PARTITIONS_FAILED++<br/>ERROR += read - done - skipped<br/>mark FAIL in tracking"] --> LIMIT{ERROR &gt; error_limit?}
-    LIMIT -->|yes| DRAIN[Graceful abort]
+    FATAL --> DRAIN
+    LIMIT -->|yes| DRAIN["Graceful abort<br/>drain in-flight, mark ABORTED"]
     LIMIT -->|no| NEXT[Next range]
 ```
 
 Three isolation levels — record, range, run — mean a single bad row cannot fail a range, and a single
 bad range cannot fail a run. Everything a failed range touched is re-runnable, because the range is
 the tracking unit.
+
+The fatal path is not a fourth level but a short circuit through the third: the range is still marked
+`FAIL` and still accounted for, and what changes is only that no further range is claimed. The
+distinction is easiest to see in what each abort *means*. An error-limit abort says a lot of rows
+failed; a fatal abort says one thing about the run is wrong, and would say it again for every
+remaining range if isolation were applied to it. A panic is the deliberate exception: `ENG-013`
+contains it even though it surfaces as `Internal`, because a payload caught inside `catch_unwind`
+tells you about one range and not about the run.
 
 ---
 

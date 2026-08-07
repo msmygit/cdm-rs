@@ -817,6 +817,27 @@ ended this run deliberately or the process was stopped underneath it. Unlike a p
 final: the plan is not resumed in this run, and the ranges nobody claimed are left unclaimed for a
 later resume.
 
+**ENG-015 [N]** — A range that fails with an error kind `ErrorKind::is_fatal` reports as fatal MUST
+stop the whole run, draining in-flight ranges exactly as `ENG-009` does and marking the run
+`ABORTED`. The range itself is still accounted for under `ENG-008`; what changes is that no further
+range is claimed.
+
+This is what makes `SCH-009` — and `CFG`, `CON`, `AUTH`, `TLS` and `SCH-002` failures — behave as
+their requirements say. Those kinds share one property: they are conditions of the *run*, not of the
+range that happened to observe them. A schema change mid-run does not become correct for the next
+range, and neither does an expired credential. Without this rule `ENG-008`'s isolation would apply
+to them too, and the run would grind through every remaining range failing each one identically,
+turning a single actionable error into `num_parts` copies of it and — because each failed range
+increments `ERROR` by its lost rows — reaching the `ENG-009` limit for the wrong reason.
+
+A panic caught at the range boundary is deliberately **not** subject to this rule, even though
+`ENG-013` converts it to `ErrorKind::Internal` and `Internal` is fatal. `ENG-013` requires a panic
+to be contained as a range failure, and it is the more specific requirement: the panic was raised
+inside a `catch_unwind` whose state — atomic counters and a registry that is discarded — is
+contained by construction. The rule therefore applies to errors a job *returns*, which are its
+considered judgement about the run, and not to errors the scheduler synthesises from a payload it
+caught.
+
 ---
 
 ## 8. Migrate job (`MIG`)

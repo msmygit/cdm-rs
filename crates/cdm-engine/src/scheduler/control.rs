@@ -50,6 +50,14 @@ pub enum StopReason {
     Signal,
     /// Total `ERROR` exceeded `perfops.error_limit` (`ENG-009`). The run is marked `ABORTED`.
     ErrorLimit,
+    /// A range failed with a fatal error kind (`ENG-015`). The run is marked `ABORTED`.
+    ///
+    /// Distinct from [`StopReason::ErrorLimit`] because the two say opposite things about the
+    /// data. An error-limit abort means many rows failed and the run gave up on volume; a fatal
+    /// abort means one condition of the run itself is wrong — a schema that changed, a credential
+    /// that expired — and the row count is beside the point. An operator reading a run row needs
+    /// to know which, because only one of them is fixed by looking at the data.
+    Fatal,
     /// An operator asked for it, through the control plane or an embedding application.
     Operator,
 }
@@ -60,7 +68,7 @@ impl StopReason {
     pub const fn run_status(self) -> cdm_core::RunStatus {
         match self {
             Self::Signal => cdm_core::RunStatus::Interrupted,
-            Self::ErrorLimit | Self::Operator => cdm_core::RunStatus::Aborted,
+            Self::ErrorLimit | Self::Fatal | Self::Operator => cdm_core::RunStatus::Aborted,
         }
     }
 
@@ -70,6 +78,7 @@ impl StopReason {
         match self {
             Self::Signal => "signal",
             Self::ErrorLimit => "error limit exceeded",
+            Self::Fatal => "a fatal error",
             Self::Operator => "operator request",
         }
     }
@@ -314,9 +323,11 @@ mod tests {
     fn eng_010_each_stop_reason_maps_to_the_status_the_run_row_carries() {
         assert_eq!(StopReason::Signal.run_status(), RunStatus::Interrupted);
         assert_eq!(StopReason::ErrorLimit.run_status(), RunStatus::Aborted);
+        assert_eq!(StopReason::Fatal.run_status(), RunStatus::Aborted);
         assert_eq!(StopReason::Operator.run_status(), RunStatus::Aborted);
         assert_eq!(StopReason::Signal.as_str(), "signal");
         assert_eq!(StopReason::ErrorLimit.as_str(), "error limit exceeded");
+        assert_eq!(StopReason::Fatal.as_str(), "a fatal error");
         assert_eq!(StopReason::Operator.as_str(), "operator request");
     }
 

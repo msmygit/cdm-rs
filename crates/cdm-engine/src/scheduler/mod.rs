@@ -47,15 +47,22 @@
 //! bounds, and left behind. Because the range is the unit of tracking (`ENG-002`), everything a
 //! failed range touched is re-runnable.
 //!
+//! Range isolation has exactly one exception, and it is not a weakening of it: a failure whose
+//! [`ErrorKind::is_fatal`] is true is still accounted for as a range failure, but it also stops the
+//! run (`ENG-015`). Those kinds describe the run rather than the range — a changed schema, a
+//! rejected credential — so isolating them would mean failing every remaining range for the same
+//! reason and calling the result contained.
+//!
 //! # Stopping
 //!
-//! Three things stop a run early, and they differ only in what the run row ends up saying and in
+//! Four things stop a run early, and they differ only in what the run row ends up saying and in
 //! what a supervisor should do about it:
 //!
 //! | Trigger | Requirement | In-flight ranges | Final status | Exit code |
 //! |---|---|---|---|---|
 //! | `SIGINT` / `SIGTERM` | `ENG-010` | finish, within `shutdown_grace` | `INTERRUPTED` | `4` |
 //! | Total `ERROR` > `error_limit` | `ENG-009` | finish, within `shutdown_grace` | `ABORTED` | `1` |
+//! | A range failed fatally | `ENG-015` | finish, within `shutdown_grace` | `ABORTED` | `1` |
 //! | Operator request | `ENG-014` | finish, within `shutdown_grace` | `ABORTED` | `1` |
 //!
 //! Only `4` invites an automatic retry (`CLI-004`): the run was stopped from outside and is
@@ -463,7 +470,23 @@ async fn process_range(shared: &WorkerShared, range: TokenRange) -> RangeOutcome
                 abandoned: false,
             }
         }
-        Some(Ok(Err(error))) => fail_range(&counters, range, &error),
+        Some(Ok(Err(error))) => {
+            // ENG-015: the range is accounted for either way; a fatal kind additionally stops the
+            // run. Done here rather than inside `fail_range` because the panic path below shares
+            // that function and must *not* share this — `ENG-013` requires a caught panic to stay
+            // contained even though it becomes an `Internal`, which is fatal.
+            if error.kind().is_fatal() {
+                tracing::error!(
+                    target: "cdm::engine",
+                    run_id = shared.run_id.as_i64(),
+                    kind = %error.kind(),
+                    error = %error,
+                    "the range failed fatally; draining in-flight ranges and stopping the run"
+                );
+                shared.control.stop(StopReason::Fatal);
+            }
+            fail_range(&counters, range, &error)
+        }
         // ENG-013: convert the panic into an ordinary range failure and carry on.
         Some(Err(payload)) => {
             let error = CdmError::new(
