@@ -8,18 +8,19 @@
 cdm-rs migrates and validates data between Cassandra-compatible clusters — Apache Cassandra, DSE,
 HCD, Astra DB, ScyllaDB and Azure Cosmos DB Cassandra API — as a single static binary.
 
-> **Status: migrate, validate and plan run from the command line. The service surface does not
-> exist yet.**
+> **Status: migrate, validate, guardrail and plan run from the command line. The service surface
+> does not exist yet.**
 >
-> `cdm migrate`, `cdm validate` and `cdm plan` drive the engines end to end, over the shared
-> *connect → introspect → plan → run* path. So do `cdm config init|validate|explain|diff|convert`,
-> `cdm connect test`, `cdm schema show|diff`, `cdm codecs`, `cdm runs list|show|cancel`,
-> `cdm completions` and `cdm version`.
+> `cdm migrate`, `cdm validate`, `cdm guardrail` and `cdm plan` drive the engines end to end, over
+> the shared *connect → introspect → plan → run* path, with the `feature.*` block — constant
+> columns, the explode map, extract-JSON, TTL and writetime preservation, and the row filters —
+> resolved from the configuration the run was validated against. So do
+> `cdm config init|validate|explain|diff|convert`, `cdm connect test`, `cdm schema show|diff`,
+> `cdm codecs`, `cdm runs list|show|cancel`, `cdm completions` and `cdm version`.
 >
-> Four commands still answer "not yet", and each says which crate it is waiting on rather than
-> quoting a roadmap number: `cdm guardrail` needs a paged origin reader (the job itself is
-> implemented and tested); `cdm runs resume` needs the scheduler to accept a pre-computed range set;
-> `cdm cluster` needs `cdm-cluster`; and `cdm serve` and `cdm mcp` need the Phase 6 crates
+> Three commands still answer "not yet", and each says which crate it is waiting on rather than
+> quoting a roadmap number: `cdm runs resume` needs the scheduler to accept a pre-computed range
+> set; `cdm cluster` needs `cdm-cluster`; and `cdm serve` and `cdm mcp` need the Phase 6 crates
 > `cdm-service`, `cdm-api`, `cdm-ui` and `cdm-mcp`. The terminal UI (`--tui`) is not built either.
 >
 > In practical terms: you can run a migration or a validation from a terminal today, and you cannot

@@ -2,7 +2,6 @@
 
 # Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
 # expected to pass unchanged once the wiring lands.
-blocked cdm-cli builds the codec registry as CodecRegistry::with_builtins(&enabled, None) (crates/cdm-cli/src/harness/build.rs::codec_planner), so the codec names are read but the format options are not, and TIMESTAMP_STRING_FORMAT is rejected at startup even when both are configured
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert

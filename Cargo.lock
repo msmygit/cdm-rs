@@ -558,6 +558,7 @@ dependencies = [
  "cdm-core",
  "cdm-cql",
  "cdm-engine",
+ "cdm-feature",
  "cdm-metrics",
  "cdm-track",
  "chrono",

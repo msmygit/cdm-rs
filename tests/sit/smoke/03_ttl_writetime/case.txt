@@ -3,10 +3,10 @@
 # Eight records whose four columns carry deliberately different TTLs and writetimes, so that
 # the per-row maximum over the *eligible* columns (FEA-040..FEA-046) is a different column for
 # each one.
+blocked the migrate half works; validate's autocorrect does not. CqlRowSink::write binds BindInputs { key, ..default() } and the validate upsert is built with StatementOptions::default(), so a corrected row is written with the server's timestamp instead of the origin's writetime -- expected.out wants 1087384200000000 and gets the wall clock. Missing behaviour in cdm-engine::jobs::validate, not missing wiring
 
 # Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
 # expected to pass unchanged once the wiring lands.
-blocked cdm-cli builds the migrate job with MigrateFeatures::default() (crates/cdm-cli/src/harness/build.rs::migrate), so schema.origin.column.ttl.names and schema.origin.column.writetime.names are validated and then never used; FEA-040..FEA-046 are implemented in cdm-feature but unreachable from the command line
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert

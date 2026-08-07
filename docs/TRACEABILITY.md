@@ -167,8 +167,8 @@ test, fails CI.
 |---|---|---|---|---|
 | `SCH-001` <sup>P</sup> | Origin and target table metadata MUST be introspected from `system_schema`: columns, CQL types (including UDTs, tuples,… | `cdm-cql` | `sch_001_*` | #7, #8, #9 |
 | `SCH-002` <sup>P</sup> | Quoted, mixed-case and special-character identifiers MUST be handled correctly on both read and write | `cdm-cql` | `sch_002_*` | #7, #8, #9 |
-| `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql::statement::mapping` | `sch_003_*` | #18 |
-| `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql::statement::mapping` | `sch_004_*` | #18 |
+| `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql::statement::mapping` | `sch_003_*` | #18, #21c |
+| `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql::statement::mapping` | `sch_004_*` | #18, #21c |
 | `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql::statement::upsert` | `sch_005_*` | #18, #22 |
 | `SCH-006` <sup>P</sup> | The target primary key MUST be derivable from: mapped origin columns, constant columns, and explode-map key/value columns | `cdm-cql::statement::mapping` | `sch_006_*` | #18 |
 | `SCH-007` <sup>P</sup> | Virtual projection columns `TTL(col)` and `WRITETIME(col)` MUST be appendable to the origin select and addressable by index | `cdm-cql::statement::projection` | `sch_007_*` | #18 |
@@ -223,7 +223,7 @@ test, fails CI.
 | `MIG-010` <sup>P</sup> | INSERT shape: mapped columns bound, constant columns inlined as literals, optional USING TTL and TIMESTAMP | `cdm-cql::statement::upsert` | `mig_010_*` | #18 |
 | `MIG-011` <sup>P</sup> | Bind order MUST be: mapped/derived columns in target-column order, then TTL, then writetime | `cdm-cql::statement::upsert` | `mig_011_*` | #18 |
 | `MIG-012` <sup>P</sup> | A `null` value, or an **empty collection**, MUST be bound as `UNSET` rather than `null`, to avoid creating tombstones | `cdm-cql::statement::bind` | `mig_012_*` | #18 |
-| `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-cql::statement::bind` | `mig_013_*` | #18 |
+| `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-cql::statement::bind` | `mig_013_*` | #18, #21c |
 | `MIG-014` <sup>P</sup> | `transform.map_remove_null_value = true` MUST strip map entries with null values before binding | `cdm-cql::statement::bind` | `mig_014_*` | #18 |
 | `MIG-020` <sup>P</sup> | Batching: when `batch_size > 1`, writes MUST be accumulated into an `UNLOGGED` batch and executed when the batch reaches `batch_size` | `cdm-engine::jobs::migrate::buffer`, `cdm-cql::exec::write` | `mig_020_*` | #21 |
 | `MIG-021` <sup>P</sup> | `batch_size` MUST be coerced to 1 for a counter table, for an active writetime filter, or for a configured value below 1 | `cdm-engine::jobs::migrate::settings` | `mig_021_*` | #21, #22 |
@@ -260,9 +260,9 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `GRD-001` <sup>P+</sup> | The guardrail job reads the **origin only**; no target connection is required or opened | `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin`, `cdm-cql::exec::origin`, `cdm-feature::guardrail` | `grd_001_*` | #24 |
-| `GRD-002` <sup>P</sup> | For each row, every column's serialized size MUST be computed and compared against `feature.guardrail.column_size_kb * 1000`… | `cdm-feature::guardrail`, `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin` | `grd_002_*` | #24 |
-| `GRD-003` <sup>P+</sup> | A row with at least one oversized column increments `LARGE` and logs `Large columns (KB): col(12.345),col2(...)` with… | `cdm-feature::guardrail` | `grd_003_*` | #24 |
+| `GRD-001` <sup>P+</sup> | The guardrail job reads the **origin only**; no target connection is required or opened | `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin`, `cdm-cql::exec::origin`, `cdm-feature::guardrail`, `cdm-cli::harness::session` | `grd_001_*` | #24, #21c |
+| `GRD-002` <sup>P</sup> | For each row, every column's serialized size MUST be computed and compared against `feature.guardrail.column_size_kb * 1000`… | `cdm-feature::guardrail`, `cdm-engine::jobs::guardrail`, `cdm-engine::jobs::guardrail::origin` | `grd_002_*` | #24, #21c |
+| `GRD-003` <sup>P+</sup> | A row with at least one oversized column increments `LARGE` and logs `Large columns (KB): col(12.345),col2(...)` with… | `cdm-feature::guardrail` | `grd_003_*` | #24, #21c |
 | `GRD-004` <sup>N</sup> | Guardrail MUST additionally be runnable *inline* during migrate/validate (`feature.guardrail.mode = check\|warn\|block`),… | `cdm-engine::jobs::guardrail`, `cdm-feature::guardrail` | `grd_004_*` | #24 |
 | `GRD-005` <sup>N</sup> | Additional guardrails MUST be pluggable via `PLG-003`: partition size, row count per partition, collection cardinality, and… | `cdm-engine::jobs::guardrail` | `grd_005_*` | #54 |
 
@@ -270,31 +270,31 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `FEA-010` <sup>P</sup> | `feature.constant_columns.names` and `.values` (split by `.split_regex`) define target columns written with fixed literal values | `cdm-feature::constant` | `fea_010_*` | #27 |
-| `FEA-011` <sup>P</sup> | Values MUST be parsed and type-checked against the target column type at validation time | `cdm-feature::constant`, `cdm-feature::literal` | `fea_011_*` | #27 |
+| `FEA-010` <sup>P</sup> | `feature.constant_columns.names` and `.values` (split by `.split_regex`) define target columns written with fixed literal values | `cdm-feature::constant` | `fea_010_*` | #27, #21c |
+| `FEA-011` <sup>P</sup> | Values MUST be parsed and type-checked against the target column type at validation time | `cdm-feature::constant`, `cdm-feature::literal` | `fea_011_*` | #27, #21c |
 | `FEA-012` <sup>P</sup> | Constant columns that are part of the target primary key MUST participate in the PK and appear as literals in generated WHERE clauses | `cdm-feature::constant` | `fea_012_*` | #27 |
 | `FEA-013` <sup>P</sup> | Constant columns MUST be excluded from validate comparison | `cdm-feature::constant` | `fea_013_*` | #27 |
 | `FEA-014` <sup>P</sup> | Constant columns present on origin but absent on target MUST be droppable, and origin constants MUST be replaceable by different target constants | `cdm-feature::constant` | `fea_014_*` | #27 |
-| `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row | `cdm-feature::explode` | `fea_020_*` | #28 |
+| `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row | `cdm-feature::explode` | `fea_020_*` | #28, #21c |
 | `FEA-021` <sup>P</sup> | Key and value MUST be converted from the map's element types to the target column types using the standard conversion machinery | `cdm-feature::explode` | `fea_021_*` | #28 |
 | `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature::explode` | `fea_022_*` | #28 |
 | `FEA-023` <sup>P</sup> | A null or empty map MUST produce zero target rows and count as `SKIPPED` | `cdm-feature::explode` | `fea_023_*` | #28 |
-| `FEA-030` <sup>P</sup> | `feature.extract_json.origin_column` names a text column containing a JSON object; `property_mapping` is `jsonField:targetColumn` | `cdm-feature::extract_json` | `fea_030_*` | #29 |
+| `FEA-030` <sup>P</sup> | `feature.extract_json.origin_column` names a text column containing a JSON object; `property_mapping` is `jsonField:targetColumn` | `cdm-feature::extract_json` | `fea_030_*` | #29, #21c |
 | `FEA-031` <sup>P</sup> | The extracted value MUST be written to the mapped target column | `cdm-feature::extract_json`, `cdm-feature::literal` | `fea_031_*` | #29 |
-| `FEA-032` <sup>P</sup> | `overwrite = false` MUST leave an already-populated target column untouched | `cdm-feature::extract_json` | `fea_032_*` | #29 |
+| `FEA-032` <sup>P</sup> | `overwrite = false` MUST leave an already-populated target column untouched | `cdm-feature::extract_json` | `fea_032_*` | #29, #21c |
 | `FEA-033` <sup>P+</sup> | `exclusive = true` MUST restrict the non-PK target columns to the extract column alone, matched by exact name rather than Java's suffix match | `cdm-feature::extract_json` | `fea_033_*` | #29 |
 | `FEA-034` <sup>P+</sup> | Malformed JSON MUST increment `ERROR` for that record and log the primary key, rather than failing the range | `cdm-feature::extract_json` | `fea_034_*` | #29 |
 | `FEA-035` <sup>N</sup> | `property_mapping` MUST accept JSON-Pointer paths (`/a/b/0`) in addition to top-level field names | `cdm-feature::extract_json` | `fea_035_*` | #29 |
-| `FEA-040` <sup>P</sup> | A row's writetime is the maximum `WRITETIME(col)` over the eligible columns, plus `transform.custom_writetime_increment` | `cdm-feature::writetime` | `fea_040_*` | #30 |
+| `FEA-040` <sup>P</sup> | A row's writetime is the maximum `WRITETIME(col)` over the eligible columns, plus `transform.custom_writetime_increment` | `cdm-feature::writetime` | `fea_040_*` | #30, #21c |
 | `FEA-041` <sup>P</sup> | Eligible columns are non-key columns that are primitive, tuple, or frozen; unfrozen collections only on opt-in | `cdm-feature::writetime`, `cdm-feature::schema` | `fea_041_*` | #30 |
-| `FEA-042` <sup>P</sup> | `ttl.automatic` / `writetime.automatic` select all eligible columns; supplying explicit names disables automatic mode for that dimension | `cdm-feature::writetime` | `fea_042_*` | #30 |
+| `FEA-042` <sup>P</sup> | `ttl.automatic` / `writetime.automatic` select all eligible columns; supplying explicit names disables automatic mode for that dimension | `cdm-feature::writetime` | `fea_042_*` | #30, #21c |
 | `FEA-043` <sup>P</sup> | When reading writetimes from a collection column, the result is a list of values and the maximum across the list MUST be taken | `cdm-feature::writetime`, `cdm-feature::wire` | `fea_043_*` | #30 |
 | `FEA-044` <sup>P</sup> | `transform.custom_writetime > 0` overrides the computed writetime; `transform.custom_ttl > 0` overrides the computed TTL | `cdm-feature::writetime` | `fea_044_*` | #30 |
-| `FEA-045` <sup>P</sup> | TTL/writetime MUST be disabled for counter tables | `cdm-feature::writetime` | `fea_045_*` | #30 |
-| `FEA-046` <sup>P</sup> | When no writetime is resolvable, `USING TIMESTAMP` MUST be omitted; likewise `USING TTL` when TTL is 0 | `cdm-feature::writetime` | `fea_046_*` | #30 |
+| `FEA-045` <sup>P</sup> | TTL/writetime MUST be disabled for counter tables | `cdm-feature::writetime` | `fea_045_*` | #30, #21c |
+| `FEA-046` <sup>P</sup> | When no writetime is resolvable, `USING TIMESTAMP` MUST be omitted; likewise `USING TTL` when TTL is 0 | `cdm-feature::writetime` | `fea_046_*` | #30, #21c |
 | `FEA-050` <sup>P+</sup> | `filter.cql_where` MUST be appended to the origin range select, prefixed with ` AND ` unless the string already begins with the `AND` keyword | `cdm-feature::filter` | `fea_050_*` | #31 |
 | `FEA-051` <sup>P</sup> | `filter.writetime.min` / `.max` MUST skip rows whose computed row writetime falls outside the window | `cdm-feature::filter` | `fea_051_*` | #31 |
-| `FEA-052` <sup>P</sup> | `filter.column.name` + `filter.column.value` MUST skip rows where the named text column equals the value, case-insensitively after trimming | `cdm-feature::filter` | `fea_052_*` | #31 |
+| `FEA-052` <sup>P</sup> | `filter.column.name` + `filter.column.value` MUST skip rows where the named text column equals the value, case-insensitively after trimming | `cdm-feature::filter` | `fea_052_*` | #31, #21c |
 | `FEA-053` <sup>P</sup> | `filter.token.min` / `.max` bound the planned ring segment (`TOK-002`) | `cdm-feature::filter` | `fea_053_*` | #31 |
 | `FEA-054` <sup>N</sup> | Filters MUST be composable and pluggable (`PLG-003`); a filter chain evaluates in declaration order and short-circuits | `cdm-feature::filter` | `fea_054_*` | #31 |
 | `FEA-060` <sup>P</sup> | The origin range select bounds TOKEN(pk) between two bind values, with the optional CQL filter appended | `cdm-cql::statement::select` | `fea_060_*` | #18 |
@@ -317,7 +317,7 @@ test, fails CI.
 | `CDC-015` <sup>P+</sup> | Tuple element conversion MUST be implemented | `cdm-codec` | `cdc_015_*` | #11, #12, #13, #14 |
 | `CDC-016` <sup>P</sup> | An `Unsupported` plan MUST pass the value through unchanged and MUST log a warning naming the column and both types, once per… | `cdm-codec` | `cdc_016_*` | #11, #12, #13, #14 |
 | `CDC-020` <sup>P</sup> | The named codec set (INT_STRING, DOUBLE_STRING, BIGINT_STRING, DECIMAL_STRING, BIGINT_BIGINTEGER, STRING_BLOB, ASCII_BLOB, TIMESTAMP_STRING_MILLIS, TIMESTAMP_STRING_FORMAT, DSE geo) with exact Java semantics | `cdm-codec` | `cdc_020_*` | #11, #12, #13, #14 |
-| `CDC-021` <sup>P</sup> | An empty `timestamp_format`, or an unparseable timezone, MUST be a Tier-1 configuration error | `cdm-codec` | `cdc_021_*` | #11, #12, #13, #14 |
+| `CDC-021` <sup>P</sup> | An empty `timestamp_format`, or an unparseable timezone, MUST be a Tier-1 configuration error | `cdm-codec` | `cdc_021_*` | #11, #12, #13, #14, #21c |
 | `CDC-022` <sup>P</sup> | Java `SimpleDateFormat`/`DateTimeFormatter` patterns (e.g | `cdm-codec` | `cdc_022_*` | #11, #12, #13, #14 |
 | `CDC-030` <sup>N</sup> | Codecs MUST be pluggable: `CodecPlugin` registers `(from_type, to_type) → Converter` pairs into the registry, and third-party… | `cdm-codec` | `cdc_030_*` | #11, #12, #13, #14 |
 | `CDC-031` <sup>N</sup> | `cdm codecs list` MUST print all registered codecs and the type pairs they serve; `GET /v1/codecs` MUST return the same | `cdm-codec`, `cdm-cli::commands::codecs` | `cdc_031_*` | #11, #12, #13, #14, #21b |
@@ -388,7 +388,7 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `CLI-001` <sup>N</sup> | The `cdm` binary and its subcommand tree | `cdm-cli` | `cli_001_*` | #10, #21b |
+| `CLI-001` <sup>N</sup> | The `cdm` binary and its subcommand tree | `cdm-cli` | `cli_001_*` | #10, #21b, #21c |
 | `CLI-002` <sup>P</sup> | Java invocation shapes are accepted on every job subcommand, including a properties file and Spark-style conf overrides | `cdm-cli` | `cli_002_*` | #10 |
 | `CLI-003` <sup>N</sup> | `cdm config convert` translates a Java properties file to canonical TOML, annotating what it found | `cdm-cli` | `cli_003_*` | #10 |
 | `CLI-004` <sup>N</sup> | Exit codes are meaningful and documented: success, completed-with-findings, config, connect, interrupted, internal | `cdm-cli::exit` | `cli_004_*` | #10, #21b |

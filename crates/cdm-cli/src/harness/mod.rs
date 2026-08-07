@@ -30,10 +30,10 @@ use std::sync::Arc;
 
 use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, RunId};
-use cdm_engine::planner::{Planner, PlannerSettings, TokenPlan};
+use cdm_engine::planner::{Partitioner, Planner, PlannerSettings, TokenPlan};
 use cdm_engine::scheduler::{NoopObserver, RunReport, Scheduler, SchedulerSettings};
 
-pub use build::{BuiltJob, JobBuilder, ResolvedTables};
+pub use build::{BuiltJob, JobBuilder, ResolvedOrigin, ResolvedTables};
 pub use report::{PlanSummary, RunSummary};
 pub use session::Sessions;
 
@@ -82,10 +82,22 @@ pub fn execute(args: &JobArgs, kind: JobKind, options: JobOptions) -> Result<Job
     // command which never touches a cluster — `cdm config validate`, `cdm completions` — does not
     // pay for a thread pool it will not use.
     runtime()?.block_on(async {
+        // GRD-001: a guardrail run opens the origin and nothing else, so it takes its own four
+        // steps rather than the two-sided ones. The two paths meet again at the plan, because the
+        // ring is split the same way whatever is going to read it.
+        if kind == JobKind::Guardrail {
+            let sessions = Sessions::open_origin(&config).await?;
+            let origin = ResolvedOrigin::introspect(&sessions.origin, &config).await?;
+            let job = build::guardrail(&sessions.origin, &origin, &config).await?;
+            let plan = token_plan(&config, origin.partitioner())?;
+            let report = run(&config, plan, Arc::clone(&job.processor)).await?;
+            return Ok(finish(kind, args, &config, &report, &job));
+        }
+
         let sessions = Sessions::open(&config).await?;
         let tables = ResolvedTables::introspect(&sessions, &config).await?;
         let job = build::job(kind, &sessions, &tables, &config, args).await?;
-        let plan = token_plan(&config, &tables)?;
+        let plan = token_plan(&config, tables.partitioner())?;
         let report = run(&config, plan, Arc::clone(&job.processor)).await?;
         Ok(finish(kind, args, &config, &report, &job))
     })
@@ -139,7 +151,7 @@ pub fn plan(args: &JobArgs) -> Result<PlanSummary, CdmError> {
     runtime()?.block_on(async {
         let sessions = Sessions::open(&config).await?;
         let tables = ResolvedTables::introspect(&sessions, &config).await?;
-        let (plan, planner) = token_plan_with_planner(&config, &tables)?;
+        let (plan, planner) = token_plan_with_planner(&config, tables.partitioner())?;
         let report = planner.report(&plan, None)?;
         Ok(PlanSummary::new(&report, &tables, &config))
     })
@@ -240,16 +252,16 @@ fn runtime() -> Result<tokio::runtime::Runtime, CdmError> {
 /// Reading the partitioner from `system.local` rather than assuming Murmur3 is what makes a
 /// RandomPartitioner cluster work at all: its tokens do not fit in an `i64`, and a plan built for
 /// the wrong partitioner covers the wrong ring.
-fn token_plan(config: &EffectiveConfig, tables: &ResolvedTables) -> Result<TokenPlan, CdmError> {
-    token_plan_with_planner(config, tables).map(|(plan, _)| plan)
+fn token_plan(config: &EffectiveConfig, partitioner: Partitioner) -> Result<TokenPlan, CdmError> {
+    token_plan_with_planner(config, partitioner).map(|(plan, _)| plan)
 }
 
 /// The plan and the planner that produced it, which `cdm plan` needs in order to report on it.
 fn token_plan_with_planner(
     config: &EffectiveConfig,
-    tables: &ResolvedTables,
+    partitioner: Partitioner,
 ) -> Result<(TokenPlan, Planner), CdmError> {
-    let settings = PlannerSettings::from_config(config.config(), tables.partitioner());
+    let settings = PlannerSettings::from_config(config.config(), partitioner);
     let planner = Planner::new(settings);
     let plan = planner.plan(RunId::from_raw(0), None)?;
     Ok((plan, planner))

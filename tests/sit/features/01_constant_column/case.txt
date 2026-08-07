@@ -2,7 +2,6 @@
 
 # Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
 # expected to pass unchanged once the wiring lands.
-blocked cdm-cli resolves the mapping with MappingOptions::default() (crates/cdm-cli/src/harness/build.rs::introspect), whose constants field is empty, so feature.constantColumns.* never reaches ColumnMapping and the run fails at startup with SCH-006
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert

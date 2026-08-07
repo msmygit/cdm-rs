@@ -10,7 +10,6 @@
 
 # Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
 # expected to pass unchanged once the wiring lands.
-blocked cdm-cli rejects JobKind::Guardrail outright (crates/cdm-cli/src/harness/build.rs::job): the job needs a paged origin row source that has not landed. The job itself is implemented and covered by cdm-engine's guardrail_it
 
 cql   setup.cql
 job   guardrail migrate.properties guardrail.assert
