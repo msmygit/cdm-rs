@@ -50,11 +50,18 @@ impl ExplodeMap {
     ///
     /// All three names or none: a partial configuration is a validation finding rather than a load
     /// failure, so that the operator sees it alongside everything else that is wrong (`CFG-031`).
+    ///
+    /// The three names are column names, and are read as CQL identifiers: an operator who has to
+    /// write `"fruit-map"` to name that column in cqlsh writes it the same way here, and the
+    /// quotes are stripped to the internal name the schema is keyed by (`SCH-002`, in
+    /// `properties::column_name`). Without that the column is looked up by a spelling
+    /// `system_schema` never uses, and a column that is plainly on the table is reported missing.
     pub fn load(config: &EffectiveConfig) -> Self {
         Self {
-            origin: properties::trimmed(config, EXPLODE_MAP_ORIGIN_COLUMN).unwrap_or_default(),
-            key: properties::trimmed(config, EXPLODE_MAP_TARGET_KEY_COLUMN).unwrap_or_default(),
-            value: properties::trimmed(config, EXPLODE_MAP_TARGET_VALUE_COLUMN).unwrap_or_default(),
+            origin: properties::column_name(config, EXPLODE_MAP_ORIGIN_COLUMN).unwrap_or_default(),
+            key: properties::column_name(config, EXPLODE_MAP_TARGET_KEY_COLUMN).unwrap_or_default(),
+            value: properties::column_name(config, EXPLODE_MAP_TARGET_VALUE_COLUMN)
+                .unwrap_or_default(),
         }
     }
 
@@ -454,6 +461,113 @@ mod tests {
         let findings = feature.validate(&schema);
         assert_eq!(findings.len(), 2);
         assert!(feature.resolve(&schema, &planner()).is_err());
+    }
+
+    #[test]
+    fn fea_020_a_quoted_column_name_is_read_back_to_the_name_the_schema_is_keyed_by() {
+        // SIT `regression/02_ColumnRenameWithConstantsAndExplode` names a hyphenated map column,
+        // which cannot be written in CQL without quotes. `system_schema` stores `fruit-map`, so a
+        // lookup by the configured spelling `"fruit-map"` found nothing and the feature reported a
+        // column that is plainly on the table as missing (SCH-002).
+        let origin = TableFacts::from_view(
+            &table_view(
+                TableRef::new("ks", "src"),
+                &[("id", "int"), ("fruit-map", "map<text, int>")],
+            ),
+            &["id"],
+        )
+        .unwrap();
+        let target = TableFacts::from_view(
+            &table_view(
+                TableRef::new("ks", "dst"),
+                &[
+                    ("id", "int"),
+                    ("fruit-name", "text"),
+                    ("fruit-price", "int"),
+                ],
+            ),
+            &["id", "fruit-name"],
+        )
+        .unwrap();
+        let schema = FeatureSchema::new(origin, target);
+
+        let feature = ExplodeMap::load(&config(&[
+            ("feature.explode_map.origin_column", "\"fruit-map\""),
+            ("feature.explode_map.target_key_column", "\"fruit-name\""),
+            ("feature.explode_map.target_value_column", "\"fruit-price\""),
+        ]));
+        assert!(feature.is_enabled());
+        // The internal name is what the rest of the pipeline is handed, so the column mapping
+        // `cdm-cql` builds from the same properties agrees with the plan built here.
+        assert_eq!(feature.origin_column(), "fruit-map");
+        assert_eq!(feature.key_column(), "fruit-name");
+        assert_eq!(feature.value_column(), "fruit-price");
+        assert!(feature.validate(&schema).is_empty());
+
+        let plan = feature.resolve(&schema, &planner()).unwrap();
+        assert_eq!(plan.origin_index(), 1);
+        assert_eq!(plan.key_column(), "fruit-name");
+        assert_eq!(plan.value_column(), "fruit-price");
+        assert!(plan.key_is_primary_key());
+        let entries = plan.explode(&map_cell(&[("apple", 1)])).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, RawCell::new(b"apple".to_vec()));
+    }
+
+    #[test]
+    fn fea_020_an_unquoted_name_keeps_its_case_and_a_spaced_one_survives_the_quotes() {
+        // Java's `unFormatName` returns an unquoted name verbatim rather than folding it, and
+        // `system_schema` stores internal names — so a column created as `"Fruit"` must still be
+        // findable when it is configured unquoted (SCH-002). A quoted name containing whitespace
+        // is the trap: the strict `^"[^\s]*"$` test does not recognise it, and leaving the quotes
+        // on would lose the column just as surely as before.
+        let origin = TableFacts::from_view(
+            &table_view(
+                TableRef::new("ks", "src"),
+                &[("id", "int"), ("Fruit", "map<text, int>")],
+            ),
+            &["id"],
+        )
+        .unwrap();
+        let target = TableFacts::from_view(
+            &table_view(
+                TableRef::new("ks", "dst"),
+                &[("id", "int"), ("fruit name", "text"), ("v", "int")],
+            ),
+            &["id", "fruit name"],
+        )
+        .unwrap();
+        let schema = FeatureSchema::new(origin, target);
+
+        let feature = ExplodeMap::load(&config(&[
+            ("feature.explode_map.origin_column", "Fruit"),
+            ("feature.explode_map.target_key_column", "\"fruit name\""),
+            ("feature.explode_map.target_value_column", "v"),
+        ]));
+        assert_eq!(feature.origin_column(), "Fruit");
+        assert_eq!(feature.key_column(), "fruit name");
+        assert!(feature.validate(&schema).is_empty());
+        assert_eq!(
+            feature.resolve(&schema, &planner()).unwrap().key_column(),
+            "fruit name"
+        );
+    }
+
+    #[test]
+    fn fea_020_a_column_that_is_genuinely_absent_is_still_reported_by_its_configured_spelling() {
+        // Normalising must not turn a real mis-configuration into a silent pass.
+        let feature = ExplodeMap::load(&config(&[
+            ("feature.explode_map.origin_column", "\"no-such-map\""),
+            ("feature.explode_map.target_key_column", "k"),
+            ("feature.explode_map.target_value_column", "v"),
+        ]));
+        let schema = schema("text", "int");
+        let findings = feature.validate(&schema);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("no-such-map"));
+        let error = feature.resolve(&schema, &planner()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::SchemaMismatch);
+        assert!(error.message().contains("no-such-map"));
     }
 
     #[test]

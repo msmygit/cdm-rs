@@ -1,6 +1,4 @@
 # Java: SIT/regression/02_ColumnRenameWithConstantsAndExplode/execute.sh — migrateData, validateData, breakData.cql, fixData.
-blocked the explode-map column is looked up by its quoted CQL spelling: `explode-map column "fruit-map" is not on table origin.ColumnRenameWithConstantsAndExplode`. The configured name needs unformatting to its internal form before the lookup (SCH-002), as the projection path already does
-
 # Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
 # expected to pass unchanged once the wiring lands.
 

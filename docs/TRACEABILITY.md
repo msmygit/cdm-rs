@@ -166,7 +166,7 @@ test, fails CI.
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
 | `SCH-001` <sup>P</sup> | Origin and target table metadata MUST be introspected from `system_schema`: columns, CQL types (including UDTs, tuples,… | `cdm-cql` | `sch_001_*` | #7, #8, #9 |
-| `SCH-002` <sup>P</sup> | Quoted, mixed-case and special-character identifiers MUST be handled correctly on both read and write | `cdm-cql` | `sch_002_*` | #7, #8, #9 |
+| `SCH-002` <sup>P</sup> | Quoted, mixed-case and special-character identifiers MUST be handled correctly on both read and write | `cdm-cql`, `cdm-feature::properties` | `sch_002_*` | #7, #8, #9, #21c |
 | `SCH-003` <sup>P</sup> | Column mapping: `schema.origin.column.rename` supplies explicit `origin:target` pairs; all remaining identically-named columns… | `cdm-cql::statement::mapping` | `sch_003_*` | #18, #21c |
 | `SCH-004` <sup>P</sup> | `schema.origin.column.skip` MUST remove the named non-key columns from the origin projection | `cdm-cql::statement::mapping` | `sch_004_*` | #18, #21c |
 | `SCH-005` <sup>P</sup> | Counter tables MUST be auto-detected; the write path switches from `INSERT` to `UPDATE ... SET c = c + ?` (`MIG-030`) | `cdm-cql::statement::upsert` | `sch_005_*` | #18, #22 |
