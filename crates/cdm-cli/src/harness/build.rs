@@ -2,27 +2,50 @@
 //!
 //! [`ResolvedTables`] is everything the two live schemas imply and every job needs: the column
 //! mapping, the origin projection, the statement set and the partitioner. [`job`] is the only
-//! place the three jobs differ.
+//! place migrate and validate differ, and [`guardrail`] is the third job, built from
+//! [`ResolvedOrigin`] because `GRD-001` forbids it a target.
+//!
+//! # This is where the configuration becomes a plan
+//!
+//! Everything an operator wrote under `feature.*`, `schema.origin.column.*` and `transform.*` is
+//! parsed and validated long before it reaches this file, and every one of those settings is
+//! *implemented* somewhere else — in `cdm-feature`, `cdm-codec` or `cdm-cql`. What happens here is
+//! the join: the validated configuration is resolved, against the two live schemas, into the plans
+//! the jobs hold. There is no second place that reads a `feature.*` property.
+//!
+//! That makes this file the one place where a setting can be lost without anything failing. It is
+//! not a hypothetical: every job here was once built with `MappingOptions::default()`,
+//! `MigrateFeatures::default()` and `MissingKeyPolicy::default()`, which meant a run configured
+//! with TTL and writetime preservation started, wrote every row with the *write's* timestamp, and
+//! exited 0 reporting success. A missing feature announces itself; a discarded one does not.
 
 use std::sync::Arc;
 
-use cdm_codec::{CodecRegistry, Codecset, Planner as CodecPlanner, PlannerOptions};
+use cdm_codec::{
+    CodecRegistry, Codecset, Planner as CodecPlanner, PlannerOptions, TimestampFormat,
+};
 use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, RunId, Side, TableRef};
-use cdm_cql::exec::{PreparedSetOptions, RunExecutor, TokenWidth};
+use cdm_cql::connect::ClusterSession;
+use cdm_cql::exec::{OriginReadOptions, OriginReader, PreparedSetOptions, RunExecutor, TokenWidth};
 use cdm_cql::rows::{CqlRowSink, CqlRowSource};
 use cdm_cql::schema::introspect::fetch_table;
-use cdm_cql::schema::table::TableSchema;
+use cdm_cql::schema::table::{ColumnMeta, TableSchema};
 use cdm_cql::statement::{
     Binder, ColumnMapping, MappingOptions, MissingKeyPolicy, OriginProjection, OriginRangeSelect,
     OriginSelectByPk, StatementOptions, StatementSet, TargetSelectByPk, TargetUpsert,
 };
+use cdm_engine::jobs::guardrail::{CqlOriginRows, GuardrailJob};
 use cdm_engine::jobs::migrate::{MigrateFeatures, MigrateJob, MigratePlan, MigrateSettings};
 use cdm_engine::jobs::validate::{
     ComparisonPlan, DiffLog, DiscrepancyReport, ValidateJob, ValidateSettings,
 };
 use cdm_engine::planner::Partitioner;
 use cdm_engine::scheduler::RangeProcessor;
+use cdm_feature::{
+    table_view, ColumnValueFilter, ConstantColumns, ExplodeMap, ExtractJson, FeatureSchema,
+    FilterChain, Guardrail, TableFacts, WritetimeFilter, WritetimeTtl, WritetimeTtlPlan,
+};
 
 use super::Sessions;
 use crate::cli::JobArgs;
@@ -36,8 +59,17 @@ pub struct ResolvedTables {
     pub target: TableSchema,
     /// Which origin column feeds which target column (`SCH-003`).
     pub mapping: ColumnMapping,
-    /// The columns the origin scan selects (`SCH-007`).
+    /// The columns the origin scan selects, before any feature appends a virtual one (`SCH-007`).
     pub projection: OriginProjection,
+    /// The two tables as `cdm-feature` sees them, for the plans the jobs resolve from them.
+    ///
+    /// The origin side is built from the *mapped* origin columns rather than from the whole table,
+    /// because every plan `cdm-feature` resolves addresses cells by their position in the origin
+    /// projection: `WritetimeTtlPlan::resolve` places its first `TTL(…)` at
+    /// `origin.columns().len()`, and `ExplodePlan` and `ColumnValueFilter` index into the row.
+    /// Building it from the full table would put every one of those indices out by the number of
+    /// columns `schema.origin.column.skip` removed, and nothing downstream could notice.
+    features: FeatureSchema,
     partitioner: Partitioner,
 }
 
@@ -71,16 +103,22 @@ impl ResolvedTables {
             .cloned()
             .unwrap_or_else(|| origin_ref.clone());
 
-        let origin = fetch(sessions, Side::Origin, &origin_ref).await?;
-        let target = fetch(sessions, Side::Target, &target_ref).await?;
+        let origin = fetch(&sessions.origin, Side::Origin, &origin_ref).await?;
+        let target = fetch(sessions.target()?, Side::Target, &target_ref).await?;
 
         // SCH-010: a view cannot be written to, and its rows are a projection of a base table that
         // is being migrated separately. Failing here beats failing on the first write.
         origin.reject_if_materialized_view(Side::Origin)?;
         target.reject_if_materialized_view(Side::Target)?;
 
-        let mapping = ColumnMapping::resolve(&origin, &target, &MappingOptions::default())?;
+        // FEA-010, FEA-011: the constants are resolved against the live target before the mapping
+        // is, because resolution is what type-checks each literal against the column it will be
+        // written into. The mapping only needs the resulting `(column, literal)` pairs.
+        let target_facts = facts(&target, &target.columns)?;
+        let mapping =
+            ColumnMapping::resolve(&origin, &target, &mapping_options(config, &target_facts)?)?;
         let projection = OriginProjection::new(mapping.origin_columns(), &[]);
+        let features = FeatureSchema::new(facts(&origin, mapping.origin_columns())?, target_facts);
         let partitioner = Partitioner::detect(&sessions.origin.capabilities().partitioner)?;
 
         Ok(Self {
@@ -88,6 +126,7 @@ impl ResolvedTables {
             target,
             mapping,
             projection,
+            features,
             partitioner,
         })
     }
@@ -98,34 +137,97 @@ impl ResolvedTables {
         self.partitioner
     }
 
-    /// The four statements every job draws from (`SCH-004`..`SCH-007`).
-    fn statements(&self, where_clause: Option<&str>) -> Result<StatementSet, CdmError> {
+    /// The four statements a job draws from, over the projection that job reads (`SCH-004`..`SCH-007`).
+    ///
+    /// The projection is a parameter rather than [`ResolvedTables::projection`] because migrate
+    /// appends `TTL(…)` and `WRITETIME(…)` to it and validate does not, and a run whose statements
+    /// and whose plan disagreed about the width of a row would mis-read every cell after the first
+    /// virtual one.
+    fn statements(
+        &self,
+        projection: &OriginProjection,
+        using: StatementOptions,
+        where_clause: Option<&str>,
+    ) -> Result<StatementSet, CdmError> {
         Ok(StatementSet {
             origin_range_select: OriginRangeSelect::new(
                 &self.origin,
-                &self.projection,
+                projection,
                 where_clause,
                 false,
             )
             .cql()
             .to_owned(),
-            origin_select_by_pk: OriginSelectByPk::new(&self.origin, &self.projection)
+            origin_select_by_pk: OriginSelectByPk::new(&self.origin, projection)
                 .cql()
                 .to_owned(),
             target_select_by_pk: TargetSelectByPk::new(&self.mapping)?.cql().to_owned(),
-            target_upsert: TargetUpsert::new(&self.mapping, StatementOptions::default())?
-                .cql()
-                .to_owned(),
+            target_upsert: TargetUpsert::new(&self.mapping, using)?.cql().to_owned(),
         })
     }
 }
 
+/// The origin table alone, for the one job that must not reach a target (`GRD-001`).
+///
+/// A deliberate second type rather than an `Option`-ridden [`ResolvedTables`]: a guardrail run has
+/// no target table, no column mapping and no write statement, and modelling those as absent would
+/// leave every migrate and validate call site unwrapping something that is always present.
+#[derive(Debug)]
+pub struct ResolvedOrigin {
+    /// The origin table as the cluster reports it.
+    pub origin: TableSchema,
+    /// The columns the range scan selects (`SCH-007`).
+    pub projection: OriginProjection,
+    facts: TableFacts,
+    partitioner: Partitioner,
+}
+
+impl ResolvedOrigin {
+    /// Introspects the origin table and nothing else.
+    ///
+    /// # Errors
+    ///
+    /// As [`ResolvedTables::introspect`], for the origin alone.
+    pub async fn introspect(
+        session: &ClusterSession,
+        config: &EffectiveConfig,
+    ) -> Result<Self, CdmError> {
+        let origin_ref = config.origin_table().cloned().ok_or_else(|| {
+            CdmError::new(
+                ErrorKind::Config,
+                "no origin table is configured; set `schema.origin.keyspace_table`",
+            )
+            .with_context(|c| c.with_config_key("schema.origin.keyspace_table"))
+        })?;
+        let origin = fetch(session, Side::Origin, &origin_ref).await?;
+
+        // A guardrail measures the table as it is, so the projection is every column: `skip` is a
+        // statement about what a *migration* carries across, and a column left behind is still a
+        // column whose size an operator asked about.
+        let projection = OriginProjection::new(&origin.columns, &[]);
+        let facts = facts(&origin, &origin.columns)?;
+        let partitioner = Partitioner::detect(&session.capabilities().partitioner)?;
+        Ok(Self {
+            origin,
+            projection,
+            facts,
+            partitioner,
+        })
+    }
+
+    /// The partitioner the origin reports (`TOK-001`).
+    #[must_use]
+    pub const fn partitioner(&self) -> Partitioner {
+        self.partitioner
+    }
+}
+
 /// Fetches one side's table, turning "not found" into a diagnostic that names it.
-async fn fetch(sessions: &Sessions, side: Side, table: &TableRef) -> Result<TableSchema, CdmError> {
-    let session = match side {
-        Side::Origin => &sessions.origin,
-        Side::Target => &sessions.target,
-    };
+async fn fetch(
+    session: &ClusterSession,
+    side: Side,
+    table: &TableRef,
+) -> Result<TableSchema, CdmError> {
     fetch_table(side, session.session(), table)
         .await?
         .ok_or_else(|| {
@@ -139,6 +241,53 @@ async fn fetch(sessions: &Sessions, side: Side, table: &TableRef) -> Result<Tabl
             )
             .with_context(|c| c.with_side(side).with_table(table.clone()))
         })
+}
+
+/// A table as `cdm-feature` sees it: `columns` in row order, keyed by the table's primary key.
+fn facts(table: &TableSchema, columns: &[ColumnMeta]) -> Result<TableFacts, CdmError> {
+    let pairs: Vec<(&str, &str)> = columns
+        .iter()
+        .map(|column| (column.name.as_str(), column.cql_type.as_str()))
+        .collect();
+    let key: Vec<&str> = table
+        .primary_key()
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect();
+    TableFacts::from_view(&table_view(table.table_ref(), &pairs), &key)
+}
+
+/// The mapping inputs `feature.*` and `schema.origin.column.*` supply (`SCH-003`, `SCH-004`,
+/// `FEA-010`, `FEA-020`, `FEA-030`).
+fn mapping_options(
+    config: &EffectiveConfig,
+    target: &TableFacts,
+) -> Result<MappingOptions, CdmError> {
+    let core = config.to_core();
+    let constants = ConstantColumns::load(&core)?.resolve(target)?;
+    let explode = ExplodeMap::load(&core);
+    let extract = ExtractJson::load(&core);
+    Ok(MappingOptions {
+        rename: config.config().schema.origin.column.rename.clone(),
+        skip: config.config().schema.origin.column.skip.clone(),
+        constants: constants
+            .iter()
+            .map(|constant| (constant.name().to_owned(), constant.literal().to_owned()))
+            .collect(),
+        explode_map: explode.is_enabled().then(|| {
+            (
+                explode.origin_column().to_owned(),
+                explode.key_column().to_owned(),
+                explode.value_column().to_owned(),
+            )
+        }),
+        extract_json: extract.is_enabled().then(|| {
+            (
+                extract.origin_column().to_owned(),
+                extract.target_column().to_owned(),
+            )
+        }),
+    })
 }
 
 /// What a job needs to build itself — the one step that differs between the three.
@@ -169,8 +318,8 @@ pub struct BuiltJob {
     pub discrepancies: Option<Arc<DiscrepancyReport>>,
 }
 
-// `RangeProcessor` is not `Debug` — a job holds prepared statements and live sessions, and there is
-// no useful rendering of those — so the derive cannot apply. Written out rather than dropped
+// `RangeProcessor` is not `Debug` — a job holds prepared statements and live sessions, and there
+// is no useful rendering of those — so the derive cannot apply. Written out rather than dropped
 // because `missing_debug_implementations` is a workspace lint and a public type without `Debug`
 // poisons every struct that contains one.
 impl std::fmt::Debug for BuiltJob {
@@ -199,7 +348,7 @@ impl BuiltJob {
 /// # Errors
 ///
 /// [`ErrorKind::SchemaMismatch`] for a mapping the job cannot execute, and
-/// [`ErrorKind::Config`] for a job that is not yet reachable from the CLI.
+/// [`ErrorKind::Config`] for a feature this schema cannot satisfy.
 pub(super) async fn job(
     kind: JobKind,
     sessions: &Sessions,
@@ -212,14 +361,12 @@ pub(super) async fn job(
             .await
             .map(BuiltJob::bare),
         JobKind::Validate => validate(sessions, tables, config).await,
-        // The guardrail job is implemented and tested, but its production row reader is not: the
-        // only `OriginRows` that exists reads a range unpaged, which is fine for a test fixture
-        // and wrong for a table this job exists to find wide rows in. Naming that is more useful
-        // than wiring a reader that would fall over on the first large partition.
+        // The guardrail is built from `ResolvedOrigin` and the origin session alone, so it cannot
+        // be reached through a value that holds a target (`GRD-001`). `super::execute` routes it.
         JobKind::Guardrail => Err(CdmError::new(
-            ErrorKind::Config,
-            "`cdm guardrail` needs a paged origin reader, which lands with the guardrail row \
-             source; the job itself is implemented and covered by `guardrail_it`",
+            ErrorKind::Internal,
+            "the guardrail job is built by `build::guardrail` from an origin-only session, and \
+             must not be routed through the two-sided builder",
         )),
     }
 }
@@ -237,10 +384,27 @@ async fn migrate(
     let settings =
         MigrateSettings::from_config(config, counter_target, writetime_filter, args.dry_run);
 
-    let statements = tables.statements(config.config().filter.cql_where.as_deref())?;
+    let codecs = codec_planner(config)?;
+    let features = migrate_features(config, tables, &codecs, counter_target, writetime_filter)?;
+
+    // SCH-007: `TTL(…)` and `WRITETIME(…)` occupy positions in the result row exactly as columns
+    // do, so they are part of the projection the statements are generated from and part of the
+    // width the plan is resolved against. The two must be built from the same value.
+    let projection = OriginProjection::new(
+        tables.mapping.origin_columns(),
+        features.writetime.projection(),
+    );
+    let using = StatementOptions {
+        using: using_clause(&features.writetime),
+    };
+    let statements = tables.statements(
+        &projection,
+        using,
+        config.config().filter.cql_where.as_deref(),
+    )?;
     let executor = RunExecutor::prepare(
         &sessions.origin,
-        &sessions.target,
+        sessions.target()?,
         &statements,
         PreparedSetOptions {
             fetch_size: settings.fetch_size(),
@@ -252,18 +416,120 @@ async fn migrate(
     )
     .await?;
 
-    let codecs = codec_planner(config)?;
     let plan = MigratePlan::resolve(
         executor,
         &tables.mapping,
-        &tables.projection,
+        &projection,
         &codecs,
         settings,
-        MissingKeyPolicy::default(),
+        missing_key_policy(config),
         config.config().transform.map_remove_null_value,
-        MigrateFeatures::default(),
+        features,
     )?;
     Ok(Arc::new(MigrateJob::new(Arc::new(plan))))
+}
+
+/// Builds the guardrail job (`GRD-001`..`GRD-003`).
+///
+/// Takes the origin [`ClusterSession`] rather than [`Sessions`], which is the whole of `GRD-001`'s
+/// structural claim as it applies to this crate: from here down there is no value in scope through
+/// which a target could be reached, and the reader this hands to [`GuardrailJob`] holds an origin
+/// session and a range select and nothing else.
+///
+/// # Errors
+///
+/// [`ErrorKind::Config`] when `feature.guardrail.column_size_kb` is unset or zero — a clean report
+/// from a run that was never looking is indistinguishable from a clean report from one that was —
+/// and [`ErrorKind::SchemaMismatch`] if the range select does not prepare.
+pub(super) async fn guardrail(
+    session: &ClusterSession,
+    origin: &ResolvedOrigin,
+    config: &EffectiveConfig,
+) -> Result<BuiltJob, CdmError> {
+    let select = OriginRangeSelect::new(
+        &origin.origin,
+        &origin.projection,
+        config.config().filter.cql_where.as_deref(),
+        false,
+    );
+    let reader = OriginReader::prepare(
+        session,
+        &select,
+        OriginReadOptions::default(),
+        token_width(origin.partitioner()),
+    )
+    .await?;
+    let rows = CqlOriginRows::resolve(Arc::new(reader), &origin.origin, &origin.projection)?;
+    let guardrail = Guardrail::load(&config.to_core())?.resolve(&origin.facts)?;
+    Ok(BuiltJob::bare(Arc::new(GuardrailJob::new(
+        Arc::new(rows),
+        guardrail,
+    )?)))
+}
+
+/// The features a migrate run switches on (`FEA-020`, `FEA-030`, `FEA-040`, `FEA-050`).
+fn migrate_features(
+    config: &EffectiveConfig,
+    tables: &ResolvedTables,
+    codecs: &CodecPlanner,
+    counter_target: bool,
+    writetime_filter: bool,
+) -> Result<MigrateFeatures, CdmError> {
+    let core = config.to_core();
+    let origin = &tables.features.origin;
+
+    // FEA-045: a counter column on *either* side disables TTL and writetime, because neither side
+    // can accept a timestamp or a TTL on a counter write. `WritetimeTtlPlan::resolve` only knows
+    // about the origin, so the target's half of the rule is applied here.
+    let writetime = if counter_target || origin.is_counter_table() {
+        WritetimeTtlPlan::disabled()
+    } else {
+        WritetimeTtl::load(&core)?.resolve(origin)?
+    };
+
+    let column_filter = ColumnValueFilter::load(&core, origin);
+    let row_writetime = WritetimeFilter::load(&core, writetime.clone())?;
+    let filters = FilterChain::new()
+        .with_enabled(row_writetime.is_enabled(), Arc::new(row_writetime))
+        .with_enabled(column_filter.is_enabled(), Arc::new(column_filter));
+
+    let explode = ExplodeMap::load(&core);
+    let explode = explode
+        .is_enabled()
+        .then(|| explode.resolve(&tables.features, codecs))
+        .transpose()?;
+    let extract_json = ExtractJson::load(&core);
+    let extract_json = extract_json
+        .is_enabled()
+        .then(|| extract_json.resolve(&tables.features))
+        .transpose()?;
+
+    Ok(MigrateFeatures {
+        filters,
+        writetime,
+        explode,
+        extract_json,
+        writetime_filter,
+    })
+}
+
+/// The `USING` clause a resolved TTL/writetime plan implies (`FEA-046`).
+///
+/// `cdm-feature` and `cdm-cql` each own a `UsingClause` on opposite sides of the dependency edge,
+/// so the two booleans cross as data — the same seam `cdm-engine`'s migrate plan uses.
+fn using_clause(plan: &WritetimeTtlPlan) -> cdm_cql::statement::UsingClause {
+    let feature = plan.using_clause();
+    cdm_cql::statement::UsingClause {
+        ttl: feature.ttl,
+        timestamp: feature.timestamp,
+    }
+}
+
+/// What to substitute for a null in a target key column (`MIG-013`).
+fn missing_key_policy(config: &EffectiveConfig) -> MissingKeyPolicy {
+    MissingKeyPolicy {
+        missing_key_ts_replace: config.config().transform.missing_key_ts_replace,
+    }
 }
 
 /// Builds the validate job (`VAL-001`, `VAL-013`, `VAL-015`).
@@ -294,22 +560,38 @@ async fn validate(
         &tables.mapping,
         TargetUpsert::new(&tables.mapping, StatementOptions::default())?,
         &codecs,
-        MissingKeyPolicy::default(),
+        missing_key_policy(config),
         config.config().transform.map_remove_null_value,
     )?;
     let sink = CqlRowSink::prepare(
-        Arc::clone(sessions.target.session()),
+        Arc::clone(sessions.target()?.session()),
         &target_select,
         binder,
         &tables.mapping,
     )
     .await?;
 
+    // FEA-031, FEA-032: the extracted property is a target column like any other, and whether it
+    // overwrites decides what a *comparison* of that column even means. A validate run that did
+    // not know about the extraction would report every extracted column as a mismatch.
+    let core = config.to_core();
+    let extract_json = ExtractJson::load(&core);
+    let extract_json_overwrites = extract_json.overwrites();
+    let extract_json = extract_json
+        .is_enabled()
+        .then(|| extract_json.resolve(&tables.features))
+        .transpose()?;
+
     // VAL-015: `--keys-only` arrived here as `validate.keys_only`, because the flag is a spelling
     // of the property and nothing else. A keys-only plan compares existence, so `MISMATCH` is
     // structurally zero in the run that follows.
-    let plan = ComparisonPlan::resolve(&tables.mapping, &codecs, None, false)?
-        .with_keys_only(config.config().validate.keys_only);
+    let plan = ComparisonPlan::resolve(
+        &tables.mapping,
+        &codecs,
+        extract_json,
+        extract_json_overwrites,
+    )?
+    .with_keys_only(config.config().validate.keys_only);
     let mut settings = ValidateSettings::read_only();
     settings.autocorrect = config.config().autocorrect.clone();
     settings.target_is_counter = tables.target.is_counter_table();
@@ -327,6 +609,14 @@ async fn validate(
         reporting.redact_values,
     )?);
 
+    // FEA-052: the column-value filter reads a cell of the origin row by position, which validate's
+    // projection supplies. `filter.writetime.*` is deliberately not installed here: its filter is
+    // defined over a `WRITETIME(…)` cell, and validate does not select one — a chain that read past
+    // the end of every row would decide what to compare on the strength of a missing value.
+    let column_filter = ColumnValueFilter::load(&core, &tables.features.origin);
+    let filters =
+        FilterChain::new().with_enabled(column_filter.is_enabled(), Arc::new(column_filter));
+
     let job = ValidateJob::new(
         Arc::new(source),
         Arc::new(sink),
@@ -334,6 +624,7 @@ async fn validate(
         settings,
         Arc::new(diff_log),
     )
+    .with_filters(filters)
     .with_report(Arc::clone(&report));
 
     Ok(BuiltJob {
@@ -342,20 +633,35 @@ async fn validate(
     })
 }
 
-/// The conversion planner, with the configured codecs registered (`CDC-001`).
+/// The conversion planner, with the configured codecs registered (`CDC-001`, `CDC-021`).
 fn codec_planner(config: &EffectiveConfig) -> Result<CodecPlanner, CdmError> {
     // An unrecognised codec name is a configuration error rather than a silently ignored one:
     // a run that quietly skips the conversion an operator asked for writes the wrong bytes
     // (`CDC-002`).
-    let enabled = config
-        .config()
-        .transform
+    let transform = &config.config().transform;
+    let enabled = transform
         .codecs
         .iter()
         .map(|name| Codecset::parse(name))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // CDC-021: `TIMESTAMP_STRING_FORMAT` is the one codec that cannot be built from its name alone,
+    // and the registry refuses to build it without a pattern and a zone rather than inventing one.
+    // Both properties have defaults, so the only way this used to fail was by not being read.
+    // Built only when the codec is enabled, so that a stale pattern left in a configuration cannot
+    // stop a run that does not use it.
+    let timestamp_format = enabled
+        .contains(&Codecset::TimestampStringFormat)
+        .then(|| {
+            TimestampFormat::new(
+                &transform.codec_timestamp_format,
+                &transform.codec_timestamp_zone,
+            )
+        })
+        .transpose()?;
+
     Ok(CodecPlanner::new(
-        CodecRegistry::with_builtins(&enabled, None)?,
+        CodecRegistry::with_builtins(&enabled, timestamp_format)?,
         PlannerOptions::default(),
     ))
 }
@@ -373,5 +679,208 @@ const fn token_kind(partitioner: Partitioner) -> cdm_cql::rows::TokenKind {
     match partitioner {
         Partitioner::Murmur3 | Partitioner::ByteOrdered => cdm_cql::rows::TokenKind::Murmur3,
         Partitioner::Random => cdm_cql::rows::TokenKind::Random,
+    }
+}
+
+// Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
+// (ERR-004) exists to protect production paths, not test bodies.
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod tests {
+    //! What these cover, and what they cannot.
+    //!
+    //! Everything below is the *first* half of each wiring: the configuration an operator wrote
+    //! reaching the options the plan is resolved from. The second half — that the plan then writes
+    //! the right bytes — is `cdm-feature`'s and `cdm-engine`'s, and is already covered there. The
+    //! seam between them is exactly where the defect these tests exist to prevent lived, because a
+    //! `::default()` at a call site is invisible to both sides' tests.
+
+    use cdm_core::TableRef;
+    use cdm_feature::{table_view, TableFacts};
+
+    use super::*;
+    use crate::cli::{ConfigArgs, JobArgs};
+
+    /// A validated configuration carrying only the `--set` overrides a case needs.
+    fn config(overrides: &[&str]) -> EffectiveConfig {
+        super::super::resolve(
+            &JobArgs {
+                config: ConfigArgs {
+                    set: overrides.iter().map(|s| (*s).to_owned()).collect(),
+                    ..ConfigArgs::default()
+                },
+                dry_run: false,
+                summary_out: None,
+            },
+            super::super::JobOptions::default(),
+        )
+        .expect("the overrides in these tests are all valid")
+    }
+
+    /// A target table with the columns the constant-column cases write into.
+    fn target_facts() -> TableFacts {
+        TableFacts::from_view(
+            &table_view(
+                TableRef::new("ks", "dst"),
+                &[("id", "int"), ("tenant", "text"), ("data", "text")],
+            ),
+            &["id"],
+        )
+        .unwrap()
+    }
+
+    const TABLE: &str = "schema.origin.keyspace_table=ks.tbl";
+
+    #[test]
+    fn fea_010_constant_columns_reach_the_column_mapping() {
+        let options = mapping_options(
+            &config(&[
+                TABLE,
+                "feature.constant_columns.names=tenant",
+                "feature.constant_columns.values='acme'",
+            ]),
+            &target_facts(),
+        )
+        .unwrap();
+        assert_eq!(
+            options.constants,
+            vec![("tenant".to_owned(), "'acme'".to_owned())]
+        );
+    }
+
+    #[test]
+    fn fea_010_a_run_that_configures_no_constant_writes_none() {
+        let options = mapping_options(&config(&[TABLE]), &target_facts()).unwrap();
+        assert!(options.constants.is_empty());
+        assert!(options.explode_map.is_none());
+        assert!(options.extract_json.is_none());
+    }
+
+    #[test]
+    fn fea_020_the_explode_map_reaches_the_column_mapping() {
+        let options = mapping_options(
+            &config(&[
+                TABLE,
+                "feature.explode_map.origin_column=fruits",
+                "feature.explode_map.target_key_column=fruit",
+                "feature.explode_map.target_value_column=price",
+            ]),
+            &target_facts(),
+        )
+        .unwrap();
+        assert_eq!(
+            options.explode_map,
+            Some(("fruits".to_owned(), "fruit".to_owned(), "price".to_owned()))
+        );
+    }
+
+    #[test]
+    fn fea_030_extract_json_reaches_the_column_mapping() {
+        let options = mapping_options(
+            &config(&[
+                TABLE,
+                "feature.extract_json.origin_column=doc",
+                "feature.extract_json.property_mapping=city:town",
+            ]),
+            &target_facts(),
+        )
+        .unwrap();
+        assert_eq!(
+            options.extract_json,
+            Some(("doc".to_owned(), "town".to_owned()))
+        );
+    }
+
+    #[test]
+    fn sch_003_renames_and_skips_reach_the_column_mapping() {
+        let options = mapping_options(
+            &config(&[
+                TABLE,
+                "schema.origin.column.rename=a:b",
+                "schema.origin.column.skip=c",
+            ]),
+            &target_facts(),
+        )
+        .unwrap();
+        assert_eq!(options.rename, vec!["a:b".to_owned()]);
+        assert_eq!(options.skip, vec!["c".to_owned()]);
+    }
+
+    #[test]
+    fn mig_013_the_missing_key_timestamp_replacement_reaches_the_binder() {
+        // The whole of the defect: the property parsed, validated, hashed — and then replaced by
+        // `MissingKeyPolicy::default()`, which substitutes nothing, so the row that needed the
+        // substitution was counted `ERROR` instead.
+        let policy = missing_key_policy(&config(&[
+            TABLE,
+            "transform.missing_key_ts_replace=1087383600000",
+        ]));
+        assert_eq!(policy.missing_key_ts_replace, Some(1_087_383_600_000));
+        assert_eq!(
+            missing_key_policy(&config(&[TABLE])).missing_key_ts_replace,
+            None
+        );
+    }
+
+    #[test]
+    fn cdc_021_the_timestamp_format_options_reach_the_registry() {
+        // `CodecRegistry::with_builtins(&enabled, None)` refused this codec outright, however the
+        // format and the zone were configured — including at their defaults, which are valid, so
+        // the codec could not be used at all from the command line.
+        codec_planner(&config(&[
+            TABLE,
+            "transform.codecs=TIMESTAMP_STRING_FORMAT",
+        ]))
+        .expect("a configured timestamp format must build its codec");
+        codec_planner(&config(&[
+            TABLE,
+            "transform.codecs=TIMESTAMP_STRING_FORMAT",
+            "transform.codec_timestamp_format=yyMMddHHmmss",
+            "transform.codec_timestamp_zone=Europe/Dublin",
+        ]))
+        .expect("a non-default timestamp format must build its codec");
+    }
+
+    #[test]
+    fn cdc_002_a_codec_name_the_registry_does_not_know_still_stops_the_run() {
+        let error = codec_planner(&config(&[TABLE, "transform.codecs=NOT_A_CODEC"]))
+            .expect_err("a conversion that was asked for and skipped writes the wrong bytes");
+        assert_eq!(error.kind(), ErrorKind::Config);
+    }
+
+    #[test]
+    fn grd_001_the_guardrail_builder_is_handed_no_target_to_be_careful_with() {
+        // `GRD-001` requires the read-only property to be structural rather than observed, and the
+        // structure is a signature: `guardrail` takes the origin `ClusterSession`, not `Sessions`.
+        // Asserted against the source because that is where the claim lives — a reviewer changing
+        // the parameter to `&Sessions` would restore exactly the reachability the requirement
+        // forbids, and nothing else in the crate would notice.
+        let source = include_str!("build.rs");
+        let signature = source
+            .split("pub(super) async fn guardrail(")
+            .nth(1)
+            .and_then(|rest| rest.split(") -> ").next())
+            .expect("the function is defined in this file");
+        assert!(
+            signature.contains("session: &ClusterSession"),
+            "{signature}"
+        );
+        assert!(!signature.contains("Sessions"), "{signature}");
+    }
+
+    #[test]
+    fn cdc_021_a_run_that_converts_no_timestamps_registers_no_format() {
+        // The other half of gating on the codec set: reading the two format properties must not
+        // become a new way for a run that never converts a timestamp to fail to start.
+        codec_planner(&config(&[
+            TABLE,
+            "transform.codec_timestamp_format=yyMMddHHmmss",
+        ]))
+        .expect("a format matters only to the codec that reads it");
     }
 }

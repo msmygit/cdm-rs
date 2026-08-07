@@ -37,9 +37,17 @@ along with **#21b**, which wires the remaining commands and the flags that had b
 ignored. `cdm migrate`, `cdm validate` and `cdm plan` now run; so do `cdm connect test`,
 `cdm schema show|diff`, `cdm codecs`, `cdm config init` and `cdm runs list|show|cancel`.
 
-Four commands still return "not yet", and each is blocked on something nameable rather than on
-wiring: `cdm guardrail` on a paged origin reader, `cdm runs resume` on the scheduler accepting a
-pre-computed range set, `cdm cluster` on #50, and `cdm serve` and `cdm mcp` on #41–#45.
+**#21c** closes what those two left open. The harness they built accepted a validated `feature.*`
+block and then discarded it at the point of use, building every job with `MappingOptions::default()`,
+`MigrateFeatures::default()`, `MissingKeyPolicy::default()` and a codec registry with no format
+options — so the features delivered by #27–#31 were reachable from a library test and from nowhere
+else, and a run configured with them reported success while writing rows that did not carry them.
+#21c wires the configuration through, and — on the paged origin reader `CqlOriginRows` now provides
+— implements `cdm guardrail`.
+
+Three commands still return "not yet", and each is blocked on something nameable rather than on
+wiring: `cdm runs resume` on the scheduler accepting a pre-computed range set, `cdm cluster` on #50,
+and `cdm serve` and `cdm mcp` on #41–#45.
 
 ---
 
@@ -90,6 +98,7 @@ pre-computed range set, `cdm cluster` on #50, and `cdm serve` and `cdm mcp` on #
 | #26 | `feat(engine): error limit and graceful shutdown` | `ENG-009`, `ENG-010`, `ENG-014` |
 | #21a | `feat(cli): the shared job harness — connect, introspect, plan, run` | `CLI-001`, `CON-008`, `SCH-001`, `SCH-008`, `TOK-001`, `MET-005` (wiring only; no new requirements) — **the one piece standing between the implemented jobs and a usable `cdm` binary.** Turns a validated `CdmConfig` into two sessions, an introspected schema, a conversion plan, a token plan and a scheduler run, then renders the counter block and maps the terminal status onto a `CLI-004` exit code. Wires `cdm migrate`, `cdm validate` and `cdm plan`. `cdm guardrail` is left blocked on a paged origin reader, and tier-3 `cdm config validate` on a caller for the session the harness now opens. |
 | #21b | `feat(cli): the discrepancy-report flags and the remaining commands` | `CLI-001`, `CLI-004`..`CLI-006`, `CFG-023`, `CON-008`, `CON-029`, `SCH-008`, `CDC-031`, `TRK-034`, `VAL-013`, `VAL-015`, `MET-033` (wiring only; no new requirements). Makes `--summary-out` write the `MET-033` document with the `CFG-023` hash and the `VAL-013` report pointer, and adds `--sample` and `--keys-only` as the configuration sugar `VAL-015` specifies. Implements `cdm connect test`, `cdm schema show\|diff`, `cdm codecs`, `cdm config init` and `cdm runs list\|show\|cancel`. `cdm runs resume`, `cdm cluster`, `cdm serve` and `cdm mcp` stay stubs, each naming the crate it waits on. |
+| #21c | `fix(cli): wire the validated feature configuration into the jobs it was validated for` | `CLI-001`, `SCH-003`, `SCH-004`, `MIG-013`, `CDC-021`, `FEA-010`..`FEA-011`, `FEA-020`, `FEA-030`, `FEA-032`, `FEA-040`..`FEA-046`, `FEA-052`, `GRD-001`..`GRD-003` (wiring only; no new requirements). The harness of #21a accepted a validated `feature.*` block and discarded it at the point of use — `MappingOptions::default()` in `introspect`, `MigrateFeatures::default()` and `MissingKeyPolicy::default()` in the job builders, and a codec registry built without format options — so a run configured with constant columns, an explode map, a column rename, TTL/writetime preservation or a null-key replacement started, reported success and exited 0 while doing none of it. #21c resolves each plan from the configuration the run was validated against, and builds `cdm guardrail` from an origin-only `Sessions` over `CqlOriginRows`, which is what `GRD-001` requires of it. |
 
 ## Phase 4 — Features and parity certification
 
