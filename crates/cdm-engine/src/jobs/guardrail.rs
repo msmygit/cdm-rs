@@ -50,6 +50,10 @@ use cdm_metrics::{CounterKind, CounterView, JobCounters};
 
 use crate::scheduler::{RangeContext, RangeProcessor, RangeVerdict, RunReport};
 
+mod origin;
+
+pub use origin::CqlOriginRows;
+
 /// A source of origin rows for one token range — the only capability a guardrail run has
 /// (`GRD-001`).
 ///

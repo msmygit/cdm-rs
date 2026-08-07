@@ -16,5 +16,5 @@ pub mod guardrail;
 pub mod migrate;
 pub mod validate;
 
-pub use guardrail::{GuardrailJob, InlineGuardrail, OriginRows, RowSizeStream};
+pub use guardrail::{CqlOriginRows, GuardrailJob, InlineGuardrail, OriginRows, RowSizeStream};
 pub use migrate::{MigrateJob, MigratePlan, MigrateSettings};

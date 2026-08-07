@@ -40,6 +40,7 @@
 //! - `MIG-010`..`MIG-014` — [`statement::TargetUpsert`], [`statement::Binder`]
 //! - `ERR-005` — [`statement::BindFailure`]
 //! - `ENG-003`, `CON-011`, `CON-012` — [`exec::RangeScan`], [`exec::TargetWriter`]
+//! - `GRD-001` — [`exec::OriginReader`], the origin-only reader a guardrail run is built on
 //! - `SCH-009` — [`exec::SchemaWatch`]
 //!
 //! # A driver limitation you will meet

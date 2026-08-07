@@ -160,11 +160,11 @@ impl PreparedSet {
 
 /// The driver takes a page size as `i32`; a configured value beyond that is clamped rather than
 /// wrapped, and a zero page size is refused by the driver, so it becomes one row.
-fn page_size(fetch_size: u32) -> i32 {
+pub(super) fn page_size(fetch_size: u32) -> i32 {
     i32::try_from(fetch_size).unwrap_or(i32::MAX).max(1)
 }
 
-async fn prepare_one(
+pub(super) async fn prepare_one(
     session: &DriverSession,
     side: Side,
     cql: &str,

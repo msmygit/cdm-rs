@@ -1,5 +1,9 @@
 //! The guardrail job against a real cluster (`GRD-001`..`GRD-003`).
 //!
+//! These run the production reader, [`CqlOriginRows`], over the paged range scan of `FEA-060`;
+//! before it existed this file supplied its own unpaged `OriginRows` and so proved nothing about
+//! what a real run reads.
+//!
 //! The unit tests in `cdm_engine::jobs::guardrail` prove what the job does with a given set of
 //! column *lengths*. Only a node can prove the claim underneath that one — that a length read off
 //! the response frame is the size Java computes by decoding a cell and re-encoding it — and it has
@@ -13,6 +17,8 @@
 //! | A `vector<float, 3>` is measured like anything else, where the engine has vectors (`CDC-004`) | [`grd_002_every_supported_cql_type_is_measured_as_its_frame_length`] |
 //! | The run exits `1` when it found something and `0` when it did not (`CLI-004`) | [`grd_003_a_run_that_found_oversized_columns_reports_a_finding_not_a_failure`] |
 //! | Nothing is written: the origin is byte-identical afterwards (`GRD-001`) | [`grd_001_a_guardrail_run_leaves_the_origin_untouched`] |
+//! | A range is read across pages and every row counted once (`ENG-003`) | [`eng_003_a_range_is_read_across_pages_and_every_row_is_counted_exactly_once`] |
+//! | Ten megabytes of wide rows read at two rows a page (`NFR-003`) | [`nfr_003_a_page_of_wide_rows_is_the_only_thing_resident_however_wide_the_rows_are`] |
 //!
 //! Per `TST-102` these skip — rather than fail — when no container runtime is available.
 //!
@@ -25,7 +31,7 @@
 //! where the engine has it (Cassandra 5.0 and later). The tests below never mention a version.
 
 // Tests may panic freely: a failed assertion is the reporting mechanism (see AGENTS.md).
-// `large_futures` fires on `SessionBuilder::build()`, which is the driver's own future.
+// `large_futures` fires on the driver's own session-building future, reached through `connect`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -34,16 +40,17 @@
     clippy::large_futures
 )]
 
-use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
-use cdm_core::{CdmError, ErrorKind, JobKind, PrimaryKey, RawCell, RunId, RunStatus, TokenRange};
+use cdm_config::model::CdmConfig;
+use cdm_core::{CdmError, ErrorKind, JobKind, PrimaryKey, RunId, RunStatus, Side};
+use cdm_cql::connect::{connect, ClusterSession};
+use cdm_cql::exec::{OriginReadOptions, OriginReader, TokenWidth};
 use cdm_cql::raw::RawRow;
 use cdm_cql::schema::{ClusteringOrder, ColumnKind, ColumnMeta, TableSchema};
 use cdm_cql::statement::{OriginProjection, OriginRangeSelect};
-use cdm_engine::jobs::guardrail::{run_status, GuardrailJob, OriginRows, RowSizeStream};
+use cdm_engine::jobs::guardrail::{run_status, CqlOriginRows, GuardrailJob, OriginRows};
 use cdm_engine::planner::{Partitioner, Planner, PlannerSettings, TokenPlan};
 use cdm_engine::scheduler::{NoopObserver, RunReport, Scheduler, SchedulerSettings};
 use cdm_feature::{table_view, ColumnSizeGuardrail, Guardrail, RowSizes, TableFacts};
@@ -53,7 +60,6 @@ use cdm_testkit::{
     DataGenOptions, Engine, SchemaGen, Seed, TableSpec,
 };
 use scylla::client::session::Session;
-use scylla::client::session_builder::SessionBuilder;
 
 /// The keyspace every case in this file uses.
 const KEYSPACE: &str = "cdm_guardrail";
@@ -64,8 +70,11 @@ fn engines() -> Vec<Engine> {
 }
 
 /// Runs a body against every engine under test, skipping entirely without a container runtime.
+///
+/// Only the **origin** side is connected, which is the coarsest statement of `GRD-001` this file
+/// can make: there is no target session in scope for a case to use even by accident.
 macro_rules! against_every_engine {
-    ($name:ident, |$session:ident, $fx:ident, $engine:ident| $body:block) => {
+    ($name:ident, |$origin:ident, $session:ident, $fx:ident, $engine:ident| $body:block) => {
         #[tokio::test(flavor = "multi_thread")]
         #[ignore = "requires a container runtime; run with --ignored or via `cargo xtask it`"]
         async fn $name() {
@@ -74,7 +83,8 @@ macro_rules! against_every_engine {
                 let $fx = ClusterFixture::start(&$engine)
                     .await
                     .unwrap_or_else(|e| panic!("starting {}: {e}", $engine));
-                let $session = Arc::new(connect(&$fx).await);
+                let $origin = origin_session(&$fx).await;
+                let $session = Arc::clone($origin.session());
                 ddl(&$session, &cdm_testkit::create_keyspace_statement(KEYSPACE)).await;
                 $body
             }
@@ -82,11 +92,16 @@ macro_rules! against_every_engine {
     };
 }
 
-async fn connect(fixture: &ClusterFixture) -> Session {
-    SessionBuilder::new()
-        .known_node(fixture.contact_point())
-        .connection_timeout(Duration::from_secs(10))
-        .build()
+/// Connects the origin, and only the origin (`CON-001`, `GRD-001`).
+async fn origin_session(fixture: &ClusterFixture) -> ClusterSession {
+    let (host, port) = fixture.contact_point().rsplit_once(':').map_or_else(
+        || (fixture.contact_point().clone(), 9042),
+        |(h, p)| (h.to_owned(), p.parse::<u16>().unwrap_or(9042)),
+    );
+    let mut config = CdmConfig::default();
+    config.connect.origin.host = host;
+    config.connect.origin.port = port;
+    connect(&config, Side::Origin)
         .await
         .unwrap_or_else(|e| panic!("connecting to {}: {e}", fixture.contact_point()))
 }
@@ -102,75 +117,13 @@ async fn ddl(session: &Session, cql: &str) {
 // =================================================================================================
 // The driver-backed origin reader
 // =================================================================================================
-
-/// The origin range scan of `FEA-060`, reduced to lengths as it is read (`GRD-001`, `SEC-002`).
-///
-/// This is the whole of what a guardrail run can do to a cluster. Note what it does *not* hold: no
-/// upsert, no target session, no sink. It also never keeps a column value — the primary-key cells
-/// are copied because they identify the row, and every other cell contributes a `usize`.
-///
-/// The scan is unpaged here because a case seeds a handful of rows and `ENG-003`'s paging is the
-/// scheduler's contract, proven in `cdm_engine::scheduler`; a production reader pages, which is why
-/// [`OriginRows::scan`] is handed the page size.
-struct CqlOrigin {
-    session: Arc<Session>,
-    cql: String,
-    key_indices: Vec<usize>,
-}
-
-#[async_trait]
-impl OriginRows for CqlOrigin {
-    async fn scan(
-        &self,
-        range: TokenRange,
-        _fetch_size: u32,
-    ) -> Result<Box<dyn RowSizeStream>, CdmError> {
-        let min = i64::try_from(range.min())
-            .map_err(|e| CdmError::new(ErrorKind::Read, format!("token out of range: {e}")))?;
-        let max = i64::try_from(range.max())
-            .map_err(|e| CdmError::new(ErrorKind::Read, format!("token out of range: {e}")))?;
-        let result = self
-            .session
-            .query_unpaged(self.cql.as_str(), (min, max))
-            .await
-            .map_err(|e| CdmError::new(ErrorKind::Read, format!("{e}")))?;
-        let rows = result
-            .into_rows_result()
-            .map_err(|e| CdmError::new(ErrorKind::Read, format!("{e}")))?;
-
-        let mut out = VecDeque::new();
-        for row in rows
-            .rows::<RawRow<'_, '_>>()
-            .map_err(|e| CdmError::new(ErrorKind::Read, format!("{e}")))?
-        {
-            let row = row.map_err(|e| CdmError::new(ErrorKind::Read, format!("{e}")))?;
-            let key = PrimaryKey::new(
-                self.key_indices
-                    .iter()
-                    .map(|index| {
-                        row.cell(*index)
-                            .and_then(|cell| cell.bytes)
-                            .map_or(RawCell::NULL, |bytes| RawCell::new(bytes.to_vec()))
-                    })
-                    .collect(),
-            );
-            out.push_back(RowSizes::new(
-                key,
-                row.cells().iter().map(cdm_cql::raw::RawCell::byte_len),
-            ));
-        }
-        Ok(Box::new(BufferedRows(out)))
-    }
-}
-
-struct BufferedRows(VecDeque<RowSizes>);
-
-#[async_trait]
-impl RowSizeStream for BufferedRows {
-    async fn next_row(&mut self) -> Result<Option<RowSizes>, CdmError> {
-        Ok(self.0.pop_front())
-    }
-}
+//
+// There is nothing here any more. Until `CqlOriginRows` existed this file carried its own
+// `OriginRows`, which read a whole range with `query_unpaged` and ignored the page size it was
+// handed — fine for a case that seeds four rows, and the reason `cdm guardrail` could not be wired
+// to the CLI. These cases now run the production reader, so what they prove is what a real run
+// does: `origin_for` below prepares the `FEA-060` range select on the origin session, and
+// `CqlOriginRows` pages it at the fetch size the scheduler passes down (`ENG-003`).
 
 // =================================================================================================
 // Shared plumbing
@@ -254,23 +207,20 @@ fn guardrail_for(spec: &TableSpec, kb: f64) -> ColumnSizeGuardrail {
         .unwrap()
 }
 
-/// The origin reader for a spec, over the real `FEA-060` range scan.
-fn origin_for(session: &Arc<Session>, spec: &TableSpec) -> Arc<dyn OriginRows> {
+/// The production origin reader for a spec, over the real `FEA-060` paged range scan.
+async fn origin_for(origin: &ClusterSession, spec: &TableSpec) -> Arc<dyn OriginRows> {
     let schema = schema_of(spec);
     let projection = OriginProjection::new(&schema.columns, &[]);
     let select = OriginRangeSelect::new(&schema, &projection, None, false);
-    let key_indices = spec
-        .columns()
-        .iter()
-        .enumerate()
-        .filter(|(_, column)| column.kind().is_key())
-        .map(|(index, _)| index)
-        .collect();
-    Arc::new(CqlOrigin {
-        session: Arc::clone(session),
-        cql: select.cql().to_owned(),
-        key_indices,
-    })
+    let reader = OriginReader::prepare(
+        origin,
+        &select,
+        OriginReadOptions::default(),
+        TokenWidth::Murmur3,
+    )
+    .await
+    .unwrap();
+    Arc::new(CqlOriginRows::resolve(Arc::new(reader), &schema, &projection).unwrap())
 }
 
 fn plan() -> TokenPlan {
@@ -279,12 +229,24 @@ fn plan() -> TokenPlan {
         .unwrap()
 }
 
-async fn run_guardrail(session: &Arc<Session>, spec: &TableSpec, kb: f64) -> RunReport {
-    let job = GuardrailJob::new(origin_for(session, spec), guardrail_for(spec, kb)).unwrap();
+/// A run at the default fetch size, which is what every case that is not about paging wants.
+async fn run_guardrail(origin: &ClusterSession, spec: &TableSpec, kb: f64) -> RunReport {
+    run_guardrail_paged(origin, spec, kb, 1_000).await
+}
+
+/// A run at a stated page size, so a case can put a page boundary where it wants one (`ENG-003`).
+async fn run_guardrail_paged(
+    origin: &ClusterSession,
+    spec: &TableSpec,
+    kb: f64,
+    fetch_size: u32,
+) -> RunReport {
+    let job = GuardrailJob::new(origin_for(origin, spec).await, guardrail_for(spec, kb)).unwrap();
     Scheduler::new(
         SchedulerSettings::default()
             .with_workers(2)
             .with_ratelimits(0, 0)
+            .with_fetch_size(fetch_size)
             .with_node_id("guardrail-it"),
     )
     .unwrap()
@@ -388,14 +350,14 @@ async fn seed_sit_rows(session: &Session) {
 
 against_every_engine!(
     grd_003_the_java_sit_fixture_reproduces_its_counts_against_a_real_node,
-    |session, fx, engine| {
+    |origin, session, fx, engine| {
         let _ = &fx;
         let spec = sit_table();
         ddl(&session, &spec.create_table_statement()).await;
         seed_sit_rows(&session).await;
 
         // `spark.cdm.feature.guardrail.colSizeInKB 1`, as SIT/features/05_guardrail sets it.
-        let report = run_guardrail(&session, &spec, 1.0).await;
+        let report = run_guardrail(&origin, &spec, 1.0).await;
 
         // cdm.guardrailCheck.assert, byte for byte: READ 4, VALID 1, SKIPPED 0, LARGE 3.
         assert_eq!(total(&report, CounterKind::Read), 4, "{engine}");
@@ -409,20 +371,20 @@ against_every_engine!(
 
 against_every_engine!(
     grd_003_a_run_that_found_oversized_columns_reports_a_finding_not_a_failure,
-    |session, fx, engine| {
+    |origin, session, fx, engine| {
         let _ = &fx;
         let spec = sit_table();
         ddl(&session, &spec.create_table_statement()).await;
         seed_sit_rows(&session).await;
 
         // CLI-004: found something → DIFF → exit 1. Nothing failed; the run worked.
-        let found = run_guardrail(&session, &spec, 1.0).await;
+        let found = run_guardrail(&origin, &spec, 1.0).await;
         assert_eq!(found.status(), RunStatus::Ended, "{engine}");
         assert_eq!(found.ranges_failed(), 0, "{engine}");
         assert_eq!(run_status(&found), RunStatus::Diff, "{engine}");
 
         // A threshold nothing reaches → ENDED → exit 0.
-        let clean = run_guardrail(&session, &spec, 1_000.0).await;
+        let clean = run_guardrail(&origin, &spec, 1_000.0).await;
         assert_eq!(total(&clean, CounterKind::Large), 0, "{engine}");
         assert_eq!(run_status(&clean), RunStatus::Ended, "{engine}");
     }
@@ -430,7 +392,7 @@ against_every_engine!(
 
 against_every_engine!(
     grd_002_a_row_over_the_threshold_is_large_and_one_under_it_is_valid,
-    |session, fx, engine| {
+    |origin, session, fx, engine| {
         let _ = &fx;
         let spec = TableSpec::builder(KEYSPACE, "threshold_edge")
             .partition_key("key", cdm_codec::CqlTypeInfo::Text)
@@ -461,10 +423,108 @@ against_every_engine!(
             "{engine}: the node stored the sizes the case assumes"
         );
 
-        let report = run_guardrail(&session, &spec, 1.0).await;
+        let report = run_guardrail(&origin, &spec, 1.0).await;
         assert_eq!(total(&report, CounterKind::Read), 2, "{engine}");
         assert_eq!(total(&report, CounterKind::Valid), 1, "{engine}");
         assert_eq!(total(&report, CounterKind::Large), 1, "{engine}");
+    }
+);
+
+// =================================================================================================
+// ENG-003, NFR-003 — the scan is paged, and the page size is the only thing that changes
+// =================================================================================================
+
+against_every_engine!(
+    eng_003_a_range_is_read_across_pages_and_every_row_is_counted_exactly_once,
+    |origin, session, fx, engine| {
+        let _ = &fx;
+        let spec = TableSpec::builder(KEYSPACE, "paged_scan")
+            .partition_key("key", cdm_codec::CqlTypeInfo::Text)
+            .column("value", cdm_codec::CqlTypeInfo::Text)
+            .build()
+            .unwrap();
+        ddl(&session, &spec.create_table_statement()).await;
+
+        // 60 rows, of which every third is over a 1 kB threshold. The counts below are therefore
+        // a function of the data and not of the page size, which is the whole claim.
+        let rows = 60_usize;
+        let large = rows.div_ceil(3);
+        for row in 0..rows {
+            let len = if row % 3 == 0 { 1200 } else { 10 };
+            ddl(
+                &session,
+                &format!(
+                    "INSERT INTO {KEYSPACE}.paged_scan (key, value) VALUES ('k{row}', '{}')",
+                    "x".repeat(len)
+                ),
+            )
+            .await;
+        }
+
+        // A page size of 1 puts a page boundary between every pair of rows; 7 divides neither 60
+        // nor the per-range row counts, so it lands mid-page on the last page of most ranges; 1000
+        // is larger than the table and reads each range in one page. A reader that dropped the
+        // last page, double-counted a boundary row or stopped at the first page would disagree
+        // with at least one of the three.
+        for fetch_size in [1_u32, 7, 1_000] {
+            let report = run_guardrail_paged(&origin, &spec, 1.0, fetch_size).await;
+            assert_eq!(
+                total(&report, CounterKind::Read),
+                rows as u64,
+                "{engine}: every row read exactly once at fetch_size {fetch_size} (ENG-003)"
+            );
+            assert_eq!(
+                total(&report, CounterKind::Large),
+                large as u64,
+                "{engine}: at fetch_size {fetch_size}"
+            );
+            assert_eq!(
+                total(&report, CounterKind::Read),
+                total(&report, CounterKind::Large) + total(&report, CounterKind::Valid),
+                "{engine}: at fetch_size {fetch_size}"
+            );
+            assert_eq!(
+                total(&report, CounterKind::PartitionsFailed),
+                0,
+                "{engine}: at fetch_size {fetch_size}"
+            );
+        }
+    }
+);
+
+against_every_engine!(
+    nfr_003_a_page_of_wide_rows_is_the_only_thing_resident_however_wide_the_rows_are,
+    |origin, session, fx, engine| {
+        let _ = &fx;
+        // 40 rows of ~256 kB each: 10 MB of table, read at a page size of two rows. If the reader
+        // materialised the range — as the fixture this file used to carry did — it would hold all
+        // 10 MB at once, and the guardrail would be at its hungriest on exactly the tables it
+        // exists to be pointed at. What this case can assert from the outside is that the run
+        // completes and counts correctly; that it does so while holding two rows is the borrow
+        // checker's doing, in `PagedRowSizes::next_row`.
+        let spec = TableSpec::builder(KEYSPACE, "wide_rows")
+            .partition_key("key", cdm_codec::CqlTypeInfo::Text)
+            .column("value", cdm_codec::CqlTypeInfo::Text)
+            .build()
+            .unwrap();
+        ddl(&session, &spec.create_table_statement()).await;
+
+        let rows = 40_usize;
+        let wide = "x".repeat(256 * 1024);
+        for row in 0..rows {
+            ddl(
+                &session,
+                &format!(
+                    "INSERT INTO {KEYSPACE}.wide_rows (key, value) VALUES ('k{row}', '{wide}')"
+                ),
+            )
+            .await;
+        }
+
+        let report = run_guardrail_paged(&origin, &spec, 1.0, 2).await;
+        assert_eq!(total(&report, CounterKind::Read), rows as u64, "{engine}");
+        assert_eq!(total(&report, CounterKind::Large), rows as u64, "{engine}");
+        assert_eq!(report.status(), RunStatus::Ended, "{engine}");
     }
 );
 
@@ -474,7 +534,7 @@ against_every_engine!(
 
 against_every_engine!(
     grd_002_every_supported_cql_type_is_measured_as_its_frame_length,
-    |session, fx, engine| {
+    |origin, session, fx, engine| {
         // Collections, tuples, UDTs, frozen variants and — where the engine has them — vectors,
         // all in one table, gated by `Capabilities` and never by a version string.
         let capabilities = fx.capabilities();
@@ -519,7 +579,7 @@ against_every_engine!(
             .filter(|row| row.iter().any(|len| *len as f64 > threshold_bytes))
             .count() as u64;
 
-        let report = run_guardrail(&session, &spec, threshold_bytes / 1000.0).await;
+        let report = run_guardrail(&origin, &spec, threshold_bytes / 1000.0).await;
         assert_eq!(
             total(&report, CounterKind::Read),
             rows.len() as u64,
@@ -570,14 +630,14 @@ against_every_engine!(
 
 against_every_engine!(
     grd_001_a_guardrail_run_leaves_the_origin_untouched,
-    |session, fx, engine| {
+    |origin, session, fx, engine| {
         let _ = &fx;
         let spec = sit_table();
         ddl(&session, &spec.create_table_statement()).await;
         seed_sit_rows(&session).await;
 
         let before = measured_lengths(&session, &spec).await;
-        let report = run_guardrail(&session, &spec, 1.0).await;
+        let report = run_guardrail(&origin, &spec, 1.0).await;
         assert_eq!(total(&report, CounterKind::Large), 3, "{engine}");
         let after = measured_lengths(&session, &spec).await;
 
