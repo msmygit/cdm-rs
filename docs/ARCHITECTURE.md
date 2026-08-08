@@ -110,7 +110,8 @@ graph TD
     ENG --> FEAT
     ENG --> CQL
     ENG --> METR
-    CLUST --> CQL
+    CLUST --> CORE
+    CLUST --> CONF
     TRACK --> CQL
     FEAT --> CQL
     FEAT --> CODEC
@@ -128,13 +129,13 @@ graph TD
 
 | Crate | Responsibility | Key public items |
 |---|---|---|
-| `cdm-core` | Vocabulary of the domain. Zero I/O. | `TokenRange`, `PartitionRangeId`, `RunId`, `JobKind`, `RunStatus`, `Record`, `PrimaryKey`, `CdmError`, `Diagnostic`, `Registry`, and every plugin trait (`CodecPlugin`, `FeaturePlugin`, `FilterPlugin`, `GuardrailPlugin`, `JobPlugin`, `RowSource`, `RowSink`, `TrackingStore`, `MetricsExporter`). |
+| `cdm-core` | Vocabulary of the domain. Zero I/O. | `TokenRange`, `PartitionRangeId`, `RunId`, `JobKind`, `RunStatus`, `Record`, `PrimaryKey`, `CdmError`, `Diagnostic`, `Registry`, and every plugin trait (`CodecPlugin`, `FeaturePlugin`, `FilterPlugin`, `GuardrailPlugin`, `JobPlugin`, `RowSource`, `RowSink`, `TrackingStore`, `LeaseStore`, `MetricsExporter`). |
 | `cdm-config` | The one `CdmConfig` struct tree; loaders for TOML/YAML/JSON/`.properties`/env/CLI/API; the three validation tiers; JSON Schema generation; the best-practice rules engine. | `CdmConfig`, `ConfigLoader`, `Validator`, `Tier`, `PropertyRegistry`, `BestPractices` |
 | `cdm-codec` | Type taxonomy, the conversion planner, the codec registry and all built-in codecs. | `CqlTypeInfo`, `ConversionPlan`, `Converter`, `CodecRegistry`, `codecs::*` |
 | `cdm-cql` | **The only crate that depends on `scylla`.** Driver wrapper: connection building (TLS/SCB/Astra SNI), schema introspection, identifier quoting, statement construction and binding, paging, token-range CQL, and the compatibility shims of §6.1. | `Cluster`, `Side`, `SessionHandle`, `TableSchema`, `Statements`, `OriginSelect`, `TargetUpsert`, `TargetSelectByPk` |
 | `cdm-feature` | All optional behaviours as plugins: constant columns, explode map, extract JSON, TTL/writetime, filters, guardrails. | `feature::*`, `FilterChain`, `GuardrailChain` |
-| `cdm-track` | Run/range persistence and resume logic behind `TrackingStore`; Cassandra, SQLite and in-memory implementations. | `RunTracker`, `CassandraStore`, `SqliteStore`, `MemoryStore` |
-| `cdm-cluster` | Lease acquisition/renewal/expiry, membership, leader election, cross-node metric aggregation. | `Coordinator`, `Lease`, `NodeId`, `Membership` |
+| `cdm-track` | Run/range persistence and resume logic behind `TrackingStore`; Cassandra, SQLite and in-memory implementations. Also implements `LeaseStore` (`DST-010`..`DST-013`), because `cdm_run_leases` lives in the keyspace and beside the tables this crate already owns (`TRK-011`) — and because this is where the one sanctioned `scylla` exception is. | `RunTracker`, `CassandraStore`, `SqliteStore`, `MemoryStore` |
+| `cdm-cluster` | Lease acquisition/renewal/expiry, membership, leader election, cross-node metric aggregation. **The policy only:** the conditional writes themselves are `cdm-core`'s `LeaseStore`, implemented by `cdm-track` beside the tracking tables the lease table belongs to (`TRK-011`), so no driver reaches this crate. | `Coordinator`, `Lease`, `NodeId`, `CoordinatorSettings`, `ReclaimPolicy`, `Membership` |
 | `cdm-metrics` | Counter registry (parity + new), rate/latency instruments, event bus, Prometheus/OTLP exporters, the Java-format reporter, the TUI. | `Counters`, `CounterKind`, `Instruments`, `EventBus`, `Event`, `JavaFormatReporter`, `Tui` |
 | `cdm-engine` | The scheduler, the three built-in jobs, batching, rate limiting, backpressure, retry, failure isolation, graceful shutdown. | `Engine`, `ExecutionPlan`, `RangeWorker`, `jobs::{Migrate, Validate, Guardrail}` |
 | `cdm-service` | The transport-agnostic facade every adapter calls. Owns run lifecycle, idempotency, and the run registry. | `CdmService`, `SubmitRunRequest`, `RunHandle`, `RunView`, `PlanView`, `SchemaView` |

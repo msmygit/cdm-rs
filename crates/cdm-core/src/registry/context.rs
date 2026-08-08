@@ -287,6 +287,50 @@ pub struct RunRecord {
     pub info: Option<String>,
 }
 
+/// The `cdm_run_leases` row of one claimed range (`DST-010`).
+///
+/// The table is keyed by `((table_name, run_id), token_min)`, so a lease names a range by its
+/// **lower bound only** — the upper bound is already recorded, once, in `cdm_run_details`
+/// (`TRK-010`). Storing it twice would let the two disagree, and the resume reads the details
+/// row, so the lease row would be the copy nobody checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseRecord {
+    /// The `token_min` of the leased range, which is the clustering key of the row.
+    pub token_min: i64,
+    /// The node that holds, or last held, the lease (`DST-011`).
+    pub node_id: String,
+    /// The instant after which any node may reclaim the range (`DST-012`).
+    ///
+    /// Written by the holder from *its own* clock, and compared against the *reclaiming* node's
+    /// clock. Two clocks, therefore, and the gap between them is the safety margin
+    /// `cluster.lease_duration` has to cover; see [`LeaseStore`](crate::LeaseStore) for what a
+    /// violation of that assumption costs.
+    pub lease_until: DateTime<Utc>,
+    /// How many times the range has been claimed, including the current claim (`DST-013`).
+    pub attempt: u32,
+}
+
+/// The result of the run-initialisation election (`DST-002`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunClaim {
+    /// This node inserted the run row and has performed `TRK-020`'s initialisation.
+    Won,
+    /// Another node got there first; the row it wrote is carried back so that the joining node
+    /// can check the configuration hash of `DST-003` and wait for `STARTED`.
+    Lost(RunRecord),
+}
+
+/// The result of trying to claim one range's lease (`DST-011`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseOutcome {
+    /// The lightweight transaction applied: this node now holds the range.
+    Granted(LeaseRecord),
+    /// It did not apply. The row as the transaction read it — whoever holds the range, until
+    /// when, and on which attempt — is carried back, because that is the only view of the
+    /// contention a caller can act on without a second, racy read.
+    Denied(LeaseRecord),
+}
+
 /// The `cdm_run_details` row of one range within a run (`TRK-010`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RangeRecord {

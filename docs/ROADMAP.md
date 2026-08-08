@@ -28,7 +28,8 @@ delivered as one PR where splitting them would have merged a knowingly-wrong int
 | #1–#20, #27–#31, #36–#39 | **Delivered.** Docs and scaffolding, the driver spike, `cdm-core`, all of `cdm-config`, all of `cdm-codec`, `cdm-cql` through statement construction, the CLI skeleton, the testkit, the token planner, the scheduler, and metrics through the event bus and the terminal UI. |
 | #21–#26 | **Delivered.** The three jobs (migrate with counters, validate with autocorrect, guardrail), run tracking with resume and rerun, the error limit and graceful shutdown. |
 | #32 | **Delivered.** All nineteen Java SIT cases ported to a declarative harness under `tests/sit/`, driven against a container by `cargo xtask sit`, with `sit.yml` restored to `push: [main]` and a nightly schedule. Ten cases ran and passed on delivery; the nine that reported `BLOCKED` each named the `cdm-cli` wiring they waited on — every one of them the same four defaulted arguments in `crates/cdm-cli/src/harness/build.rs`. #21c, #21d and #21e supplied those arguments, and #21f closed the last gap — validate looked a target row up once per record where an explode map produces one per map *entry*. All nineteen cases now run and pass; none is `BLOCKED`. |
-| #33–#35, #40–#58 | **Not started.** The property and differential harnesses, `--compat-java`, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
+| #33–#35, #40–#49, #51–#58 | **Not started.** The property and differential harnesses, `--compat-java`, the service facade, the API/MCP/A2A/UI surface, the rest of the distributed work, and the release machinery. |
+| #50 | **Delivered.** The lease-based coordinator (`DST-001`..`DST-003`, `DST-010`..`DST-013`): `cdm-core` gains the `LeaseStore` trait, `cdm-track` implements it over `cdm_run_leases` with `SERIAL` lightweight transactions, and `cdm-cluster` holds the policy — election, the `DST-003` configuration-hash check, claiming, renewal, expiry, reclaim and `cluster.max_attempts`. The coordinator is **not yet wired into the scheduler**: `cdm-engine`'s `WorkQueue` is untouched, so a run is still single-process, and `cdm cluster` still returns "not yet" because the membership rows and per-node counters it lists are `DST-016`..`DST-018`. Reclaim safety for counter tables (`DST-014`, `DST-015`) is #51 and is left as a seam — `ReclaimPolicy` has no default, so a caller must state whether a reclaim is safe for the table in hand. |
 
 **That gap is now closed.** The shared *connect → introspect → plan → run* path had no roadmap PR
 of its own: it was assumed into #21–#24 and fell between them, because each job could be built and
@@ -46,8 +47,9 @@ else, and a run configured with them reported success while writing rows that di
 — implements `cdm guardrail`.
 
 Three commands still return "not yet", and each is blocked on something nameable rather than on
-wiring: `cdm runs resume` on the scheduler accepting a pre-computed range set, `cdm cluster` on #50,
-and `cdm serve` and `cdm mcp` on #41–#45.
+wiring: `cdm runs resume` on the scheduler accepting a pre-computed range set, `cdm cluster` on the
+membership and per-node counter rows of #51 (#50 delivered the leases it would otherwise list, but
+not the rows), and `cdm serve` and `cdm mcp` on #41–#45.
 
 ---
 

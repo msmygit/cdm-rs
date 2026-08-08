@@ -30,11 +30,12 @@ pub mod context;
 pub mod plugin;
 
 pub use context::{
-    BindingBuilder, CompareHook, EffectiveConfig, MetricsSnapshot, ProjectionBuilder, RangeOutcome,
-    RangeRecord, RecordSink, RunRecord, SchemaPair, TableView, TypePair,
+    BindingBuilder, CompareHook, EffectiveConfig, LeaseOutcome, LeaseRecord, MetricsSnapshot,
+    ProjectionBuilder, RangeOutcome, RangeRecord, RecordSink, RunClaim, RunRecord, SchemaPair,
+    TableView, TypePair,
 };
 pub use plugin::{
-    CodecPlugin, FeaturePlugin, FilterPlugin, GuardrailPlugin, JobPlugin, JobRunner,
+    CodecPlugin, FeaturePlugin, FilterPlugin, GuardrailPlugin, JobPlugin, JobRunner, LeaseStore,
     MetricsExporter, Plugin, RowSink, RowSource, RowStream, TrackingStore,
 };
 

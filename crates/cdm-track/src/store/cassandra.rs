@@ -25,14 +25,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cdm_core::{
-    CdmError, ErrorKind, JobKind, Plugin, RangeRecord, RunId, RunRecord, RunStatus, Side, TableRef,
-    TokenRange, TrackingStore,
+    CdmError, ErrorKind, JobKind, LeaseOutcome, LeaseRecord, LeaseStore, Plugin, RangeRecord,
+    RunClaim, RunId, RunRecord, RunStatus, Side, TableRef, TokenRange, TrackingStore,
 };
 use cdm_cql::connect::ClusterSession;
 use chrono::{DateTime, Utc};
 use scylla::client::session::Session;
+use scylla::frame::types::SerialConsistency;
 use scylla::statement::prepared::PreparedStatement;
-use scylla::value::{CqlTimestamp, MaybeUnset};
+use scylla::value::{CqlTimestamp, CqlValue, MaybeUnset, Row};
 use tokio::sync::OnceCell;
 
 use crate::compat::{job_from_run_type, run_type, status as status_string};
@@ -49,6 +50,9 @@ type InfoRow = (
     Option<String>,
     Option<String>,
 );
+
+/// The shape of a `cdm_run_leases` row as this module selects it (`DST-010`).
+type LeaseRow = (i64, Option<String>, Option<CqlTimestamp>, Option<i32>);
 
 /// The shape of a `cdm_run_details` row as this module selects it.
 type DetailRow = (
@@ -77,6 +81,21 @@ struct Statements {
     select_runs: PreparedStatement,
 }
 
+/// The statements distributed mode adds, prepared once and only when it is used.
+///
+/// A second cache rather than five more fields on [`Statements`]: a single-node run never
+/// prepares them, never creates `cdm_run_leases`, and therefore never asks the target for a
+/// table Java would not have created (`TRK-011`).
+#[derive(Debug)]
+struct LeaseStatements {
+    elect: PreparedStatement,
+    claim_if_absent: PreparedStatement,
+    reclaim_if_expired: PreparedStatement,
+    renew: PreparedStatement,
+    select_lease: PreparedStatement,
+    select_leases: PreparedStatement,
+}
+
 /// Tracking in the target keyspace, in Java's schema (`TRK-010`, `TRK-036`).
 #[derive(Debug)]
 pub struct CassandraStore {
@@ -84,6 +103,7 @@ pub struct CassandraStore {
     tables: TrackingTables,
     create_leases: bool,
     statements: OnceCell<Statements>,
+    lease_statements: OnceCell<LeaseStatements>,
 }
 
 impl CassandraStore {
@@ -126,6 +146,7 @@ impl CassandraStore {
             tables: TrackingTables::new(table)?,
             create_leases: false,
             statements: OnceCell::new(),
+            lease_statements: OnceCell::new(),
         })
     }
 
@@ -200,6 +221,70 @@ impl CassandraStore {
         }
     }
 
+    /// The lease statements, prepared on first use with `SERIAL` on every conditional one.
+    ///
+    /// `DST-011` requires a claim to be a lightweight transaction at `SERIAL`, and the driver
+    /// otherwise applies whatever serial consistency the execution profile carries. Pinning it on
+    /// the statement means the guarantee travels with the statement: a deployment that edits its
+    /// profile cannot quietly downgrade a lease to `LOCAL_SERIAL`, under which two datacentres
+    /// can each elect a holder for the same range and both believe they are alone.
+    async fn lease_statements(&self) -> Result<&LeaseStatements, CdmError> {
+        self.lease_statements
+            .get_or_try_init(|| async {
+                Ok(LeaseStatements {
+                    elect: self
+                        .prepare_lwt(&self.tables.insert_run_info_if_not_exists())
+                        .await?,
+                    claim_if_absent: self
+                        .prepare_lwt(&self.tables.claim_lease_if_absent())
+                        .await?,
+                    reclaim_if_expired: self
+                        .prepare_lwt(&self.tables.reclaim_lease_if_expired())
+                        .await?,
+                    renew: self.prepare_lwt(&self.tables.renew_lease()).await?,
+                    select_lease: self.prepare(&self.tables.select_lease()).await?,
+                    select_leases: self.prepare(&self.tables.select_leases()).await?,
+                })
+            })
+            .await
+    }
+
+    /// Prepares a conditional statement and pins its serial consistency to `SERIAL` (`DST-011`).
+    async fn prepare_lwt(&self, cql: &str) -> Result<PreparedStatement, CdmError> {
+        let mut prepared = self.prepare(cql).await.map_err(|e| lease_error_from(&e))?;
+        prepared.set_serial_consistency(Some(SerialConsistency::Serial));
+        Ok(prepared)
+    }
+
+    /// One lease row, or `None` if the range has never been claimed.
+    ///
+    /// A plain read at the session's consistency, deliberately not a `SERIAL` one: it decides
+    /// nothing. It supplies the `attempt` a takeover increments and the holder a denial reports,
+    /// and every claim it informs is still settled by the conditional write, which is the only
+    /// thing that can grant a range. A stale read therefore costs a wasted round trip at worst,
+    /// never a second holder.
+    async fn lease_row(
+        &self,
+        run_id: RunId,
+        token_min: i64,
+    ) -> Result<Option<LeaseRecord>, CdmError> {
+        let statements = self.lease_statements().await?;
+        let result = self
+            .session
+            .execute_unpaged(
+                &statements.select_lease,
+                (self.tables.table_name(), run_id.as_i64(), token_min),
+            )
+            .await
+            .map_err(|e| lease_error("selecting a lease row", &e))?
+            .into_rows_result()
+            .map_err(|e| lease_error("reading a lease row", &e))?;
+        let row = result
+            .maybe_first_row::<LeaseRow>()
+            .map_err(|e| lease_error("reading a lease row", &e))?;
+        row.map(decode_lease).transpose()
+    }
+
     /// Every run recorded for this table, newest first (`TRK-034`).
     ///
     /// # Errors
@@ -252,8 +337,81 @@ fn from_cql_timestamp(value: CqlTimestamp) -> Option<DateTime<Utc>> {
     DateTime::from_timestamp_millis(value.0)
 }
 
+/// The driver's timestamp from `chrono`, at the millisecond resolution CQL stores.
+///
+/// Truncation towards the past is deliberate: a `lease_until` rounded *down* expires no later
+/// than it was meant to, which costs at most a millisecond of lease and never grants one.
+fn to_cql_timestamp(value: DateTime<Utc>) -> CqlTimestamp {
+    CqlTimestamp(value.timestamp_millis())
+}
+
 fn tracking_error(doing: &str, error: &impl std::fmt::Display) -> CdmError {
     CdmError::new(ErrorKind::Tracking, format!("{doing}: {error}"))
+}
+
+fn lease_error(doing: &str, error: &impl std::fmt::Display) -> CdmError {
+    CdmError::new(ErrorKind::Lease, format!("{doing}: {error}"))
+}
+
+/// Re-labels a preparation failure as a lease failure, so that a distributed run's first symptom
+/// names the subsystem that is missing rather than run tracking, which is working.
+fn lease_error_from(error: &CdmError) -> CdmError {
+    CdmError::new(ErrorKind::Lease, error.to_string())
+}
+
+/// Turns a selected `cdm_run_leases` row into a [`LeaseRecord`].
+///
+/// A null `node_id` or `lease_until` describes a row no cdm-rs wrote in one piece. It is reported
+/// rather than defaulted: defaulting `lease_until` would either hand a live range away or make a
+/// free one permanently unclaimable, and both are worse than an operator seeing the row that
+/// cdm-rs cannot explain.
+fn decode_lease(row: LeaseRow) -> Result<LeaseRecord, CdmError> {
+    let (token_min, node_id, lease_until, attempt) = row;
+    let (Some(node_id), Some(lease_until)) = (node_id, lease_until.and_then(from_cql_timestamp))
+    else {
+        return Err(CdmError::new(
+            ErrorKind::Lease,
+            format!(
+                "the cdm_run_leases row for token_min {token_min} has no node_id or no \
+                 lease_until; it was not written by cdm-rs and cannot be reasoned about"
+            ),
+        ));
+    };
+    Ok(LeaseRecord {
+        token_min,
+        node_id,
+        lease_until,
+        // `attempt` is only ever written by cdm-rs, as a positive count. A negative or absent one
+        // is read as "no attempts recorded", so `DST-013` bounds the range by the attempts it can
+        // actually account for rather than abandoning it over a value it cannot explain.
+        attempt: attempt
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0),
+    })
+}
+
+/// The `[applied]` column of a conditional write.
+///
+/// Read positionally out of a dynamic row, because the arity varies: a transaction that applied
+/// returns `[applied]` alone, and one that did not returns it followed by columns of the row that
+/// blocked it. Only the first column is guaranteed to be there, and only it is needed — what
+/// blocked the write is read back separately where it matters, since a failed `UPDATE ... IF`
+/// returns only the columns its condition names, which is never the whole row.
+fn lwt_applied(result: scylla::response::query_result::QueryResult) -> Result<bool, CdmError> {
+    let rows = result
+        .into_rows_result()
+        .map_err(|e| lease_error("reading the result of a lightweight transaction", &e))?;
+    let row = rows
+        .first_row::<Row>()
+        .map_err(|e| lease_error("reading the result of a lightweight transaction", &e))?;
+    match row.columns.first() {
+        Some(Some(CqlValue::Boolean(applied))) => Ok(*applied),
+        _ => Err(CdmError::new(
+            ErrorKind::Lease,
+            "a lightweight transaction returned no [applied] column; the target cluster is not \
+             answering conditional writes the way CQL specifies",
+        )),
+    }
 }
 
 impl Plugin for CassandraStore {
@@ -551,6 +709,299 @@ impl TrackingStore for CassandraStore {
             .maybe_first_row::<InfoRow>()
             .map_err(|e| tracking_error("reading the most recent run", &e))?;
         Ok(row.map(|row| self.decode_run(row)))
+    }
+}
+
+/// The conditional half of distributed mode (`DST-002`, `DST-003`, `DST-010`..`DST-013`).
+///
+/// Every method here is one lightweight transaction, or one transaction and the read that
+/// describes why it did not apply. The policy that decides *whether* to claim — how long a lease
+/// runs for, how often it is renewed, how many attempts a range gets — is not here: it belongs to
+/// `cdm-cluster`'s `Coordinator`, and keeping it there is what lets the same policy be tested
+/// against the in-memory store without a cluster.
+#[async_trait]
+impl LeaseStore for CassandraStore {
+    async fn initialise_leases(&self) -> Result<(), CdmError> {
+        let statement = self.tables.create_leases_statement();
+        self.session
+            .query_unpaged(statement.clone(), &[])
+            .await
+            .map_err(|e| lease_error(&format!("creating `{statement}`"), &e))?;
+        self.session
+            .await_schema_agreement()
+            .await
+            .map_err(|e| lease_error("waiting for the lease schema to agree", &e))?;
+        Ok(())
+    }
+
+    /// `TRK-020`'s initialisation, entered by exactly one node (`DST-002`, `DST-003`).
+    ///
+    /// The `INSERT ... IF NOT EXISTS` is the election: Paxos orders the contending inserts and
+    /// exactly one applies, so the winner is decided by the same mechanism that decides a lease,
+    /// with no separate leader protocol to get wrong. The winner then walks `TRK-020` in
+    /// `TRK-020`'s order — range rows, and only then `STARTED` — because every other node is
+    /// waiting on `STARTED` as its signal that the range rows exist.
+    ///
+    /// The loser is handed the row it lost to. Its `run_info` carries the initialiser's
+    /// configuration hash until `TRK-022` overwrites it with the run's metrics string, which is
+    /// why `DST-003`'s check belongs at *join* time and cannot be repeated later in the run.
+    async fn initialise_run(
+        &self,
+        run: &RunRecord,
+        ranges: &[RangeRecord],
+        config_hash: &str,
+    ) -> Result<RunClaim, CdmError> {
+        // Refuse before writing anything if a bound cannot be stored, rather than half-way
+        // through the range rows — the same order `create_run` uses, for the same reason.
+        let bounds: Vec<(i64, i64)> = ranges
+            .iter()
+            .map(|record| {
+                Ok((
+                    token_bound(record.range.min(), record.range)?,
+                    token_bound(record.range.max(), record.range)?,
+                ))
+            })
+            .collect::<Result<_, CdmError>>()?;
+
+        let statements = self.lease_statements().await?;
+        let table_name = self.tables.table_name();
+        let run_id = run.run_id.as_i64();
+        let previous = run.previous_run_id.as_ref().map_or(0, RunId::as_i64);
+        let job = run_type(run.job);
+
+        let result = self
+            .session
+            .execute_unpaged(
+                &statements.elect,
+                (
+                    table_name,
+                    run_id,
+                    job,
+                    previous,
+                    status_string(RunStatus::NotStarted),
+                    config_hash,
+                ),
+            )
+            .await
+            .map_err(|e| lease_error("electing the initialising node", &e))?;
+
+        if !lwt_applied(result)? {
+            let existing = self.run(run.run_id).await?.ok_or_else(|| {
+                CdmError::new(
+                    ErrorKind::Lease,
+                    format!(
+                        "the run row for {run_id} blocked this node's initialisation and then \
+                         could not be read back; the target keyspace is not answering \
+                         consistently"
+                    ),
+                )
+            })?;
+            return Ok(RunClaim::Lost(existing));
+        }
+
+        let tracking = self.statements().await?;
+        for (min, max) in bounds {
+            self.session
+                .execute_unpaged(
+                    &tracking.insert_run_detail,
+                    (
+                        table_name,
+                        run_id,
+                        min,
+                        max,
+                        status_string(RunStatus::NotStarted),
+                    ),
+                )
+                .await
+                .map_err(|e| tracking_error("inserting a range row", &e))?;
+        }
+
+        // Unconditional, and naming no `run_info`: an INSERT writes only the columns it lists, so
+        // the configuration hash `DST-003` just recorded survives the move to STARTED.
+        self.session
+            .execute_unpaged(
+                &tracking.insert_run_info,
+                (
+                    table_name,
+                    run_id,
+                    job,
+                    previous,
+                    status_string(RunStatus::Started),
+                ),
+            )
+            .await
+            .map_err(|e| tracking_error("marking the run started", &e))?;
+        Ok(RunClaim::Won)
+    }
+
+    async fn lease(
+        &self,
+        run_id: RunId,
+        range: TokenRange,
+    ) -> Result<Option<LeaseRecord>, CdmError> {
+        self.lease_row(run_id, token_bound(range.min(), range)?)
+            .await
+    }
+
+    /// One claim: `INSERT ... IF NOT EXISTS`, or `UPDATE ... IF lease_until < now` (`DST-011`).
+    ///
+    /// Two nodes racing to reclaim the same expired lease are ordered by Paxos: the first sets
+    /// `lease_until` into the future, and the second's condition is then false. `observed` picks
+    /// the statement and the attempt number and settles nothing, as the trait says.
+    async fn claim_range(
+        &self,
+        run_id: RunId,
+        range: TokenRange,
+        node_id: &str,
+        now: DateTime<Utc>,
+        lease_until: DateTime<Utc>,
+        observed: Option<&LeaseRecord>,
+    ) -> Result<LeaseOutcome, CdmError> {
+        let token_min = token_bound(range.min(), range)?;
+        let statements = self.lease_statements().await?;
+        let table_name = self.tables.table_name();
+
+        let Some(current) = observed else {
+            let result = self
+                .session
+                .execute_unpaged(
+                    &statements.claim_if_absent,
+                    (
+                        table_name,
+                        run_id.as_i64(),
+                        token_min,
+                        node_id,
+                        to_cql_timestamp(lease_until),
+                    ),
+                )
+                .await
+                .map_err(|e| lease_error("claiming an unclaimed range", &e))?;
+            if lwt_applied(result)? {
+                return Ok(LeaseOutcome::Granted(LeaseRecord {
+                    token_min,
+                    node_id: node_id.to_owned(),
+                    lease_until,
+                    attempt: 1,
+                }));
+            }
+            // Another node inserted between the read and the transaction. Report whoever won.
+            return Ok(LeaseOutcome::Denied(
+                self.lease_row(run_id, token_min).await?.ok_or_else(|| {
+                    CdmError::new(
+                        ErrorKind::Lease,
+                        format!(
+                            "the lease on token_min {token_min} blocked this node's claim and \
+                             then could not be read back; the target keyspace is not answering \
+                             consistently"
+                        ),
+                    )
+                })?,
+            ));
+        };
+
+        if current.lease_until > now {
+            return Ok(LeaseOutcome::Denied(current.clone()));
+        }
+
+        let attempt = current.attempt.saturating_add(1);
+        let result = self
+            .session
+            .execute_unpaged(
+                &statements.reclaim_if_expired,
+                (
+                    node_id,
+                    to_cql_timestamp(lease_until),
+                    i32::try_from(attempt).unwrap_or(i32::MAX),
+                    table_name,
+                    run_id.as_i64(),
+                    token_min,
+                    to_cql_timestamp(now),
+                ),
+            )
+            .await
+            .map_err(|e| lease_error("reclaiming an expired range", &e))?;
+        if lwt_applied(result)? {
+            Ok(LeaseOutcome::Granted(LeaseRecord {
+                token_min,
+                node_id: node_id.to_owned(),
+                lease_until,
+                attempt,
+            }))
+        } else {
+            Ok(LeaseOutcome::Denied(
+                self.lease_row(run_id, token_min)
+                    .await?
+                    .unwrap_or_else(|| current.clone()),
+            ))
+        }
+    }
+
+    async fn renew_lease(
+        &self,
+        run_id: RunId,
+        range: TokenRange,
+        node_id: &str,
+        lease_until: DateTime<Utc>,
+    ) -> Result<bool, CdmError> {
+        let token_min = token_bound(range.min(), range)?;
+        let statements = self.lease_statements().await?;
+        let result = self
+            .session
+            .execute_unpaged(
+                &statements.renew,
+                (
+                    to_cql_timestamp(lease_until),
+                    self.tables.table_name(),
+                    run_id.as_i64(),
+                    token_min,
+                    node_id,
+                ),
+            )
+            .await
+            .map_err(|e| lease_error("renewing a lease", &e))?;
+        lwt_applied(result)
+    }
+
+    /// Releasing is renewing to the epoch: the row keeps its `attempt`, and the range is
+    /// claimable again immediately.
+    ///
+    /// The epoch rather than "now" on purpose. A released lease must read as expired to *every*
+    /// node, and a `lease_until` taken from this node's clock is expired only relative to a clock
+    /// that agrees with it — the one assumption `DST-012` cannot make. There is no timestamp a
+    /// live lease could ever hold that is below the epoch, so the release cannot be mistaken for
+    /// one, however far the clocks have drifted.
+    async fn release_lease(
+        &self,
+        run_id: RunId,
+        range: TokenRange,
+        node_id: &str,
+    ) -> Result<bool, CdmError> {
+        self.renew_lease(run_id, range, node_id, DateTime::UNIX_EPOCH)
+            .await
+    }
+
+    async fn leases(&self, run_id: RunId) -> Result<Vec<LeaseRecord>, CdmError> {
+        let statements = self.lease_statements().await?;
+        let result = self
+            .session
+            .execute_unpaged(
+                &statements.select_leases,
+                (self.tables.table_name(), run_id.as_i64()),
+            )
+            .await
+            .map_err(|e| lease_error("selecting the lease rows", &e))?
+            .into_rows_result()
+            .map_err(|e| lease_error("reading the lease rows", &e))?;
+        let mut records = Vec::with_capacity(result.rows_num());
+        for row in result
+            .rows::<LeaseRow>()
+            .map_err(|e| lease_error("reading the lease rows", &e))?
+        {
+            records.push(decode_lease(
+                row.map_err(|e| lease_error("reading a lease row", &e))?,
+            )?);
+        }
+        Ok(records)
     }
 }
 
