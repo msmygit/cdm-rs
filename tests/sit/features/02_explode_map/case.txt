@@ -1,8 +1,5 @@
 # Java: SIT/features/02_explode_map/execute.sh — migrateData, validateData, breakData.cql, fixData.
-blocked the explode map now reaches ColumnMapping, and SCH-006's derivability check rejects it: `the target primary-key column fruit is supplied by an exploded map entry rather than by an origin column`. SPEC SCH-006 lists explode-map key/value columns as a permitted source, so the check is wrong, not the case
-
-# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
-# expected to pass unchanged once the wiring lands.
+blocked the derivability check no longer rejects this and the run now starts; the migrate half passes. Validate still issues one target lookup per record instead of one per exploded entry, so validate.assert gets Missing 3 / Valid 0 where it wants Valid 12. ComparisonPlan marks explode columns Unobtainable; cdm-engine::jobs::validate needs to explode a record and use the TargetKeyPlan::key_of this change introduces, once per entry
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert
