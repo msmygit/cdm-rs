@@ -1034,6 +1034,29 @@ and "the target holds something else" call for different actions: a null target 
 `--compat-java` does **not** restore the values. A flag that turns a redaction off is a flag that
 turns a leak on, and the operator who needs the values has the row's key and can read it.
 
+**VAL-018 [P]** — A row written by autocorrect (`VAL-003`, `VAL-007`) MUST carry the origin row's
+TTL and writetime, resolved exactly as `FEA-040`..`FEA-046` resolve them for a migrate write. A
+validate run's origin projection MUST therefore select the `TTL(…)`/`WRITETIME(…)` columns those
+requirements name, its target upsert MUST carry the `USING TTL … AND TIMESTAMP …` clause they imply,
+and the per-row values MUST be bound into it. Where `FEA-046` resolves no writetime, or `FEA-045`
+disables the feature because either side is a counter table, the clause is omitted and the server
+assigns the timestamp — which is the only case in which a corrected row may carry one.
+
+This is already implied by `VAL-003` and `VAL-007` being `[P]`: Java's `DiffJobSession` corrects a
+row through `targetSession.getTargetUpsertStatement().putRecord(record)`, which is
+`TargetUpsertStatement.bindRecord` — the identical bind `CopyJobSession` migrates through — over an
+origin projection the `WritetimeTTL` feature extends for every job alike. It is stated separately
+because the implication was not enough. cdm-rs dropped it at three independent points: the validate
+builder resolved no `WritetimeTtlPlan`, built its target upsert from `StatementOptions::default()`,
+and its row sink bound neither value. Each is individually invisible — a corrected row is written,
+the counters agree, the run exits 0, and only the *timestamp* is wrong.
+
+A corrected row written at wall-clock time is not a cosmetic defect. It shadows any later origin
+write whose timestamp is earlier, so the next migrate or validate run cannot repair it; on a table
+whose rows carry a TTL it also resets the expiry the origin row was carrying. And a target that
+agrees with the origin on every value but not on its writetime is a target the *next* validate run
+has to reason about, which is the guarantee `VAL` exists to provide.
+
 ---
 
 ## 10. Guardrail job (`GRD`)
@@ -1871,7 +1894,7 @@ because every case needs a container.
 | `smoke/00_test_harness` | `tst_003_the_harness_can_load_a_schema_and_read_it_back` | harness self-check |
 | `smoke/01_basic_kvp` | `tst_003_two_rows_migrate_and_then_validate_clean` | MIG-001, VAL-001 |
 | `smoke/02_autocorrect_kvp` | `tst_003_autocorrect_repairs_a_missing_row_and_a_mismatched_one` | VAL-003, VAL-007 |
-| `smoke/03_ttl_writetime` | `tst_003_ttl_and_writetime_are_carried_across_as_the_per_row_maximum` | FEA-040..046 |
+| `smoke/03_ttl_writetime` | `tst_003_ttl_and_writetime_are_carried_across_as_the_per_row_maximum` | FEA-040..046, VAL-018 |
 | `smoke/04_counters` | `tst_003_a_counter_delta_lands_once_and_a_deleted_counter_needs_the_explicit_opt_in` | MIG-030..032, VAL-004 |
 | `smoke/05_reserved_keyword` | `tst_003_a_column_named_after_a_reserved_word_is_quoted_everywhere` | SCH-002 |
 | `smoke/06_vector` | `tst_003_a_float_vector_column_round_trips` | CDC-004 |
