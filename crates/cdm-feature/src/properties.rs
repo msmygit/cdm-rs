@@ -244,6 +244,78 @@ pub(crate) fn trimmed(config: &EffectiveConfig, key: PropertyKey) -> Option<Stri
         .map(ToOwned::to_owned)
 }
 
+/// A property naming a **column**, read back from its CQL spelling to the internal name
+/// (`SCH-002`).
+///
+/// An operator writes a column name the way they would write it in cqlsh, so a hyphenated or
+/// case-sensitive name arrives quoted: `feature.explode_map.origin_column="fruit-map"`. Every
+/// schema lookup in this crate — [`crate::schema::TableFacts::column`] and its callers — matches
+/// on the *internal* name that `system_schema` stores, which for that column is `fruit-map`
+/// without the quotes. Comparing the two spellings finds nothing, and the feature reports a column
+/// that is plainly there as missing.
+///
+/// Normalising here, at the configuration boundary, is what keeps the crate on one spelling:
+/// validation messages, the resolved plan and the target column names it hands back to the caller
+/// then all agree with the schema, and with the column mapping `cdm-cql` builds — via
+/// `identifier::unformat` — from these same properties.
+///
+/// The rule is `SCH-002`'s, whose canonical implementation is `cdm_cql::schema::identifier`. See
+/// [`unformat`] for why it is restated here rather than called.
+pub(crate) fn column_name(config: &EffectiveConfig, key: PropertyKey) -> Option<String> {
+    trimmed(config, key)
+        .map(|name| unformat(&name))
+        .filter(|name| !name.is_empty())
+}
+
+/// Reads a CQL identifier back to its internal form: strips the surrounding quotes and undoubles
+/// an embedded `""` (`SCH-002`).
+///
+/// # Why this is not `cdm_cql::schema::identifier::unformat`
+///
+/// It is the same rule, deliberately kept behaviourally identical, because `cdm-feature` does not
+/// depend on `cdm-cql` and should not: every feature here is expressed against the
+/// driver-independent `CqlTypeInfo`/`RawCell`/`Record` types precisely so that it stays
+/// unit-testable without a cluster (SPEC §11, `docs/ARCHITECTURE.md` §3). Taking that dependency
+/// edge for fifteen lines of string handling would trade a structural guarantee for very little.
+/// `SCH-002` is a property of CQL rather than of the driver, so the longer-term home for it is
+/// `cdm-core`, which both crates already depend on; until it moves there, the parity test in this
+/// module pins the two implementations to the same answers.
+///
+/// An unquoted name is returned unchanged rather than folded, exactly as Java's `unFormatName`
+/// does: `system_schema` stores internal names, so folding would make a column created as
+/// `"MyColumn"` unfindable.
+fn unformat(name: &str) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    // Java's `^"[^\s]*"$`: a well-formed quoted identifier, which contains no whitespace.
+    let well_formed_quoted = name.len() >= 2
+        && name.starts_with('"')
+        && name.ends_with('"')
+        && !name.chars().any(char::is_whitespace);
+    if well_formed_quoted {
+        return name
+            .get(1..name.len() - 1)
+            .unwrap_or_default()
+            .replace("\"\"", "\"");
+    }
+    if name.contains('"') || name.chars().any(char::is_whitespace) {
+        // Not a well-formed quoted name and not a bare one — a value such as `"a b"`, which is a
+        // perfectly legal column name and exactly the kind that has to be quoted to be written at
+        // all. Strip the outer quotes when they are there, and otherwise leave the name alone
+        // rather than mangling it.
+        let trimmed = name.trim();
+        if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+            return trimmed
+                .get(1..trimmed.len() - 1)
+                .unwrap_or_default()
+                .replace("\"\"", "\"");
+        }
+        return name.to_owned();
+    }
+    name.to_owned()
+}
+
 /// A comma-separated list property, trimmed element-wise with empty elements dropped.
 pub(crate) fn list(config: &EffectiveConfig, key: PropertyKey) -> Vec<String> {
     raw(config, key).map_or_else(Vec::new, |value| {
@@ -399,6 +471,55 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn sch_002_a_column_name_property_is_read_back_to_its_internal_form() {
+        let settings = config(&[
+            ("feature.explode_map.origin_column", "  \"fruit-map\"  "),
+            ("feature.explode_map.target_key_column", "fruit"),
+            ("feature.explode_map.target_value_column", "\"\"\""),
+        ]);
+        assert_eq!(
+            column_name(&settings, EXPLODE_MAP_ORIGIN_COLUMN).as_deref(),
+            Some("fruit-map")
+        );
+        // A name that never needed quoting is untouched.
+        assert_eq!(
+            column_name(&settings, EXPLODE_MAP_TARGET_KEY_COLUMN).as_deref(),
+            Some("fruit")
+        );
+        // `"""` is the CQL spelling of the one-character name `"`.
+        assert_eq!(
+            column_name(&settings, EXPLODE_MAP_TARGET_VALUE_COLUMN).as_deref(),
+            Some("\"")
+        );
+        assert_eq!(column_name(&config(&[]), EXPLODE_MAP_ORIGIN_COLUMN), None);
+        // A quoted empty name is no name at all, and must not read as one.
+        let empty = config(&[("feature.explode_map.origin_column", "\"\"")]);
+        assert_eq!(column_name(&empty, EXPLODE_MAP_ORIGIN_COLUMN), None);
+    }
+
+    #[test]
+    fn sch_002_unformatting_answers_exactly_as_cdm_cqls_canonical_rule_does() {
+        // These are the documented answers of `cdm_cql::schema::identifier::unformat`, which this
+        // crate cannot call (no `cdm-cql` dependency) but must not disagree with: `cdm-cql` builds
+        // the column mapping from the same properties, so any divergence puts a feature's plan and
+        // the statement's bind list on two different spellings of one column.
+        assert_eq!(unformat("\"Data\""), "Data");
+        assert_eq!(unformat("Data"), "Data");
+        assert_eq!(unformat("\"we\"\"ird\""), "we\"ird");
+        assert_eq!(unformat("DATA"), "DATA");
+        assert_eq!(unformat("Reserved_Words"), "Reserved_Words");
+        assert_eq!(unformat("\"two words\""), "two words");
+        assert_eq!(unformat("\"fruit-map\""), "fruit-map");
+        assert_eq!(unformat(""), "");
+        assert_eq!(unformat("\""), "\"");
+        // Already-internal names pass through unchanged, so normalising twice is harmless: the
+        // mapping in `cdm-cql` unformats these properties again on its own side.
+        for internal in ["fruit-map", "Data", "two words", "we\"ird", "data"] {
+            assert_eq!(unformat(internal), internal, "{internal}");
+        }
     }
 
     #[test]
