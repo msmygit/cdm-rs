@@ -239,6 +239,84 @@ impl TrackingTables {
         )
     }
 
+    /// `INSERT` of the run row **conditionally**, which is the election of `DST-002`.
+    ///
+    /// Bound as `(table_name, run_id, run_type, prev_run_id, status, run_info)`. The `run_info`
+    /// column carries the secret-redacted configuration hash of `DST-003` until `TRK-022`
+    /// replaces it with the metrics string at the end of the run.
+    ///
+    /// Distinct from [`TrackingTables::insert_run_info`] rather than a flag on it: the
+    /// unconditional insert is also what moves the run row to `STARTED`, and an `IF NOT EXISTS`
+    /// on *that* write would never apply. The two statements do different things and are told
+    /// apart by their names rather than by an argument.
+    pub fn insert_run_info_if_not_exists(&self) -> String {
+        format!(
+            "INSERT INTO {} (table_name, run_id, run_type, prev_run_id, start_time, status, \
+             run_info) VALUES (?, ?, ?, ?, totimestamp(now()), ?, ?) IF NOT EXISTS",
+            self.run_info()
+        )
+    }
+
+    /// `INSERT` of a lease for a range nobody holds (`DST-011`). Bound as `(table_name, run_id,
+    /// token_min, node_id, lease_until)`; `attempt` is 1, because this is the first.
+    pub fn claim_lease_if_absent(&self) -> String {
+        format!(
+            "INSERT INTO {} (table_name, run_id, token_min, node_id, lease_until, attempt) \
+             VALUES (?, ?, ?, ?, ?, 1) IF NOT EXISTS",
+            self.run_leases()
+        )
+    }
+
+    /// `UPDATE` taking a range over from a lease that has expired (`DST-011`, `DST-012`).
+    ///
+    /// Bound as `(node_id, lease_until, attempt, table_name, run_id, token_min, now)`. The
+    /// condition is `lease_until < now` with `now` supplied by the reclaiming node, exactly as
+    /// `DST-011` specifies: Cassandra will not evaluate a function inside an `IF`, and taking the
+    /// time from the server would mean the decision was made by a clock no node can inspect.
+    pub fn reclaim_lease_if_expired(&self) -> String {
+        format!(
+            "UPDATE {} SET node_id = ?, lease_until = ?, attempt = ? \
+             WHERE table_name = ? AND run_id = ? AND token_min = ? IF lease_until < ?",
+            self.run_leases()
+        )
+    }
+
+    /// `UPDATE` extending a lease this node still holds (`DST-012`). Bound as `(lease_until,
+    /// table_name, run_id, token_min, node_id)`.
+    ///
+    /// `IF node_id = ?` is what makes a renewal safe after a reclaim: a node whose lease was
+    /// taken cannot extend the new holder's, and learns it lost the range from the failed
+    /// condition rather than from the data it was about to write.
+    pub fn renew_lease(&self) -> String {
+        format!(
+            "UPDATE {} SET lease_until = ? \
+             WHERE table_name = ? AND run_id = ? AND token_min = ? IF node_id = ?",
+            self.run_leases()
+        )
+    }
+
+    /// `SELECT` of one lease row (`DST-010`). Bound as `(table_name, run_id, token_min)`.
+    ///
+    /// Issued only when a conditional write did **not** apply: a failed `UPDATE ... IF` returns
+    /// only the columns its condition names, and "who holds this range, and on which attempt" is
+    /// the whole content of a contention diagnostic.
+    pub fn select_lease(&self) -> String {
+        format!(
+            "SELECT token_min, node_id, lease_until, attempt FROM {} \
+             WHERE table_name = ? AND run_id = ? AND token_min = ?",
+            self.run_leases()
+        )
+    }
+
+    /// `SELECT` of every lease row of a run (`DST-010`). Bound as `(table_name, run_id)`.
+    pub fn select_leases(&self) -> String {
+        format!(
+            "SELECT token_min, node_id, lease_until, attempt FROM {} \
+             WHERE table_name = ? AND run_id = ?",
+            self.run_leases()
+        )
+    }
+
     /// `SELECT` of every run recorded for the table, newest first (`TRK-034`).
     pub fn select_runs(&self) -> String {
         format!(
@@ -336,6 +414,52 @@ mod tests {
             .any(|s| s.contains(RUN_LEASES_TABLE)));
         assert!(tables.create_leases_statement().contains("cdm_run_leases"));
         assert!(tables.create_leases_statement().contains("lease_until"));
+    }
+
+    #[test]
+    fn dst_002_the_election_insert_is_conditional_and_carries_the_config_hash() {
+        let statement = tables().insert_run_info_if_not_exists();
+        assert!(statement.ends_with("IF NOT EXISTS"), "{statement}");
+        assert!(statement.contains("run_info"), "{statement}");
+        // The unconditional insert must stay unconditional: it is also the write that moves the
+        // run row to STARTED, which an `IF NOT EXISTS` would make a no-op.
+        assert!(!tables().insert_run_info().contains("IF NOT EXISTS"));
+    }
+
+    #[test]
+    fn dst_010_every_lease_statement_names_the_lease_table_and_its_whole_key() {
+        let tables = tables();
+        for statement in [
+            tables.claim_lease_if_absent(),
+            tables.reclaim_lease_if_expired(),
+            tables.renew_lease(),
+            tables.select_lease(),
+            tables.select_leases(),
+        ] {
+            assert!(statement.contains(RUN_LEASES_TABLE), "{statement}");
+            assert!(statement.contains("table_name"), "{statement}");
+            assert!(statement.contains("run_id"), "{statement}");
+            assert!(statement.contains("token_min"), "{statement}");
+        }
+    }
+
+    #[test]
+    fn dst_011_a_claim_is_conditional_on_absence_or_on_expiry() {
+        let tables = tables();
+        assert!(tables.claim_lease_if_absent().contains("IF NOT EXISTS"));
+        // `DST-011`'s condition, with `now` bound by the claiming node rather than read from the
+        // server: Cassandra evaluates no function inside an `IF`.
+        assert!(tables
+            .reclaim_lease_if_expired()
+            .contains("IF lease_until < ?"));
+        // A first claim is attempt 1 by construction, so no read is needed to write it.
+        assert!(tables.claim_lease_if_absent().contains("attempt"));
+    }
+
+    #[test]
+    fn dst_012_a_renewal_is_conditional_on_still_holding_the_lease() {
+        assert!(tables().renew_lease().contains("IF node_id = ?"));
+        assert!(tables().renew_lease().contains("SET lease_until = ?"));
     }
 
     #[test]

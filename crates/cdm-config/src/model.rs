@@ -1100,6 +1100,14 @@ cdm_properties! {
             #[cdm(unit = "duration",)]
             pub heartbeat_interval: DurationSetting = DurationSetting::from_secs(15),
 
+            /// How many times one token range may be claimed before it is abandoned (`DST-013`).
+            ///
+            /// A range whose node dies is reclaimed by another, and a range that kills every node
+            /// that touches it would otherwise be reclaimed forever. On the attempt after this
+            /// one, the range is marked `FAIL` and left for an operator instead.
+            #[cdm(unit = "attempts", stability = experimental,)]
+            pub max_attempts: u32 = 3,
+
             /// Treat `perfops.ratelimit.*` as a budget for the whole cluster (`ENG-004`).
             ///
             /// Off, every node applies the configured limit itself, so *n* nodes hit the origin

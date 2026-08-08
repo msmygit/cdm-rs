@@ -13,6 +13,21 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# No driver. `ARCHITECTURE.md` §3 reserves `scylla` for `cdm-cql`, and the one documented
+# exception is `cdm-track`, which owns the tracking tables the leases live beside; the Cassandra
+# implementation of `cdm-core`'s `LeaseStore` is therefore *there*, and this crate names only the
+# trait. That is also what lets every requirement below be tested without a cluster.
 [dependencies]
-# Added by the implementation PRs listed in docs/ROADMAP.md; see the version
-# catalog in the workspace Cargo.toml.
+cdm-config.workspace = true
+cdm-core.workspace = true
+chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tokio-util.workspace = true
+tracing.workspace = true
+
+# `cdm-track` supplies `MemoryStore`, whose lease semantics mirror the Cassandra backend's
+# transactions. A *dev*-dependency is outside the production graph `ARCHITECTURE.md` §3 governs,
+# which is the same reason `cdm-engine` dev-depends on `scylla`.
+[dev-dependencies]
+cdm-track.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

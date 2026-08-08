@@ -352,13 +352,13 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `DST-001` <sup>N</sup> | `cluster.enabled = true` MUST allow N cdm-rs processes started with the same `run_id` and the same config to cooperatively… | `cdm-cluster` | `dst_001_*` | #50 |
-| `DST-002` <sup>N</sup> | Exactly one node MUST perform run initialisation (`TRK-020`) | `cdm-cluster` | `dst_002_*` | #50 |
-| `DST-003` <sup>N</sup> | Configuration consistency MUST be enforced: the initialising node records a hash of the effective, secret-redacted config in… | `cdm-cluster` | `dst_003_*` | #50 |
-| `DST-010` <sup>N</sup> | Range claiming uses a `cdm_run_leases` table keyed by (table_name, run_id), token_min | `cdm-cluster` | `dst_010_*` | #50 |
-| `DST-011` <sup>N</sup> | A claim MUST be `INSERT ... IF NOT EXISTS` / `UPDATE ... IF lease_until < now` (LWT, `SERIAL` consistency) | `cdm-cluster` | `dst_011_*` | #50 |
-| `DST-012` <sup>N</sup> | Leases MUST be renewed every `cluster.heartbeat_interval` while the range is being processed, and MUST expire after… | `cdm-cluster` | `dst_012_*` | #50 |
-| `DST-013` <sup>N</sup> | A range that has been attempted more than `cluster.max_attempts` (default 3) times MUST be marked `FAIL` and abandoned rather… | `cdm-cluster` | `dst_013_*` | #50 |
+| `DST-001` <sup>N</sup> | `cluster.enabled = true` MUST allow N cdm-rs processes started with the same `run_id` and the same config to cooperatively… | `cdm-cluster::coordinator`, `cdm-cluster::node` | `dst_001_*` | #50 |
+| `DST-002` <sup>N</sup> | Exactly one node MUST perform run initialisation (`TRK-020`) | `cdm-cluster::coordinator`, `cdm-track::store` | `dst_002_*` | #50 |
+| `DST-003` <sup>N</sup> | Configuration consistency MUST be enforced: the initialising node records a hash of the effective, secret-redacted config in… | `cdm-cluster::coordinator`, `cdm-config::effective` | `dst_003_*` | #50 |
+| `DST-010` <sup>N</sup> | Range claiming uses a `cdm_run_leases` table keyed by (table_name, run_id), token_min | `cdm-cluster::coordinator`, `cdm-track::schema` | `dst_010_*` | #50 |
+| `DST-011` <sup>N</sup> | A claim MUST be `INSERT ... IF NOT EXISTS` / `UPDATE ... IF lease_until < now` (LWT, `SERIAL` consistency) | `cdm-cluster::coordinator`, `cdm-track::store` | `dst_011_*` | #50 |
+| `DST-012` <sup>N</sup> | Leases MUST be renewed every `cluster.heartbeat_interval` while the range is being processed, and MUST expire after… | `cdm-cluster::coordinator`, `cdm-cluster::clock` | `dst_012_*` | #50 |
+| `DST-013` <sup>N</sup> | A range that has been attempted more than `cluster.max_attempts` (default 3) times MUST be marked `FAIL` and abandoned rather… | `cdm-cluster::coordinator`, `cdm-cluster::settings` | `dst_013_*` | #50 |
 | `DST-014` <sup>N</sup> | Reclaiming a range after a node death MUST be safe | `cdm-cluster` | `dst_014_*` | #51 |
 | `DST-015` <sup>N</sup> | . *(Counters are not idempotent; correctness beats convenience.)* **DST-016 [N]** — Metrics MUST be aggregated across nodes:… — the resume-side exclusion is `cdm-track::resume::RerunPolicy` | `cdm-track::resume`, `cdm-cluster` | `dst_015_*` | #25, #51 |
 | `DST-016` <sup>N</sup> | Metrics MUST be aggregated across nodes: each node periodically writes its counter snapshot; any node (and the API) can… | `cdm-cluster` | `dst_016_*` | #51 |

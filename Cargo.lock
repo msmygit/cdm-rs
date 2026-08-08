@@ -602,6 +602,15 @@ dependencies = [
 [[package]]
 name = "cdm-cluster"
 version = "0.1.0"
+dependencies = [
+ "cdm-config",
+ "cdm-core",
+ "cdm-track",
+ "chrono",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
 
 [[package]]
 name = "cdm-codec"

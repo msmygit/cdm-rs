@@ -158,6 +158,13 @@
           "default": "1m",
           "description": "How long a range lease is held before another node may reclaim it (`DST-012`)."
         },
+        "max_attempts": {
+          "default": 3,
+          "description": "How many times one token range may be claimed before it is abandoned (`DST-013`).\n\nA range whose node dies is reclaimed by another, and a range that kills every node\nthat touches it would otherwise be reclaimed forever. On the attempt after this\none, the range is marked `FAIL` and left for an operator instead.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "node_id": {
           "default": null,
           "description": "This node's identity in the membership table.",
@@ -1579,6 +1586,7 @@
         "enabled": false,
         "heartbeat_interval": "15s",
         "lease_duration": "1m",
+        "max_attempts": 3,
         "node_id": null,
         "ratelimit_is_global": false
       },

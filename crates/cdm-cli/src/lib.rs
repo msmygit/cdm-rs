@@ -131,9 +131,10 @@ pub fn run(cli: &Cli, out: &mut dyn Write) -> Result<Exit, CdmError> {
         // Specified, scheduled, not yet built. Each says what is missing and where it comes from.
         Command::Cluster => Err(commands::misc::not_yet(
             "cdm cluster",
-            "it reports live nodes, their leases and their per-node counters (DST-018), all of \
-             which are written by the `Coordinator` in `cdm-cluster` — a crate that is still a \
-             stub, so there is no membership table to read",
+            "it reports live nodes, their leases and their per-node counters (DST-018). \
+             `cdm-cluster` now grants and renews leases (DST-001..DST-003, DST-010..DST-013), but \
+             the membership rows and the per-node counter snapshots this command lists are \
+             DST-016 and DST-017, which are not written yet",
         )),
         Command::Serve(_) => Err(commands::misc::not_yet(
             "cdm serve",

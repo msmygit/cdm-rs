@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-129 properties.
+130 properties.
 
 
 ## `connect`
@@ -212,6 +212,7 @@ should not use it.
 | `cluster.node_id` | — | string | the host name and process id | — | stable | This node's identity in the membership table. |
 | `cluster.lease_duration` | — | duration | `1m` | duration | stable | How long a range lease is held before another node may reclaim it (`DST-012`). |
 | `cluster.heartbeat_interval` | — | duration | `15s` | duration | stable | How often a node renews its leases and refreshes its membership row. |
+| `cluster.max_attempts` | — | integer | `3` | attempts | experimental | How many times one token range may be claimed before it is abandoned (`DST-013`). |
 | `cluster.ratelimit_is_global` | — | bool | `false` | — | experimental | Treat `perfops.ratelimit.*` as a budget for the whole cluster (`ENG-004`). |
 
 ## `logging`

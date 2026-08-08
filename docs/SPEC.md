@@ -457,7 +457,8 @@ never had an effect. Constant-column types are resolved from the target schema (
 | `cluster.enabled` | bool | `false` | distributed mode `DST-001` |
 | `cluster.node_id` | string | hostname+pid | |
 | `cluster.lease_duration` | duration | `60s` | `DST-012` |
-| `cluster.heartbeat_interval` | duration | `15s` | |
+| `cluster.heartbeat_interval` | duration | `15s` | MUST be at most half of `cluster.lease_duration`, so a node may miss a renewal without losing its ranges (`DST-012`) |
+| `cluster.max_attempts` | int | `3` | how many times one range may be claimed before it is abandoned, `DST-013` |
 | `cluster.ratelimit_is_global` | bool | `false` | `ENG-004` |
 | `logging.level` | string | `info` | |
 | `logging.format` | enum `pretty`\|`json`\|`compact` | `pretty` | |

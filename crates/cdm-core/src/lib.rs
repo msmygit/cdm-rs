@@ -55,9 +55,10 @@ pub use domain::{
 pub use error::{CdmError, Diagnostic, ErrorContext, ErrorKind, Severity};
 pub use registry::{
     BindingBuilder, CodecPlugin, CompareHook, EffectiveConfig, FeaturePlugin, FilterPlugin,
-    GuardrailPlugin, JobPlugin, JobRunner, MetricsExporter, MetricsSnapshot, Plugin,
-    ProjectionBuilder, RangeOutcome, RangeRecord, RecordSink, Registry, RegistryBuilder, RowSink,
-    RowSource, RowStream, RunRecord, SchemaPair, TableView, TrackingStore, TypePair,
+    GuardrailPlugin, JobPlugin, JobRunner, LeaseOutcome, LeaseRecord, LeaseStore, MetricsExporter,
+    MetricsSnapshot, Plugin, ProjectionBuilder, RangeOutcome, RangeRecord, RecordSink, Registry,
+    RegistryBuilder, RowSink, RowSource, RowStream, RunClaim, RunRecord, SchemaPair, TableView,
+    TrackingStore, TypePair,
 };
 
 /// The version of this crate, as reported by `cdm version`.
