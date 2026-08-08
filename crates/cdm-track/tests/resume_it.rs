@@ -57,12 +57,12 @@ use cdm_engine::scheduler::{
 use cdm_testkit::{skip_without_container_runtime, ClusterFixture, Engine};
 use cdm_track::store::MemoryStore;
 use cdm_track::tracker::{committed_run_info, new_run_record, RunTracker, TrackerConfig};
-use cdm_track::{plan_resume, RerunPolicy};
+use cdm_track::{plan_resume, RerunPolicy, ResumePlan};
 
 /// The keyspace every case in this file uses.
 const KEYSPACE: &str = "cdm_resume_it";
-/// How many ranges a run plans. Small enough that a resume runs each remaining range as its own
-/// single-part plan without the suite taking minutes.
+/// How many ranges a run plans. Small enough that the suite does not take minutes, large enough
+/// that an interruption after three ranges leaves something to resume.
 const NUM_PARTS: u64 = 8;
 
 /// Cassandra 4.1 is the version the definition of done names; `CDM_IT_ENGINES` widens the matrix.
@@ -268,37 +268,27 @@ async fn tracked_run(
     (finished, report.status())
 }
 
-/// Runs `ranges` — a resume's work list — one single-part plan at a time.
+/// Runs a resume's work list, the way `cdm runs resume` does.
 ///
-/// The scheduler plans a ring rather than accepting a work list, and the seam that would let a
-/// caller hand it one belongs to the CLI harness rather than to a test. Bounding a one-part plan
-/// to a range's own tokens produces exactly that range (`TOK-003`: `num_parts = 1` over `[a, b]`
-/// is `[a, b]`), so this executes the resume's list without inventing a production API for it.
-async fn run_resume_ranges(plan: Arc<MigratePlan>, ranges: &[TokenRange]) -> usize {
-    let mut processed = 0;
-    for &range in ranges {
-        let token_plan = Planner::new(
-            PlannerSettings::new(Partitioner::Murmur3)
-                .with_num_parts(1)
-                .with_token_bounds(Some(range.min()), Some(range.max())),
-        )
-        .plan(RunId::from_raw(99), None)
-        .unwrap();
-        assert_eq!(token_plan.token_ranges(), vec![range]);
+/// `TOK-011`: the scheduler is handed the outstanding ranges through
+/// [`ResumePlan::token_plan`](cdm_track::ResumePlan::token_plan) rather than a fresh split of the
+/// ring. That is the production path — this is not a test-only construction — and it is what makes
+/// the assertions below claims about what `cdm runs resume` writes.
+async fn run_resume_ranges(plan: Arc<MigratePlan>, resume: &ResumePlan, run_id: RunId) -> usize {
+    let token_plan = resume.token_plan(run_id, Partitioner::Murmur3).unwrap();
+    assert_eq!(token_plan.token_ranges(), resume.ranges());
 
-        let report = Scheduler::new(SchedulerSettings::default().with_workers(1))
-            .unwrap()
-            .run(
-                &token_plan,
-                Arc::new(MigrateJob::new(Arc::clone(&plan))),
-                Arc::new(cdm_engine::scheduler::NoopObserver),
-            )
-            .await
-            .unwrap();
-        assert_eq!(report.ranges_failed(), 0, "a resumed range must not fail");
-        processed += 1;
-    }
-    processed
+    let report = Scheduler::new(SchedulerSettings::default().with_workers(1))
+        .unwrap()
+        .run(
+            &token_plan,
+            Arc::new(MigrateJob::new(plan)),
+            Arc::new(cdm_engine::scheduler::NoopObserver),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.ranges_failed(), 0, "a resumed range must not fail");
+    report.outcomes().len()
 }
 
 async fn read_kv(session: &ClusterSession, table: &str) -> Vec<(i32, String)> {
@@ -445,7 +435,7 @@ against_a_cluster!(
 
         let resumed_plan =
             Arc::new(plan_for(&origin, &target, "src", "interrupted", settings).await);
-        let processed = run_resume_ranges(resumed_plan, resume.ranges()).await;
+        let processed = run_resume_ranges(resumed_plan, &resume, RunId::from_raw(3)).await;
         assert_eq!(processed, resume.ranges().len());
 
         // TST-041, in the specification's own words: the final target state equals a clean run's.
@@ -538,7 +528,7 @@ against_a_cluster!(
 
         let resumed_plan =
             Arc::new(plan_for(&origin, &target, "hits_src", "hits_dst", settings).await);
-        let processed = run_resume_ranges(resumed_plan, resume.ranges()).await;
+        let processed = run_resume_ranges(resumed_plan, &resume, RunId::from_raw(2)).await;
         assert_eq!(processed, resume.ranges().len());
 
         // The assertion the whole case exists for. A resume that replayed a completed counter

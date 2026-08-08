@@ -190,6 +190,7 @@ test, fails CI.
 | `TOK-008` <sup>N</sup> | An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership boundaries so every… | `cdm-engine::planner` | `tok_008_*` | #17, #53 |
 | `TOK-009` <sup>N</sup> | `cdm plan` MUST emit the computed plan (range count, span histogram, estimated rows from `system.size_estimates`, estimated… | `cdm-engine::planner` | `tok_009_*` | #17 |
 | `TOK-010` <sup>N</sup> | Ranges SHOULD be sized adaptively when `plan.strategy = adaptive`: begin at `num_parts`, and dynamically subdivide any range… | `cdm-engine::planner` | `tok_010_*` | #17, #53 |
+| `TOK-011` <sup>N</sup> | A token plan MUST be constructible from a pre-computed work list rather than by splitting the ring, and MUST record the run it continues; an empty, over-large or overlapping list is refused — this is the seam `TRK-031`'s outstanding ranges reach the scheduler through | `cdm-engine::planner`, `cdm-track::resume` | `tok_011_*` | #17, #21g |
 
 ### ENG
 
@@ -347,6 +348,8 @@ test, fails CI.
 | `TRK-035` <sup>N</sup> | Tracking writes MUST be batched and asynchronous with a bounded queue, so tracking never becomes the throughput bottleneck; on… | `cdm-track::tracker` | `trk_035_*` | #25 |
 | `TRK-036` <sup>N</sup> | Tracking MUST be storable in a pluggable backend (`TrackingStore` trait): the Cassandra target keyspace (default,… — all three backends are delivered; only the Cassandra one is Java-readable or usable under `cluster.enabled` | `cdm-track::store` | `trk_036_*` | #25 |
 | `TRK-037` <sup>N</sup> | A tracking write carrying no aggregate metrics string MUST leave the stored one intact, and every `TrackingStore` MUST agree; on Cassandra that means binding `UNSET`, not `NULL` | `cdm-track::store` | `trk_037_*` | #25 |
+| `TRK-038` <sup>N</sup> | `cdm runs resume` MUST execute a recorded run's outstanding ranges as a run of its own — new run row, `previous_run_id` naming the run it continues, counters starting at zero and counting only its own rows — and MUST NOT silently fall back to a full plan or adopt a run nobody named | `cdm-cli::harness::resume`, `cdm-cli::harness::tracking`, `cdm-track::manage` | `trk_038_*` | #21g |
+| `TRK-039` <sup>N</sup> | A resume that withholds ranges under `DST-015` MUST report each one — bounds, recorded status and reason — and MUST NOT report success; the metrics string is left untouched because `MET-005` is parsed | `cdm-cli::commands::runs`, `cdm-cli::harness::resume` | `trk_039_*` | #21g |
 
 ### DST
 

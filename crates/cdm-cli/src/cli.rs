@@ -188,6 +188,26 @@ pub struct ValidateArgs {
     pub keys_only: bool,
 }
 
+/// Which job's history `cdm runs resume --auto` searches (`TRK-030`).
+///
+/// A guardrail run writes nothing and is never tracked, so it is not offered here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ResumeJob {
+    /// `MIGRATE` runs.
+    Migrate,
+    /// `VALIDATE` runs.
+    Validate,
+}
+
+impl From<ResumeJob> for cdm_core::JobKind {
+    fn from(job: ResumeJob) -> Self {
+        match job {
+            ResumeJob::Migrate => Self::Migrate,
+            ResumeJob::Validate => Self::Validate,
+        }
+    }
+}
+
 /// `cdm runs …`
 #[derive(Debug, Subcommand)]
 pub enum RunsCommand {
@@ -201,14 +221,19 @@ pub enum RunsCommand {
         #[command(flatten)]
         config: ConfigArgs,
     },
-    /// Re-run the ranges a previous run did not finish.
+    /// Re-run the ranges a previous run did not finish (`TRK-038`).
     Resume {
-        /// Adopt the most recent unfinished run automatically.
+        /// The run to resume. Omit it and pass `--auto` to adopt the most recent unfinished run.
+        run_id: Option<i64>,
+        /// Adopt the most recent unfinished run automatically (`TRK-030`).
         #[arg(long)]
         auto: bool,
-        /// Where the configuration comes from.
+        /// Which job's history `--auto` searches. The resumed run rebuilds the job it recorded.
+        #[arg(long, value_enum, default_value_t = ResumeJob::Migrate)]
+        job: ResumeJob,
+        /// The arguments a job takes: `--dry-run`, `--summary-out` and the configuration.
         #[command(flatten)]
-        config: ConfigArgs,
+        args: JobArgs,
     },
     /// Cancel a running run.
     Cancel {

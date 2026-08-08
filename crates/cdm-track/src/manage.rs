@@ -198,6 +198,46 @@ where
         Ok(summarise(&run, &ranges, policy))
     }
 
+    /// The run a resume would adopt (`TRK-030`).
+    ///
+    /// `requested` is an operator's explicit choice — `cdm runs resume <id>` or
+    /// `track_run.previous_run_id` — and is taken as given, including a run of a different job:
+    /// naming a run and being handed a different one is worse than being told it is the wrong
+    /// type. `None`, or the unset sentinel, falls through to `auto_rerun`'s rule: the most recent
+    /// run for `(table, job)`, adopted only if it did not finish cleanly.
+    ///
+    /// Separate from [`RunManager::resume`] because a caller has to know *which* run it is
+    /// resuming before it can choose the [`RerunPolicy`]: the policy depends on the job that run
+    /// recorded, not on the one that was asked for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Tracking`].
+    pub async fn previous_run_id(
+        &self,
+        requested: Option<RunId>,
+        job: JobKind,
+    ) -> Result<Option<RunId>, CdmError> {
+        if let Some(id) = requested.filter(|id| !id.is_unset()) {
+            return Ok(Some(id));
+        }
+        Ok(crate::resume::adopt_previous_run(
+            self.store.latest_run(&self.table, job).await?.as_ref(),
+        ))
+    }
+
+    /// One run's `cdm_run_info` row, or `None` if it is not recorded (`TRK-034`).
+    ///
+    /// The row carries the job the run was, which is what a resume needs in order to rebuild it:
+    /// re-running a recorded `VALIDATE` as a migrate would write the whole table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Tracking`].
+    pub async fn record(&self, run_id: RunId) -> Result<Option<RunRecord>, CdmError> {
+        self.store.run(run_id).await
+    }
+
     /// `cdm runs resume` (`TRK-030`..`TRK-033`).
     ///
     /// `previous` is the run to resume, or `None` to let `auto_rerun` choose the most recent
@@ -217,15 +257,9 @@ where
         rerun_multiplier: u32,
         run_id: RunId,
     ) -> Result<Option<ResumePlan>, CdmError> {
-        let previous_run_id = match previous {
-            Some(id) if !id.is_unset() => Some(id),
-            _ => crate::resume::adopt_previous_run(
-                self.store.latest_run(&self.table, job).await?.as_ref(),
-            ),
-        };
         // No previous run at all is not a fallback: there is nothing to fall back *from*, and the
         // caller simply plans a fresh run with `prev_run_id = 0`, as Java does.
-        let Some(previous_run_id) = previous_run_id else {
+        let Some(previous_run_id) = self.previous_run_id(previous, job).await? else {
             return Ok(None);
         };
         let previous = self.store.run(previous_run_id).await?;

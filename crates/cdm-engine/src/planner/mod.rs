@@ -281,10 +281,109 @@ pub struct TokenPlan {
     bounds: TokenRange,
     coverage_percent: u8,
     run_id: RunId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resumed_from: Option<RunId>,
     ranges: Vec<PlannedRange>,
 }
 
 impl TokenPlan {
+    /// Builds a plan from a pre-computed work list rather than by splitting the ring (`TOK-011`).
+    ///
+    /// This is the seam a resume needs. `TRK-031` decides which of a previous run's ranges are
+    /// outstanding, and those ranges are *not* a function of anything [`Planner::plan`] knows: they
+    /// come out of `cdm_run_details`, they may already have been subdivided by `TRK-033`, and
+    /// re-deriving them by splitting the ring again would produce the whole ring. Without this
+    /// constructor the only way to execute a resume is to re-plan everything and call it one, which
+    /// is precisely the outcome it exists to make unavailable.
+    ///
+    /// `resumed_from` is the run whose outstanding work this is, for [`TokenPlan::resumed_from`].
+    /// `run_id` is the **new** run's id.
+    ///
+    /// The order of `ranges` is preserved. A resume work list arrives already shuffled for the new
+    /// run (`TOK-007`, via `cdm-track`'s `plan_resume`); shuffling it again here would permute an
+    /// already-random order for no gain, and would make the executed order differ from the one the
+    /// resume reported.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Config`] when the work list is one that cannot be executed safely:
+    ///
+    /// * **empty** — an empty plan runs nothing and reports success, which would make a resume that
+    ///   found no outstanding work indistinguishable from one that lost it. "Nothing is
+    ///   outstanding" is a conclusion for the caller to report, not one to encode as a plan;
+    /// * **larger than [`MAX_PLANNED_RANGES`]** — the ceiling `TOK-003` applies (`NFR-003`);
+    /// * **overlapping** — two ranges sharing a token would have that token processed twice. On a
+    ///   counter table that is silent data corruption (`DST-015`), so it is refused here rather
+    ///   than trusted to the contents of a tracking table nobody has checked.
+    pub fn from_ranges(
+        run_id: RunId,
+        partitioner: Partitioner,
+        resumed_from: Option<RunId>,
+        ranges: Vec<TokenRange>,
+    ) -> Result<Self, CdmError> {
+        let Some(&first) = ranges.first() else {
+            return Err(CdmError::new(
+                ErrorKind::Config,
+                "a token plan needs at least one range; an empty work list would run nothing and \
+                 report success",
+            ));
+        };
+        if u64::try_from(ranges.len()).unwrap_or(u64::MAX) > MAX_PLANNED_RANGES {
+            return Err(CdmError::new(
+                ErrorKind::Config,
+                format!(
+                    "a work list of {} ranges exceeds the {MAX_PLANNED_RANGES}-range ceiling \
+                     (NFR-003)",
+                    ranges.len()
+                ),
+            ));
+        }
+
+        // Ring order is used only to check the ranges are disjoint; the plan keeps the caller's.
+        let mut ordered = ranges.clone();
+        ordered.sort_unstable();
+        for pair in ordered.windows(2) {
+            // A two-element window destructures exactly; `let else` keeps `ERR-004` satisfied
+            // without an index that a reader has to prove is in bounds.
+            let [left, right] = pair else { continue };
+            if left.intersects(*right) {
+                return Err(CdmError::new(
+                    ErrorKind::Config,
+                    format!(
+                        "the work list overlaps: {left} and {right} share tokens, so every row \
+                         between them would be processed twice"
+                    ),
+                ));
+            }
+        }
+
+        let (min, max) = ranges
+            .iter()
+            .copied()
+            .fold((first.min(), first.max()), |(min, max), range| {
+                (min.min(range.min()), max.max(range.max()))
+            });
+        let bounds = TokenRange::new(min, max)?;
+
+        Ok(Self {
+            partitioner,
+            strategy: PlanStrategy::Fixed,
+            bounds,
+            // The ranges were already narrowed by whatever coverage the run that planned them
+            // applied. Recording anything but 100 here would invite a second application of
+            // `TOK-005`, which would silently drop part of what is still outstanding.
+            coverage_percent: 100,
+            run_id,
+            resumed_from,
+            ranges: ranges.into_iter().map(PlannedRange::unrouted).collect(),
+        })
+    }
+
+    /// The run whose outstanding ranges this plan carries, if it is a resume (`TOK-011`).
+    pub const fn resumed_from(&self) -> Option<RunId> {
+        self.resumed_from
+    }
+
     /// The ranges, in scheduling order (already shuffled — `TOK-006`).
     pub fn ranges(&self) -> &[PlannedRange] {
         &self.ranges
@@ -308,7 +407,8 @@ impl TokenPlan {
         self.ranges.len()
     }
 
-    /// Whether the plan is empty. It never is: the splitter always emits at least one range.
+    /// Whether the plan is empty. It never is: the splitter always emits at least one range, and
+    /// [`TokenPlan::from_ranges`] refuses an empty work list (`TOK-011`).
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()
     }
@@ -403,6 +503,7 @@ impl Planner {
             bounds,
             coverage_percent: effective_coverage(self.settings.coverage_percent),
             run_id,
+            resumed_from: None,
             ranges,
         })
     }
@@ -631,6 +732,117 @@ mod tests {
             ));
         }
         topology
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // TOK-011 — a plan built from a pre-computed work list
+    // ---------------------------------------------------------------------------------------
+
+    #[test]
+    fn tok_011_a_plan_from_ranges_is_exactly_those_ranges_in_that_order() {
+        // The whole point: what goes in is what runs. A resume's work list has already been
+        // chosen by `TRK-031` and shuffled by `TOK-007`; re-splitting or re-ordering it here
+        // would either run ranges that finished or run them in an order nothing reported.
+        let ranges = vec![range(50, 99), range(0, 9), range(20, 29)];
+        let plan = TokenPlan::from_ranges(
+            RunId::from_raw(11),
+            Partitioner::Murmur3,
+            Some(RunId::from_raw(10)),
+            ranges.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(plan.token_ranges(), ranges);
+        assert_eq!(plan.len(), 3);
+        assert!(!plan.is_empty());
+        assert_eq!(plan.run_id(), RunId::from_raw(11));
+        assert_eq!(plan.resumed_from(), Some(RunId::from_raw(10)));
+        assert_eq!(plan.partitioner(), Partitioner::Murmur3);
+        assert!(plan.ranges().iter().all(|r| r.replicas.is_empty()));
+    }
+
+    #[test]
+    fn tok_011_the_bounds_span_the_work_list_and_the_coverage_is_never_reapplied() {
+        // `TOK-005` was applied when these ranges were first planned. A plan that claimed a second
+        // coverage percentage would invite a second narrowing, which silently drops part of what
+        // is outstanding — the one failure mode a resume must not have.
+        let plan = TokenPlan::from_ranges(
+            RunId::from_raw(2),
+            Partitioner::Murmur3,
+            None,
+            vec![range(20, 29), range(0, 9)],
+        )
+        .unwrap();
+        assert_eq!(plan.bounds(), range(0, 29));
+        assert_eq!(plan.coverage_percent(), 100);
+        assert_eq!(plan.resumed_from(), None);
+    }
+
+    #[test]
+    fn tok_011_an_empty_work_list_is_refused_rather_than_run() {
+        // An empty plan runs nothing and reports `ENDED`, so a resume that lost its work list
+        // would be indistinguishable from one that had none. The caller has to say which.
+        let error =
+            TokenPlan::from_ranges(RunId::from_raw(1), Partitioner::Murmur3, None, Vec::new())
+                .expect_err("an empty work list must not become a plan");
+        assert_eq!(error.kind(), ErrorKind::Config);
+        assert!(error.message().contains("at least one range"), "{error}");
+    }
+
+    #[test]
+    fn tok_011_an_overlapping_work_list_is_refused_because_it_would_process_a_token_twice() {
+        // On a counter table this is not a duplicate write, it is a wrong number (`DST-015`).
+        let error = TokenPlan::from_ranges(
+            RunId::from_raw(1),
+            Partitioner::Murmur3,
+            None,
+            vec![range(0, 20), range(10, 30)],
+        )
+        .expect_err("overlapping ranges must not become a plan");
+        assert_eq!(error.kind(), ErrorKind::Config);
+        assert!(error.message().contains("twice"), "{error}");
+
+        // The same range twice is the degenerate case, and it is the one a duplicated tracking
+        // row would produce.
+        assert!(TokenPlan::from_ranges(
+            RunId::from_raw(1),
+            Partitioner::Murmur3,
+            None,
+            vec![range(0, 9), range(0, 9)],
+        )
+        .is_err());
+
+        // Touching, non-overlapping ranges are the normal case and must be accepted.
+        assert!(TokenPlan::from_ranges(
+            RunId::from_raw(1),
+            Partitioner::Murmur3,
+            None,
+            vec![range(0, 9), range(10, 19)],
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn tok_011_a_resume_plan_round_trips_through_serde() {
+        // `TokenPlan` is serialised into run artefacts; a new field must not break either
+        // direction, and a plan that is not a resume must not grow a null.
+        let plan = TokenPlan::from_ranges(
+            RunId::from_raw(11),
+            Partitioner::Murmur3,
+            Some(RunId::from_raw(10)),
+            vec![range(0, 9)],
+        )
+        .unwrap();
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("resumed_from"), "{json}");
+        assert_eq!(serde_json::from_str::<TokenPlan>(&json).unwrap(), plan);
+
+        let fresh = Planner::new(PlannerSettings::new(Partitioner::Murmur3).with_num_parts(2))
+            .plan(RunId::from_raw(1), None)
+            .unwrap();
+        let json = serde_json::to_string(&fresh).unwrap();
+        assert!(!json.contains("resumed_from"), "{json}");
+        assert_eq!(serde_json::from_str::<TokenPlan>(&json).unwrap(), fresh);
     }
 
     #[test]
