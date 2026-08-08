@@ -233,18 +233,35 @@ impl Row {
     }
 }
 
+/// One exploded map entry, converted to the target columns' types (`FEA-020`, `FEA-021`).
+///
+/// The conversion lives in `cdm-feature`, which owns the explode-map plan; the *result* is two
+/// plain cells and is carried here so that the three places that need it — the primary key a
+/// target row is looked up by, the values an autocorrect write binds, and the two columns a
+/// comparison cannot obtain from the origin row — all read the same entry rather than each
+/// re-deriving it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplodedEntry {
+    /// The map key, as the target key column's type.
+    pub key: RawCell,
+    /// The map value, as the target value column's type.
+    pub value: RawCell,
+}
+
 /// One unit of work as it flows through the engine: an origin row, the target primary key derived
 /// from it, and — when validating — the corresponding target row (`SPEC.md` §2).
 ///
 /// A feature plugin may turn one record into several (`FEA-020`, explode map), which is why
 /// [`FeaturePlugin::transform`](crate::FeaturePlugin::transform) emits into a
-/// [`RecordSink`](crate::RecordSink) rather than returning a single value.
+/// [`RecordSink`](crate::RecordSink) rather than returning a single value. Each of those records
+/// stands for one map entry, and carries it — see [`Record::exploded`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     key: PrimaryKey,
     origin: Row,
     target: Option<Row>,
     token: Option<i128>,
+    exploded: Option<ExplodedEntry>,
 }
 
 impl Record {
@@ -255,6 +272,7 @@ impl Record {
             origin,
             target: None,
             token: None,
+            exploded: None,
         }
     }
 
@@ -297,6 +315,33 @@ impl Record {
     #[must_use]
     pub fn with_origin(mut self, origin: Row) -> Self {
         self.origin = origin;
+        self
+    }
+
+    /// Replaces the target primary key, keeping everything else — how the record for one exploded
+    /// map entry is derived from its parent, whose key is the same row's but incomplete
+    /// (`FEA-022`).
+    #[must_use]
+    pub fn with_key(mut self, key: PrimaryKey) -> Self {
+        self.key = key;
+        self
+    }
+
+    /// The exploded map entry this record stands for (`FEA-020`, `FEA-022`).
+    ///
+    /// `None` for every record of a run with no explode map, which is the overwhelmingly common
+    /// case. `Some` means this record is *one entry* of one origin row: its
+    /// [`key`](Record::key) was derived for that entry, an autocorrect write binds the entry's two
+    /// halves into the target's key and value columns, and a comparison reads them for the two
+    /// target columns the origin row has no cell for.
+    pub fn exploded(&self) -> Option<&ExplodedEntry> {
+        self.exploded.as_ref()
+    }
+
+    /// Attaches the exploded map entry this record stands for (`FEA-020`).
+    #[must_use]
+    pub fn with_exploded(mut self, entry: ExplodedEntry) -> Self {
+        self.exploded = Some(entry);
         self
     }
 

@@ -981,13 +981,10 @@ INSERT INTO t(k,v) VALUES ('s','B---');
 
     #[test]
     fn tst_003_a_blocked_case_says_why_and_the_others_say_nothing() {
-        let blocked: Vec<String> = cases()
-            .expect("tests/sit must be walkable")
-            .iter()
-            .filter(|case| case.blocked().is_some())
-            .map(SitCase::id)
-            .collect();
-        // Every blocked case must give a reason long enough to be one.
+        // No case is blocked today: the last three were unblocked when validate learned to explode
+        // a record and look one target row up per map entry. The parser and this check stay,
+        // because a marker is how the *next* ported case says what it waits on — and a marker
+        // makes its case report `ok` without running, so an unexplained one is worse than none.
         for case in cases().expect("tests/sit must be walkable") {
             if let Some(reason) = case.blocked() {
                 assert!(
@@ -997,10 +994,6 @@ INSERT INTO t(k,v) VALUES ('s','B---');
                 );
             }
         }
-        assert!(
-            !blocked.is_empty(),
-            "if nothing is blocked any more, delete the `blocked` lines and this assertion"
-        );
     }
 
     #[test]

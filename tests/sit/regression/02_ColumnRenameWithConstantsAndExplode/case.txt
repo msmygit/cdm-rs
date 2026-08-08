@@ -1,7 +1,4 @@
 # Java: SIT/regression/02_ColumnRenameWithConstantsAndExplode/execute.sh — migrateData, validateData, breakData.cql, fixData.
-# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
-# expected to pass unchanged once the wiring lands.
-blocked the identifier fix works and the run now starts: the migrate half passes and the explode-map column is found. Validate still issues one target lookup per record instead of one per exploded entry, so validate.assert gets Missing 3 / Valid 0 where it wants Valid 12. ComparisonPlan marks explode columns Unobtainable; cdm-engine::jobs::validate needs to explode a record and use TargetKeyPlan::key_of for each entry
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert

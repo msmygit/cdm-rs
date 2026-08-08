@@ -238,7 +238,7 @@ test, fails CI.
 
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
-| `VAL-001` <sup>P</sup> | For each origin row: build the target PK, apply filters, then issue an asynchronous target SELECT by PK; buffer records and… | `cdm-engine::jobs::validate` | `val_001_*` | #23 |
+| `VAL-001` <sup>P</sup> | For each origin row: build the target PK, apply filters, then issue an asynchronous target SELECT by PK; buffer records and… | `cdm-engine::jobs::validate` | `val_001_*` | #23, #21f |
 | `VAL-002` <sup>P</sup> | Missing target row → increment `MISSING`, log at ERROR: `Missing target row found for key: <pk>` | `cdm-engine::jobs::validate` | `val_002_*` | #23 |
 | `VAL-003` <sup>P</sup> | `autocorrect.missing` upserts the record synchronously, increments CORRECTED_MISSING and logs the insertion | `cdm-engine::jobs::validate` | `val_003_*` | #23 |
 | `VAL-004` <sup>P</sup> | For counter tables, a missing row MUST NOT be auto-corrected unless `autocorrect.missing_counter = true`; otherwise log and… | `cdm-engine::jobs::validate` | `val_004_*` | #23 |
@@ -276,10 +276,10 @@ test, fails CI.
 | `FEA-012` <sup>P</sup> | Constant columns that are part of the target primary key MUST participate in the PK and appear as literals in generated WHERE clauses | `cdm-feature::constant` | `fea_012_*` | #27 |
 | `FEA-013` <sup>P</sup> | Constant columns MUST be excluded from validate comparison | `cdm-feature::constant` | `fea_013_*` | #27 |
 | `FEA-014` <sup>P</sup> | Constant columns present on origin but absent on target MUST be droppable, and origin constants MUST be replaceable by different target constants | `cdm-feature::constant` | `fea_014_*` | #27 |
-| `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row | `cdm-feature::explode` | `fea_020_*` | #28, #21c |
+| `FEA-020` <sup>P</sup> | `feature.explode_map.origin_column` MUST be a `map` column on origin; each entry produces one target row | `cdm-feature::explode`, `cdm-engine::jobs::validate` | `fea_020_*` | #28, #21c, #21f |
 | `FEA-021` <sup>P</sup> | Key and value MUST be converted from the map's element types to the target column types using the standard conversion machinery | `cdm-feature::explode` | `fea_021_*` | #28 |
-| `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature::explode`, `cdm-cql::rows` | `fea_022_*` | #28, #21c |
-| `FEA-023` <sup>P</sup> | A null or empty map MUST produce zero target rows and count as `SKIPPED` | `cdm-feature::explode` | `fea_023_*` | #28 |
+| `FEA-022` <sup>P</sup> | The exploded key and/or value MAY be part of the target primary key | `cdm-feature::explode`, `cdm-cql::rows`, `cdm-engine::jobs::validate` | `fea_022_*` | #28, #21c, #21f |
+| `FEA-023` <sup>P</sup> | A null or empty map MUST produce zero target rows and count as `SKIPPED` | `cdm-feature::explode`, `cdm-engine::jobs::validate` | `fea_023_*` | #28, #21f |
 | `FEA-030` <sup>P</sup> | `feature.extract_json.origin_column` names a text column containing a JSON object; `property_mapping` is `jsonField:targetColumn` | `cdm-feature::extract_json` | `fea_030_*` | #29, #21c |
 | `FEA-031` <sup>P</sup> | The extracted value MUST be written to the mapped target column | `cdm-feature::extract_json`, `cdm-feature::literal` | `fea_031_*` | #29 |
 | `FEA-032` <sup>P</sup> | `overwrite = false` MUST leave an already-populated target column untouched | `cdm-feature::extract_json` | `fea_032_*` | #29, #21c |
@@ -502,7 +502,7 @@ test, fails CI.
 |---|---|---|---|---|
 | `TST-001` | **Unit tests** live beside the code (`#[cfg(test)]`) and MUST NOT require a cluster | `cdm-testkit / tests` | `tst_001_*` | #33 |
 | `TST-002` | **Integration tests** (`tests/`) MUST run against real clusters via `testcontainers`, matrixed over Cassandra 4.1, Cassandra… | `cdm-testkit / tests` | `tst_002_*` | #33 |
-| `TST-003` | End-to-end SIT parity: every one of the 19 Java SIT cases ported to a declarative harness and asserting the identical counter block. Nine cases carry a `blocked` line naming the `cdm-cli` wiring they wait on | `cdm-testkit::sit`, `cdm-testkit / tests/sit_it.rs`, `tests/sit/**` | `tst_003_*` | #32 |
+| `TST-003` | End-to-end SIT parity: every one of the 19 Java SIT cases ported to a declarative harness and asserting the identical counter block. No case carries a `blocked` line: all nineteen run, the last three having been unblocked by validate-side explode | `cdm-testkit::sit`, `cdm-testkit / tests/sit_it.rs`, `tests/sit/**` | `tst_003_*` | #32, #21f |
 | `TST-010` | **Property-based tests** (`proptest`): the token splitter (`TOK-003`) is contiguous, non-overlapping and exact; codec round-trips (`CDC-032`); configuration round-trip (parse → serialise → parse); `UNSET` never becomes `NULL` at the wire level (`MIG-012`); and a run's committed totals are the sum of its ranges (`MET-004`) | `cdm-engine::planner`, `cdm-engine / tests/properties.rs`, `cdm-codec / tests`, `cdm-config / tests`, `cdm-cql::statement::bind` | `tst_010_*` | #33 |
 | `TST-020` | **Differential tests against Java CDM**: a harness runs both implementations against the same seeded dataset and asserts… | `cdm-testkit / tests` | `tst_020_*` | #16 |
 | `TST-030` | Zero-copy passthrough (`MIG-040`) MUST be proven lossless by a property test comparing passthrough output against full… | `cdm-testkit / tests` | `tst_030_*` | #32 |

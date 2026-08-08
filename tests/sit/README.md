@@ -51,9 +51,18 @@ Row **order** is not asserted. Java's `expected.out` files record the order `cql
 for a partition-key scan is murmur3 token order — a fact about the fixture's keys rather than about
 the migration. The harness compares the sorted row set, the column list and the `(N rows)` count.
 
-## Cases that cannot run yet
+## Blocked cases: there are none
 
-Three cases carry a `blocked <reason>` line in their `case.txt`, which the runner prints instead of
-asserting. All three are the same gap: validate issues one target lookup per *record*, where an
-explode map produces one target row per map *entry*, so every entry reports missing. The cases are
-written in full and will pass unchanged once that work lands.
+A case may carry a `blocked <reason>` line in its `case.txt`, which the runner prints — as
+`BLOCKED <case>: <reason>` — instead of asserting. **No case carries one.** All nineteen run.
+
+The last three markers came off when validate learned to explode a record:
+`features/02_explode_map`, `regression/01_explode_map_with_constants` and
+`regression/02_ColumnRenameWithConstantsAndExplode` were all blocked on the same gap — validate
+issued one target lookup per *record* where an explode map produces one target row per map
+*entry*, so every entry reported missing. All three now pass unchanged, exactly as they were
+written.
+
+If you add a marker, say precisely what the case measured and what it waits on. A marked case
+reports `ok` **without running**, so a green suite says nothing about it; grep the output for
+`BLOCKED` before reading a pass as a pass.

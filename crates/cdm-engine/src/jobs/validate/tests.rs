@@ -1770,3 +1770,275 @@ async fn val_015_keys_only_still_repairs_a_missing_row_when_asked_to() {
     assert_eq!(run.target.writes(), vec!["write:(0x00000001)"]);
     assert_eq!(*run.verdict.as_ref().unwrap(), RangeVerdict::DiffCorrected);
 }
+
+// ---------------------------------------------------------------------------------------------
+// FEA-020..FEA-023 — an exploded map is validated one entry at a time
+// ---------------------------------------------------------------------------------------------
+
+/// SIT `features/02_explode_map`, in miniature: `key text PRIMARY KEY, value text,
+/// fruits map<text,int>` exploded into `((key), fruit)` with the quantity in `fruit_qty`.
+fn explode_tables() -> (TableSchema, TableSchema) {
+    (
+        table(
+            "src",
+            vec![
+                column("key", "text", ColumnKind::PartitionKey, 0),
+                column("value", "text", ColumnKind::Regular, -1),
+                column("fruits", "map<text, int>", ColumnKind::Regular, -1),
+            ],
+        ),
+        table(
+            "dst",
+            vec![
+                column("key", "text", ColumnKind::PartitionKey, 0),
+                column("fruit", "text", ColumnKind::Clustering, 0),
+                column("value", "text", ColumnKind::Regular, -1),
+                column("fruit_qty", "int", ColumnKind::Regular, -1),
+            ],
+        ),
+    )
+}
+
+fn explode_options() -> MappingOptions {
+    MappingOptions {
+        explode_map: Some((
+            "fruits".to_owned(),
+            "fruit".to_owned(),
+            "fruit_qty".to_owned(),
+        )),
+        ..MappingOptions::default()
+    }
+}
+
+/// The explode map and the key plan a validate run is built with, resolved from the same tables.
+fn explode_feature() -> ValidateExplode {
+    let (src, dst) = explode_tables();
+    let mapping = ColumnMapping::resolve(&src, &dst, &explode_options()).unwrap();
+    let select = cdm_cql::statement::TargetSelectByPk::new(&mapping).unwrap();
+    let keys = TargetKeyPlan::resolve(
+        &mapping,
+        &select,
+        cdm_cql::statement::MissingKeyPolicy::default(),
+    )
+    .unwrap();
+    let config: cdm_core::EffectiveConfig = [
+        ("feature.explode_map.origin_column", "fruits"),
+        ("feature.explode_map.target_key_column", "fruit"),
+        ("feature.explode_map.target_value_column", "fruit_qty"),
+    ]
+    .into_iter()
+    .collect();
+    let schema = FeatureSchema::new(
+        TableFacts::from_view(
+            &cdm_feature::table_view(
+                cdm_core::TableRef::new("ks", "src"),
+                &[
+                    ("key", "text"),
+                    ("value", "text"),
+                    ("fruits", "map<text, int>"),
+                ],
+            ),
+            &["key"],
+        )
+        .unwrap(),
+        TableFacts::from_view(
+            &cdm_feature::table_view(
+                cdm_core::TableRef::new("ks", "dst"),
+                &[
+                    ("key", "text"),
+                    ("fruit", "text"),
+                    ("value", "text"),
+                    ("fruit_qty", "int"),
+                ],
+            ),
+            &["key", "fruit"],
+        )
+        .unwrap(),
+    );
+    let plan = cdm_feature::ExplodeMap::load(&config)
+        .resolve(&schema, &planner(&[]))
+        .unwrap();
+    ValidateExplode::new(plan, keys)
+}
+
+/// A `map<text,int>` cell, in wire order.
+fn fruit_map(entries: &[(&str, i32)]) -> RawCell {
+    let mut out = i32::try_from(entries.len()).unwrap().to_be_bytes().to_vec();
+    for (name, qty) in entries {
+        out.extend_from_slice(&i32::try_from(name.len()).unwrap().to_be_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(&4_i32.to_be_bytes());
+        out.extend_from_slice(&qty.to_be_bytes());
+    }
+    RawCell::new(out)
+}
+
+/// One origin record, keyed as `CqlRowSource` keys it: the exploded component is left null.
+fn explode_record(key_value: &str, value: &str, fruits: &[(&str, i32)]) -> Record {
+    Record::new(
+        PrimaryKey::new(vec![text(key_value), RawCell::NULL]),
+        Row::new(vec![text(key_value), text(value), fruit_map(fruits)]),
+    )
+}
+
+/// The target row the migration wrote for one entry, and the key it wrote it under.
+fn exploded_target(key_value: &str, fruit: &str, value: &str, qty: i32) -> (PrimaryKey, Row) {
+    (
+        PrimaryKey::new(vec![text(key_value), text(fruit)]),
+        Row::new(vec![text(key_value), text(fruit), text(value), int(qty)]),
+    )
+}
+
+async fn run_exploding(
+    origin: Vec<Record>,
+    target: Vec<(PrimaryKey, Row)>,
+    settings: ValidateSettings,
+) -> Run {
+    let (src, dst) = explode_tables();
+    let diff = Arc::new(DiffLog::in_memory());
+    let target = FakeTarget::with(target);
+    let job = ValidateJob::new(
+        FakeOrigin::of(origin),
+        Arc::clone(&target) as Arc<dyn RowSink>,
+        Arc::new(plan_for(&src, &dst, &explode_options())),
+        settings,
+        Arc::clone(&diff),
+    )
+    .with_explode(explode_feature());
+    let counters = Arc::new(JobCounters::new(JobKind::Validate));
+    let verdict = job.process(&context(&counters, 1000)).await;
+    Run {
+        verdict,
+        counters,
+        diff,
+        target,
+        report: Arc::new(DiscrepancyReport::disabled()),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fea_020_validate_looks_up_one_target_row_per_map_entry_not_per_record() {
+    // The defect this test was written for: one origin record with a four-entry map produced one
+    // target lookup, under a key whose clustering component was null — which `CqlRowSink::fetch`
+    // answers as absent without querying, so the row reported MISSING however healthy the target
+    // was. READ still counts origin *rows*, exactly as it does on the migrate side.
+    let run = run_exploding(
+        vec![explode_record(
+            "key1",
+            "valueA",
+            &[("apples", 3), ("bananas", 2)],
+        )],
+        vec![
+            exploded_target("key1", "apples", "valueA", 3),
+            exploded_target("key1", "bananas", "valueA", 2),
+        ],
+        ValidateSettings::read_only(),
+    )
+    .await;
+
+    assert_eq!(run.count(CounterKind::Read), 1);
+    assert_eq!(run.count(CounterKind::Valid), 2);
+    assert_eq!(run.count(CounterKind::Missing), 0);
+    assert_eq!(run.count(CounterKind::Mismatch), 0);
+    // Sorted: the lookups are issued concurrently, so which of them the target records first is
+    // not part of the contract. What is, is that both keys are looked up — `apples` and `bananas`,
+    // each under its own entry's clustering component, rather than one lookup under a null one.
+    let mut fetched = run.target.ops();
+    fetched.sort();
+    assert_eq!(
+        fetched,
+        vec![
+            "fetch:(0x6b657931, 0x6170706c6573)",
+            "fetch:(0x6b657931, 0x62616e616e6173)"
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fea_020_the_exploded_value_column_is_compared_against_the_entry_it_came_from() {
+    // SIT `features/02_explode_map`'s `fix` step breaks exactly this: `fruit_qty=999` on one
+    // exploded row, which it expects to be counted as a MISMATCH. A comparison that skipped the
+    // exploded columns because it "cannot obtain" them would call that row VALID.
+    let run = run_exploding(
+        vec![explode_record(
+            "key1",
+            "valueA",
+            &[("apples", 3), ("bananas", 2)],
+        )],
+        vec![
+            exploded_target("key1", "apples", "valueA", 999),
+            exploded_target("key1", "bananas", "valueA", 2),
+        ],
+        ValidateSettings::read_only(),
+    )
+    .await;
+
+    assert_eq!(run.count(CounterKind::Valid), 1);
+    assert_eq!(run.count(CounterKind::Mismatch), 1);
+    let detail = run.diff_lines().join("\n");
+    assert!(detail.contains("fruit_qty"), "{detail}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fea_023_a_null_or_empty_map_is_one_skipped_record_and_no_lookup_at_all() {
+    // FEA-023 on the read side. The migration wrote no target row for these records, so there is
+    // none to find; reporting them MISSING would invent a discrepancy the migration was right
+    // about.
+    let run = run_exploding(
+        vec![
+            Record::new(
+                PrimaryKey::new(vec![text("key1"), RawCell::NULL]),
+                Row::new(vec![text("key1"), text("valueA"), RawCell::NULL]),
+            ),
+            explode_record("key2", "valueB", &[]),
+        ],
+        Vec::new(),
+        ValidateSettings::read_only(),
+    )
+    .await;
+
+    assert_eq!(run.count(CounterKind::Read), 2);
+    assert_eq!(run.count(CounterKind::Skipped), 2);
+    assert_eq!(run.count(CounterKind::Missing), 0);
+    assert!(run.target.ops().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fea_022_autocorrect_repairs_a_missing_entry_under_that_entrys_own_key() {
+    // `VAL-003` on an exploded run: the record written is the *entry's*, so the repair lands on
+    // the row that was missing rather than on a row keyed by a null clustering column. The entry
+    // travels on the record, which is what `CqlRowSink::write` binds the two exploded columns from.
+    let run = run_exploding(
+        vec![explode_record(
+            "key1",
+            "valueA",
+            &[("apples", 3), ("bananas", 2)],
+        )],
+        vec![exploded_target("key1", "apples", "valueA", 3)],
+        ValidateSettings {
+            autocorrect: Autocorrect {
+                missing: true,
+                ..Autocorrect::default()
+            },
+            target_is_counter: false,
+        },
+    )
+    .await;
+
+    assert_eq!(run.count(CounterKind::Missing), 1);
+    assert_eq!(run.count(CounterKind::CorrectedMissing), 1);
+    assert_eq!(
+        run.target.writes(),
+        vec!["write:(0x6b657931, 0x62616e616e6173)"]
+    );
+    let written = run.target.rows.lock();
+    let repaired = written
+        .get(&PrimaryKey::new(vec![text("key1"), text("bananas")]))
+        .expect("the missing entry was written under its own key");
+    assert_eq!(repaired.get(0), Some(&text("key1")));
+    assert_eq!(
+        run.count(CounterKind::Valid),
+        1,
+        "the entry the target already had is still VALID"
+    );
+}

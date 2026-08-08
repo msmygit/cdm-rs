@@ -49,8 +49,8 @@ pub mod error;
 pub mod registry;
 
 pub use domain::{
-    ColumnRef, JobKind, PartitionRangeId, PrimaryKey, RawCell, Record, Row, RunId, RunIdGenerator,
-    RunStatus, Side, TableRef, TokenRange,
+    ColumnRef, ExplodedEntry, JobKind, PartitionRangeId, PrimaryKey, RawCell, Record, Row, RunId,
+    RunIdGenerator, RunStatus, Side, TableRef, TokenRange,
 };
 pub use error::{CdmError, Diagnostic, ErrorContext, ErrorKind, Severity};
 pub use registry::{
