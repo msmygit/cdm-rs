@@ -47,7 +47,7 @@
 //! differing columns of differing rows are kept at all.
 
 use cdm_codec::{ConversionPlan, CqlTypeInfo, Planner};
-use cdm_core::{CdmError, ErrorKind, RawCell, Record, Row, Side};
+use cdm_core::{CdmError, ErrorKind, ExplodedEntry, RawCell, Record, Row, Side};
 use cdm_cql::schema::ColumnMeta;
 use cdm_cql::statement::{ColumnMapping, TargetSource};
 use cdm_feature::ExtractJsonPlan;
@@ -68,10 +68,43 @@ enum Rule {
     ExtractJson,
     /// Nothing on the origin supplies this column, so the origin side is `null` (`SCH-006`).
     Unsourced,
-    /// A column cdm-rs cannot obtain an origin value for from the record alone — the two halves of
-    /// an exploded map entry (`FEA-020`). Reported through `VAL-009`'s exception form, which is
-    /// what Java does here too, by accident.
-    Unobtainable(&'static str),
+    /// One half of the exploded map entry the record stands for (`FEA-020`, `FEA-022`).
+    ///
+    /// There is no origin *cell* for these two columns — the origin has one map column where the
+    /// target has a key column and a value column — so the value compared is the entry the record
+    /// carries, which is the very value the migration wrote. `FEA-021` already converted it to the
+    /// target column's type, so both sides are in the target's space and the plan is the identity.
+    ///
+    /// A record that carries no entry cannot supply them at all, and that is reported through
+    /// `VAL-009`'s exception form — which is what Java does here too, by accident.
+    Exploded(ExplodedHalf),
+}
+
+/// Which half of an exploded map entry a target column takes its value from (`FEA-020`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplodedHalf {
+    /// The entry's key, written to `feature.explode_map.target_key_column`.
+    Key,
+    /// The entry's value, written to `feature.explode_map.target_value_column`.
+    Value,
+}
+
+impl ExplodedHalf {
+    /// The half of `entry` this column compares against.
+    const fn cell_of(self, entry: &ExplodedEntry) -> &RawCell {
+        match self {
+            Self::Key => &entry.key,
+            Self::Value => &entry.value,
+        }
+    }
+
+    /// Why the column could not be compared, when the record carries no entry (`VAL-009`).
+    const fn unobtainable(self) -> &'static str {
+        match self {
+            Self::Key => "the explode-map key is not carried on the record",
+            Self::Value => "the explode-map value is not carried on the record",
+        }
+    }
 }
 
 /// One target column, resolved for comparison.
@@ -147,11 +180,11 @@ impl ComparisonPlan {
                 // both sides are already in the same space and nothing needs converting.
                 TargetSource::ExtractJson(_) => (Rule::ExtractJson, ConversionPlan::Passthrough),
                 TargetSource::ExplodeKey => (
-                    Rule::Unobtainable("the explode-map key is not carried on the record"),
+                    Rule::Exploded(ExplodedHalf::Key),
                     ConversionPlan::Passthrough,
                 ),
                 TargetSource::ExplodeValue => (
-                    Rule::Unobtainable("the explode-map value is not carried on the record"),
+                    Rule::Exploded(ExplodedHalf::Value),
                     ConversionPlan::Passthrough,
                 ),
                 TargetSource::Absent => (Rule::Unsourced, ConversionPlan::Passthrough),
@@ -241,16 +274,24 @@ impl ComparisonPlan {
         match &column.rule {
             // VAL-005: a constant column is never compared.
             Rule::Constant => None,
-            Rule::Unobtainable(why) => Some(ColumnDifference {
-                column: column.name.clone(),
-                origin: RawCell::NULL,
-                target: cell(target_cell),
-                kind: DifferenceKind::Error {
-                    message: (*why).to_owned(),
-                    target_index: column.target_index,
-                    origin_index: -1,
-                },
-            }),
+            // FEA-020, FEA-022: compared against the entry the record stands for, which is what
+            // was written. A record with no entry — a caller that did not explode the row — cannot
+            // supply the column at all, and `VAL-009` puts that in the detail.
+            Rule::Exploded(half) => match record.exploded() {
+                Some(entry) => {
+                    Self::compare_values(column, Some(half.cell_of(entry)), target_cell, -1)
+                }
+                None => Some(ColumnDifference {
+                    column: column.name.clone(),
+                    origin: RawCell::NULL,
+                    target: cell(target_cell),
+                    kind: DifferenceKind::Error {
+                        message: half.unobtainable().to_owned(),
+                        target_index: column.target_index,
+                        origin_index: -1,
+                    },
+                }),
+            },
             Rule::Unsourced => Self::compare_values(column, None, target_cell, -1),
             Rule::Mapped(origin_index) => {
                 let origin_cell = record.origin().get(*origin_index);

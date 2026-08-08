@@ -9,6 +9,6 @@ pub mod record;
 pub mod run;
 pub mod token;
 
-pub use record::{ColumnRef, PrimaryKey, RawCell, Record, Row, TableRef};
+pub use record::{ColumnRef, ExplodedEntry, PrimaryKey, RawCell, Record, Row, TableRef};
 pub use run::{JobKind, RunId, RunIdGenerator, RunStatus, Side};
 pub use token::{PartitionRangeId, TokenRange};

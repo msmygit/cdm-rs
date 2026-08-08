@@ -709,12 +709,19 @@ impl RowSink for CqlRowSink {
         // the counter cells `MIG-031` rewrote — and a row whose TTL and writetime are read from a
         // delta is a row whose correction is stamped with an arithmetic artefact.
         let (ttl, writetime) = timestamps_of(self.timestamps.as_deref(), record.origin())?;
+        // FEA-020, FEA-022: an exploded record stands for one map entry, and the target's key and
+        // value columns are bound from that entry rather than from any origin cell. Without this a
+        // correction binds `UNSET` for both, which for a key column the server rejects — so the
+        // repair `VAL-003` promises would fail on precisely the rows an explode run produces.
+        let entry = record.exploded();
         let bound = self.binder.bind(
             &source,
             BindInputs {
                 key: Some(record.key()),
                 ttl,
                 writetime,
+                explode_key: entry.and_then(|entry| entry.key.bytes()).map(|b| &**b),
+                explode_value: entry.and_then(|entry| entry.value.bytes()).map(|b| &**b),
                 ..BindInputs::default()
             },
         )?;

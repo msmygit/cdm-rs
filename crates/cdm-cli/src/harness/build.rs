@@ -38,7 +38,7 @@ use cdm_cql::statement::{
 use cdm_engine::jobs::guardrail::{CqlOriginRows, GuardrailJob};
 use cdm_engine::jobs::migrate::{MigrateFeatures, MigrateJob, MigratePlan, MigrateSettings};
 use cdm_engine::jobs::validate::{
-    ComparisonPlan, DiffLog, DiscrepancyReport, ValidateJob, ValidateSettings,
+    ComparisonPlan, DiffLog, DiscrepancyReport, ValidateExplode, ValidateJob, ValidateSettings,
 };
 use cdm_engine::planner::Partitioner;
 use cdm_engine::scheduler::RangeProcessor;
@@ -681,7 +681,18 @@ async fn validate(
     let filters =
         FilterChain::new().with_enabled(column_filter.is_enabled(), Arc::new(column_filter));
 
-    let job = ValidateJob::new(
+    // FEA-020, FEA-022: the migration wrote one target row per map entry, so validate must ask
+    // about one target row per map entry. The plan is resolved exactly as `migrate_features`
+    // resolves it, and the key plan is the origin source's — the same one the records it emits were
+    // keyed with, minus the exploded components it cannot fill.
+    let explode = ExplodeMap::load(&core);
+    let explode = explode
+        .is_enabled()
+        .then(|| explode.resolve(&tables.features, &codecs))
+        .transpose()?
+        .map(|plan| ValidateExplode::new(plan, source.key_plan().clone()));
+
+    let mut job = ValidateJob::new(
         Arc::new(source),
         Arc::new(sink),
         Arc::new(plan),
@@ -690,6 +701,9 @@ async fn validate(
     )
     .with_filters(filters)
     .with_report(Arc::clone(&report));
+    if let Some(explode) = explode {
+        job = job.with_explode(explode);
+    }
 
     Ok(BuiltJob {
         processor: Arc::new(job),

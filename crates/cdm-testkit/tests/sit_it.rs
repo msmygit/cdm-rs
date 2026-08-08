@@ -41,17 +41,22 @@
 //!
 //! Per `TST-102` these skip — they do not fail — when no container runtime is available.
 //!
-//! # Three cases cannot run yet, and it is not the suite's fault
+//! # Every case runs: none is blocked
 //!
-//! Each carries a `blocked <reason>` line in its `case.txt`, and the runner prints it as
-//! `BLOCKED <case>: <reason>` and returns rather than asserting. `#[ignore]` could not carry this
+//! A case may carry a `blocked <reason>` line in its `case.txt`, which the runner prints as
+//! `BLOCKED <case>: <reason>` and returns rather than asserting. `#[ignore]` could not carry that
 //! distinction: `--ignored` runs *only* ignored tests, and every case here is ignored because
 //! every case needs a container, so the attribute says nothing about whether a case can pass.
 //!
-//! All three are the same gap: validate issues one target lookup per *record* where an explode map
-//! produces one target row per map *entry*, so `ComparisonPlan` marks the exploded columns
-//! unobtainable and every entry reports missing. The cases are written out in full and are expected
-//! to pass unchanged when that work lands; nothing in `tests/sit/` needs to change.
+//! **No case carries one today.** The last three did — `features/02_explode_map`,
+//! `regression/01_explode_map_with_constants` and
+//! `regression/02_ColumnRenameWithConstantsAndExplode`, all on the same gap: validate issued one
+//! target lookup per *record* where an explode map produces one target row per map *entry*, so
+//! every entry reported missing. Validate now explodes the record and looks one target row up per
+//! entry (`FEA-020`, `FEA-022`), and all three pass unchanged.
+//!
+//! A marker makes its case report `ok` without running anything, so a green suite proves nothing
+//! about a marked case. Grep the output for `BLOCKED` before believing it.
 
 // Tests may panic freely: a failed assertion is the reporting mechanism (see AGENTS.md).
 #![allow(

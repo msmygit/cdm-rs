@@ -45,6 +45,16 @@
 //! always records `ERROR: 0`. cdm-rs does not reproduce that, and `--compat-java` does not restore
 //! it.
 //!
+//! **An exploded map is validated per entry, and read per row** (`FEA-020`..`FEA-023`). When
+//! `feature.explode_map` is on, one origin row stands for one target row *per map entry*, so this
+//! job explodes the record with the same [`ExplodePlan`] migrate writes from and issues one target
+//! lookup per entry, keyed by [`TargetKeyPlan::key_of`] — see [`ValidateExplode`]. `READ` is not
+//! affected: it counts origin rows, which is what it counts on the migrate side too, so a run over
+//! three rows whose maps hold four entries each reports `Read Record Count: 3` and
+//! `Valid Record Count: 12`. Every other counter is per target row, because every other counter
+//! answers a question about a target row. A null or empty map is `SKIPPED` once, per `FEA-023`,
+//! and is not reported as twelve rows the target does not have.
+//!
 //! **Row values are never logged** (`SEC-002`, `VAL-017`). See [`compare`] and [`difflog`].
 //!
 //! **A corrected row carries the origin's TTL and writetime** (`VAL-018`). It is the origin row
@@ -71,6 +81,8 @@
 //! - `VAL-015` — [`ComparisonPlan::with_keys_only`], [`sample_percent`]
 //! - `VAL-016` — [`status::verdict`]
 //! - `VAL-018` — supplied to [`ValidateJob`]'s sink by the harness; see the note above
+//! - `FEA-020`..`FEA-023` — [`ValidateExplode`], and `ValidateJob::enqueue_lookups`, which is
+//!   private and so is named rather than linked
 
 pub mod compare;
 pub mod difflog;
@@ -82,7 +94,8 @@ use std::sync::Arc;
 
 use cdm_config::model::{Autocorrect, CdmConfig};
 use cdm_core::{CdmError, ErrorKind, JobKind, PrimaryKey, Record, RowSink, RowSource, TokenRange};
-use cdm_feature::FilterChain;
+use cdm_cql::rows::{ExplodedKeyParts, TargetKeyPlan};
+use cdm_feature::{ExplodePlan, FilterChain};
 use cdm_metrics::{Counter, CounterKind, CounterView, DiscrepancyKind, EventBus, JobCounters};
 use futures::stream::{FuturesOrdered, StreamExt};
 
@@ -156,6 +169,32 @@ impl ValidateSettings {
     }
 }
 
+/// The explode map, as a validate run needs it (`FEA-020`, `FEA-022`).
+///
+/// Two halves that only work together. [`ExplodePlan`] turns one origin row into its map entries —
+/// the same plan, resolved the same way, that a migrate run explodes with, so the two paths cannot
+/// disagree about how many target rows an origin row stands for. [`TargetKeyPlan`] then turns each
+/// entry into the primary key that entry's target row was written under; the key the origin source
+/// derived leaves the exploded components null, and a null key component is answered "absent"
+/// without a query, which is exactly how every exploded row used to report `MISSING`.
+#[derive(Debug)]
+pub struct ValidateExplode {
+    plan: ExplodePlan,
+    keys: TargetKeyPlan,
+}
+
+impl ValidateExplode {
+    /// Pairs the resolved explode plan with the key plan of the run's origin source.
+    ///
+    /// `keys` must be [`CqlRowSource::key_plan`](cdm_cql::rows::CqlRowSource::key_plan)'s, because
+    /// the key a lookup binds has to be the key the write path bound — substitutions
+    /// (`MIG-013`) and constant columns (`FEA-012`) included.
+    #[must_use]
+    pub const fn new(plan: ExplodePlan, keys: TargetKeyPlan) -> Self {
+        Self { plan, keys }
+    }
+}
+
 /// The counters validate touches, resolved once so the hot path cannot fail (`MET-003`).
 #[derive(Debug, Clone, Copy)]
 struct ValidateCounters {
@@ -199,6 +238,7 @@ pub struct ValidateJob {
     target: Arc<dyn RowSink>,
     plan: Arc<ComparisonPlan>,
     filters: FilterChain,
+    explode: Option<ValidateExplode>,
     settings: ValidateSettings,
     diff_log: Arc<DiffLog>,
     report: Arc<DiscrepancyReport>,
@@ -238,6 +278,7 @@ impl ValidateJob {
             target,
             plan,
             filters: FilterChain::new(),
+            explode: None,
             settings,
             diff_log,
             report: Arc::new(DiscrepancyReport::disabled()),
@@ -285,6 +326,19 @@ impl ValidateJob {
     #[must_use]
     pub fn with_filters(mut self, filters: FilterChain) -> Self {
         self.filters = filters;
+        self
+    }
+
+    /// Installs the explode map of `FEA-020`..`FEA-023`.
+    ///
+    /// Without it a run whose target rows came from an exploded map validates one target row per
+    /// origin *record*, where the migration wrote one per map *entry* — and the key it looks that
+    /// one row up by has the exploded components null, so every row of every such run reports
+    /// `MISSING`. With it the record is exploded here, exactly as migrate explodes it, and one
+    /// lookup is issued per entry.
+    #[must_use]
+    pub fn with_explode(mut self, explode: ValidateExplode) -> Self {
+        self.explode = Some(explode);
         self
     }
 
@@ -484,6 +538,40 @@ impl ValidateJob {
         batch.records.push_back(record);
         Ok(())
     }
+
+    /// Issues the target lookups one record calls for (`VAL-001`, `FEA-020`, `FEA-022`).
+    ///
+    /// One lookup, unless an explode map is configured — in which case the record stands for as
+    /// many target rows as its map has entries, and each of them is looked up under the key that
+    /// entry was written under. Returns how many lookups were issued; zero means the map was null
+    /// or empty, which `FEA-023` counts as `SKIPPED` rather than as a row the target is missing.
+    async fn enqueue_lookups(
+        &self,
+        ctx: &RangeContext,
+        batch: &mut Batch,
+        record: Record,
+    ) -> Result<usize, CdmError> {
+        let Some(explode) = self.explode.as_ref() else {
+            self.enqueue(ctx, batch, record).await?;
+            return Ok(1);
+        };
+        // The very plan migrate explodes with (`ExplodePlan::explode_record`), so a row that
+        // produces four target rows on the write side produces four lookups here.
+        let entries = explode.plan.explode_record(&record)?;
+        let issued = entries.len();
+        for entry in entries {
+            let key = explode.keys.key_of(
+                record.origin(),
+                ExplodedKeyParts {
+                    key: entry.key.bytes().map(|bytes| &**bytes),
+                    value: entry.value.bytes().map(|bytes| &**bytes),
+                },
+            );
+            let derived = record.clone().with_key(key).with_exploded(entry);
+            self.enqueue(ctx, batch, derived).await?;
+        }
+        Ok(issued)
+    }
 }
 
 /// Which kind a missing row is reported as, once autocorrect has had its turn.
@@ -586,7 +674,12 @@ impl RangeProcessor for ValidateJob {
                 continue;
             }
 
-            self.enqueue(ctx, &mut batch, record).await?;
+            // FEA-020: one lookup per exploded map entry, not per record. FEA-023: a null or empty
+            // map stands for no target row at all, so there is nothing to find and nothing missing.
+            if self.enqueue_lookups(ctx, &mut batch, record).await? == 0 {
+                counters.increment(handles.skipped);
+                continue;
+            }
             if batch.len() >= fetch_size {
                 had_discrepancy |= self
                     .compare_batch(&label, ctx.range(), counters, &handles, &mut batch)

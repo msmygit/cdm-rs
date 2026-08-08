@@ -21,21 +21,20 @@ use cdm_core::{
     RecordSink, Row, SchemaPair,
 };
 
+/// One exploded map entry, converted to the target column types (`FEA-021`).
+///
+/// Defined in `cdm-core` and re-exported here: a record *carries* the entry it stands for
+/// ([`Record::exploded`]), so the type has to be nameable by the crates that read it back —
+/// `cdm-cql`, which binds it, and `cdm-engine`, which compares it — none of which may depend on
+/// this one (`ARCHITECTURE.md` §3).
+pub use cdm_core::ExplodedEntry;
+
 use crate::properties::{
     self, EXPLODE_MAP_ORIGIN_COLUMN, EXPLODE_MAP_TARGET_KEY_COLUMN, EXPLODE_MAP_TARGET_VALUE_COLUMN,
 };
 use crate::schema::{FeatureSchema, TableFacts};
 use crate::wire::map_entries;
 use crate::{diagnostic, PROVIDER};
-
-/// One exploded map entry, converted to the target column types (`FEA-021`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExplodedEntry {
-    /// The map key, as the target key column's type.
-    pub key: RawCell,
-    /// The map value, as the target value column's type.
-    pub value: RawCell,
-}
 
 /// The explode-map feature's configuration (`FEA-020`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -317,18 +316,25 @@ impl FeaturePlugin for ExplodePlan {
     }
 
     /// Emits one record per map entry, with the converted key and value appended to the origin row
-    /// in that order (`FEA-020`).
+    /// in that order and carried on the record (`FEA-020`).
     ///
     /// Appending rather than substituting keeps every other column at the position the projection
     /// gave it, so the statement builder can address the exploded pair as the last two cells and
-    /// nothing else has to move. An empty or null map emits nothing, which counts as `SKIPPED`
-    /// (`FEA-023`).
+    /// nothing else has to move. The entry is *also* attached with
+    /// [`Record::with_exploded`], because a consumer that must derive a per-entry primary key
+    /// (`FEA-022`) cannot recover which entry a widened row came from by position alone. An empty
+    /// or null map emits nothing, which counts as `SKIPPED` (`FEA-023`).
     fn transform(&self, record: Record, out: &mut dyn RecordSink) -> Result<(), CdmError> {
         for entry in self.explode_record(&record)? {
             let mut cells = record.origin().cells().to_vec();
-            cells.push(entry.key);
-            cells.push(entry.value);
-            out.emit(record.clone().with_origin(Row::new(cells)))?;
+            cells.push(entry.key.clone());
+            cells.push(entry.value.clone());
+            out.emit(
+                record
+                    .clone()
+                    .with_origin(Row::new(cells))
+                    .with_exploded(entry),
+            )?;
         }
         Ok(())
     }
