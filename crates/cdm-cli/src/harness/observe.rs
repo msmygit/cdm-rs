@@ -10,6 +10,11 @@
 //! | `on_range_finished` | records the terminal status, the range's duration, its counter deltas, and publishes `RangeCompleted` — plus `Error` when the range failed |
 //! | `on_run_finished` | publishes `RunCompleted` with the committed counters |
 //!
+//! A run has more than one watcher, though, and the seam is singular: tracking (`TRK-021`) uses
+//! the same two callbacks to write the rows a resume is planned from. [`Observers`] is what lets
+//! both be installed at once, and its documentation says why the order it calls them in is a
+//! safety property rather than a preference.
+//!
 //! # Why the display does not read progress off the bus
 //!
 //! Both are fed here, and they are fed differently on purpose. The [`ProgressTracker`] and the
@@ -30,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use cdm_core::{JobKind, RunId, Side, TokenRange};
-use cdm_engine::scheduler::{RangeObserver, RangeOutcome, RunReport};
+use cdm_engine::scheduler::{NoopObserver, RangeObserver, RangeOutcome, RunReport};
 use cdm_metrics::{
     CounterKind, CounterView, DashboardState, EventBus, Instruments, ProgressTracker, RangeTimings,
 };
@@ -96,6 +101,107 @@ impl LiveRun {
             Arc::clone(&self.instruments),
             Arc::clone(&self.timings),
         )
+    }
+}
+
+/// Every observer one run has, presented to the scheduler as one (`MET-031`, `TRK-021`).
+///
+/// A run needs two things watched at once and they are unrelated to each other: the live display's
+/// feed ([`LiveRun`]) and the durable record a resume is planned from (`cdm-track`'s `RunTracker`,
+/// reached through `super::Tracking`). `Scheduler::run` takes a single observer, so either one
+/// alone silently drops the other — a tracked run with no display, or a display over a run that
+/// records nothing and can never be resumed. Neither failure says anything at the time.
+///
+/// # Order is a safety property, not a preference
+///
+/// Observers are called in the order they were added, and `super::run` adds **tracking first**.
+/// Both are cheap and neither blocks — a tracking write is a `try_send` that degrades to a
+/// checkpoint (`TRK-035`), a display update is a few atomics and a bounded broadcast that drops
+/// (`MET-030`) — so the order cannot matter for throughput. It matters for what survives: an
+/// observer that panicked would take the scheduler's worker with it (`ENG-013` catches the
+/// *processor*'s panics, not an observer's), and of the two, the one whose loss is unrecoverable
+/// is the durable record. Enqueue that first and a later panic costs a frame of display rather
+/// than a range that no resume will know to re-run.
+#[derive(Default)]
+pub struct Observers {
+    observers: Vec<Arc<dyn RangeObserver>>,
+}
+
+impl std::fmt::Debug for Observers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `RangeObserver` is not `Debug` — it cannot be, since an implementation may hold a driver
+        // session — so the count is the honest thing to print.
+        f.debug_struct("Observers")
+            .field("observers", &self.observers.len())
+            .finish()
+    }
+}
+
+impl Observers {
+    /// No observers. The scheduler sees a run nobody is watching.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            observers: Vec::new(),
+        }
+    }
+
+    /// Adds `observer` if there is one, so a caller can write the optional cases in a chain.
+    #[must_use]
+    pub fn and(mut self, observer: Option<Arc<dyn RangeObserver>>) -> Self {
+        self.observers.extend(observer);
+        self
+    }
+
+    /// How many observers will be called per range.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.observers.len()
+    }
+
+    /// Whether nothing is watching.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.observers.is_empty()
+    }
+
+    /// The observer to hand the scheduler.
+    ///
+    /// Collapses the two cases that do not need a fan-out: nothing watching becomes the
+    /// `NoopObserver` a silent run has always had, and a single watcher is handed over directly,
+    /// so the common paths pay neither an allocation nor an indirection.
+    #[must_use]
+    pub fn into_observer(mut self) -> Arc<dyn RangeObserver> {
+        match self.observers.len() {
+            0 => Arc::new(NoopObserver),
+            // `pop` cannot fail on a length of one; `map_or_else` keeps `ERR-004` satisfied
+            // without an index or an `unwrap` on a production path.
+            1 => self.observers.pop().map_or_else(
+                || Arc::new(NoopObserver) as Arc<dyn RangeObserver>,
+                |one| one,
+            ),
+            _ => Arc::new(self),
+        }
+    }
+}
+
+impl RangeObserver for Observers {
+    fn on_range_started(&self, run_id: RunId, range: TokenRange) {
+        for observer in &self.observers {
+            observer.on_range_started(run_id, range);
+        }
+    }
+
+    fn on_range_finished(&self, run_id: RunId, outcome: &RangeOutcome) {
+        for observer in &self.observers {
+            observer.on_range_finished(run_id, outcome);
+        }
+    }
+
+    fn on_run_finished(&self, report: &RunReport) {
+        for observer in &self.observers {
+            observer.on_run_finished(report);
+        }
     }
 }
 
@@ -175,6 +281,105 @@ mod tests {
     use cdm_metrics::EventPayload;
 
     use super::*;
+
+    /// An observer that records which callbacks it saw, and in which order it was called relative
+    /// to its siblings through the shared log.
+    #[derive(Debug)]
+    struct Recorder {
+        name: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Recorder {
+        fn new(name: &'static str, log: &Arc<Mutex<Vec<String>>>) -> Arc<Self> {
+            Arc::new(Self {
+                name,
+                log: Arc::clone(log),
+            })
+        }
+
+        fn note(&self, event: &str) {
+            if let Ok(mut log) = self.log.lock() {
+                log.push(format!("{}:{event}", self.name));
+            }
+        }
+    }
+
+    impl RangeObserver for Recorder {
+        fn on_range_started(&self, _run_id: RunId, _range: TokenRange) {
+            self.note("started");
+        }
+
+        fn on_range_finished(&self, _run_id: RunId, _outcome: &RangeOutcome) {
+            self.note("finished");
+        }
+
+        fn on_run_finished(&self, _report: &RunReport) {
+            self.note("run_finished");
+        }
+    }
+
+    fn range(min: i128, max: i128) -> TokenRange {
+        TokenRange::new(min, max).unwrap()
+    }
+
+    #[test]
+    fn trk_021_met_031_every_observer_sees_every_range_in_the_order_it_was_added() {
+        // The whole reason this type exists: a run is displayed *and* recorded, and `Scheduler`
+        // takes one observer. Whichever was handed over alone would silently drop the other — a
+        // display over a run that records nothing is the defect `TRK-038` exists to prevent, and
+        // it says nothing at the time.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let tracking = Recorder::new("tracking", &log);
+        let display = Recorder::new("display", &log);
+
+        let observers = Observers::new()
+            .and(Some(Arc::clone(&tracking) as Arc<dyn RangeObserver>))
+            .and(Some(Arc::clone(&display) as Arc<dyn RangeObserver>));
+        assert_eq!(observers.len(), 2);
+        assert!(!observers.is_empty());
+
+        let fanned = observers.into_observer();
+        fanned.on_range_started(RunId::from_raw(1), range(0, 9));
+        fanned.on_range_finished(
+            RunId::from_raw(1),
+            &outcome(range(0, 9), RunStatus::Pass, "Read: 1; Write: 1"),
+        );
+
+        // Tracking first, always: the durable record is the one whose loss cannot be recovered.
+        assert_eq!(
+            log.lock().unwrap().as_slice(),
+            [
+                "tracking:started",
+                "display:started",
+                "tracking:finished",
+                "display:finished",
+            ]
+        );
+    }
+
+    #[test]
+    fn trk_021_a_run_with_one_watcher_or_none_pays_for_no_fan_out() {
+        // The two paths that existed before composition must be exactly what they were: a silent
+        // untracked run hands over the `NoopObserver`, and a run with a single watcher hands that
+        // watcher over directly rather than wrapping it.
+        assert!(Observers::new().is_empty());
+        assert_eq!(Observers::new().len(), 0);
+        assert!(Observers::new().and(None).is_empty());
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let only = Recorder::new("only", &log);
+        let single = Observers::new()
+            .and(Some(Arc::clone(&only) as Arc<dyn RangeObserver>))
+            .into_observer();
+        // Handed over unwrapped: the same allocation went in and came out.
+        assert!(Arc::ptr_eq(
+            &(Arc::clone(&only) as Arc<dyn RangeObserver>),
+            &single
+        ));
+        single.on_range_started(RunId::from_raw(1), range(0, 9));
+        assert_eq!(log.lock().unwrap().as_slice(), ["only:started"]);
+    }
 
     fn live(ranges: &[TokenRange]) -> (LiveRun, Arc<EventBus>) {
         let bus = Arc::new(EventBus::new(RunId::from_raw(7), "node-a"));

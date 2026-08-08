@@ -220,16 +220,38 @@ fn run_runs(cli: &Cli, command: &RunsCommand, out: &mut dyn Write) -> Result<Exi
             finish(&report, cli, out)
         }
         // `cdm runs resume` is the one operation here that starts a run rather than reading one.
-        // `RunManager::resume` already produces the work list (`TRK-030`..`TRK-033`), but the
-        // harness plans a ring from `Planner::plan` and has no way to be handed a pre-computed set
-        // of ranges instead; until `TokenPlan` can be built from a `ResumePlan`, wiring this would
-        // mean re-planning the whole ring and calling it a resume.
-        RunsCommand::Resume { .. } => Err(commands::misc::not_yet(
-            "cdm runs resume",
-            "`cdm-track` computes the resume work list already, but the harness cannot yet hand a \
-             pre-computed range set to the scheduler in place of a freshly planned ring; \
-             `cdm runs list` and `cdm runs show` will tell you what is outstanding",
-        )),
+        // `RunManager::resume` produces the work list (`TRK-030`..`TRK-033`) and
+        // `TokenPlan::from_ranges` (`TOK-011`) is what lets the scheduler be handed it in place of
+        // a freshly split ring — without which "resuming" would mean re-planning everything.
+        RunsCommand::Resume {
+            run_id,
+            auto,
+            job,
+            args,
+        } => {
+            let options = harness::ResumeOptions {
+                previous_run_id: *run_id,
+                auto: *auto,
+                job: (*job).into(),
+            };
+            // MET-031: a resume is a run, so it gets the same live display on the same terms. It
+            // is also the run most likely to be watched — somebody is resuming because the last
+            // attempt did not finish.
+            let presentation = Presentation::detect(args.tui, cli.output);
+            let report = commands::runs::resume(args, options, presentation)?;
+
+            // A resumed run writes its `--summary-out` document exactly as a fresh one does: the
+            // artefact an operator collects must not depend on how the run was started.
+            if let (Some(path), Some(record)) = (&args.summary_out, report.record()) {
+                write_summary(record, path)?;
+            }
+
+            // `CLI-004` reserves `4` for an interruption, and a resumed run is at least as likely
+            // to be interrupted as the run it continues. `finish` would map that onto `Completed`.
+            let exit = report.exit();
+            finish(&report, cli, out)?;
+            Ok(exit)
+        }
     }
 }
 

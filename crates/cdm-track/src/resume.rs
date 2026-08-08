@@ -36,7 +36,7 @@
 use cdm_core::{
     CdmError, ErrorKind, JobKind, RangeRecord, RunId, RunRecord, RunStatus, TokenRange,
 };
-use cdm_engine::planner::{shuffle_for_run, split_ring};
+use cdm_engine::planner::{shuffle_for_run, split_ring, Partitioner, TokenPlan};
 
 /// The prefix Java's metrics string uses for the failed-partition count (`MET-005`).
 ///
@@ -273,6 +273,50 @@ impl ResumePlan {
     /// How many rows of `cdm_run_details` the plan looked at.
     pub fn considered(&self) -> usize {
         self.considered
+    }
+
+    /// The scheduler's work list for this resume (`TRK-031`, `TOK-011`).
+    ///
+    /// This is the whole of the seam between "which ranges are outstanding" and "run them": the
+    /// engine's [`TokenPlan`] is what the scheduler consumes, and until it could be built from
+    /// something other than a fresh split of the ring, executing a resume meant re-planning
+    /// everything and calling it one.
+    ///
+    /// `run_id` is the **new** run's id — the same one this plan was shuffled for, so the executed
+    /// order is the reported order. The ranges are handed over untouched: they have already been
+    /// filtered by [`RerunPolicy`], subdivided by `TRK-033` and shuffled by `TOK-007`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Tracking`] if this plan is a fallback ([`ResumePlan::is_fallback`]) —
+    /// the caller must plan the whole ring instead, and turning the empty list into a plan would
+    /// skip the table — or if it re-plans nothing, which means the previous run left no
+    /// outstanding work and there is no run to start. Propagates [`TokenPlan::from_ranges`]'s own
+    /// checks otherwise.
+    pub fn token_plan(
+        &self,
+        run_id: RunId,
+        partitioner: Partitioner,
+    ) -> Result<TokenPlan, CdmError> {
+        if self.is_fallback() {
+            return Err(CdmError::new(
+                ErrorKind::Tracking,
+                "this resume fell back to a full plan and has no work list of its own; plan the \
+                 ring instead (TRK-032)",
+            ));
+        }
+        if self.ranges.is_empty() {
+            return Err(CdmError::new(
+                ErrorKind::Tracking,
+                "the previous run left no outstanding ranges, so there is nothing to resume",
+            ));
+        }
+        TokenPlan::from_ranges(
+            run_id,
+            partitioner,
+            self.previous_run_id,
+            self.ranges.clone(),
+        )
     }
 }
 
@@ -819,6 +863,87 @@ mod tests {
         assert!(RerunPolicy::for_job(JobKind::Validate, true, true).is_counter_restricted());
         // And a non-counter table is never restricted, whatever the job.
         assert!(!RerunPolicy::for_job(JobKind::Migrate, false, true).is_counter_restricted());
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // TOK-011 — the work list becomes the scheduler's plan
+    // -----------------------------------------------------------------------------------------
+
+    #[test]
+    fn tok_011_the_resume_plan_becomes_a_token_plan_of_exactly_the_pending_ranges() {
+        let records = [
+            record(0, 9, RunStatus::Pass),
+            record(10, 19, RunStatus::Fail),
+            record(20, 29, RunStatus::NotStarted),
+            record(30, 39, RunStatus::DiffCorrected),
+        ];
+        let plan = plan(&records, RerunPolicy::idempotent(), 1);
+        let token_plan = plan
+            .token_plan(RunId::from_raw(101), Partitioner::Murmur3)
+            .unwrap();
+
+        // The order is the resume's, so what runs is what was reported.
+        assert_eq!(token_plan.token_ranges(), plan.ranges());
+        assert_eq!(token_plan.run_id(), RunId::from_raw(101));
+        assert_eq!(token_plan.resumed_from(), Some(RunId::from_raw(100)));
+        // And the two ranges that completed are absent, which is the entire point.
+        assert_eq!(token_plan.len(), 2);
+        assert_eq!(
+            token_plan.ring_ordered(),
+            vec![range(10, 19), range(20, 29)]
+        );
+    }
+
+    #[test]
+    fn trk_032_a_fallback_plan_refuses_to_become_a_token_plan() {
+        // A fallback's empty range list means "plan the whole ring", not "run nothing". A caller
+        // that turned it into a plan would migrate one arbitrary range, or none.
+        let plan = plan_resume(
+            RunId::from_raw(7),
+            None,
+            &[record(0, 9, RunStatus::Fail)],
+            RerunPolicy::idempotent(),
+            1,
+            RunId::from_raw(8),
+        )
+        .unwrap();
+        let error = plan
+            .token_plan(RunId::from_raw(8), Partitioner::Murmur3)
+            .expect_err("a fallback has no work list");
+        assert_eq!(error.kind(), ErrorKind::Tracking);
+        assert!(error.message().contains("TRK-032"), "{error}");
+    }
+
+    #[test]
+    fn trk_031_a_completed_previous_run_yields_no_token_plan_to_run() {
+        let plan = plan(
+            &[record(0, 9, RunStatus::Pass)],
+            RerunPolicy::idempotent(),
+            1,
+        );
+        let error = plan
+            .token_plan(RunId::from_raw(101), Partitioner::Murmur3)
+            .expect_err("there is nothing to resume");
+        assert!(error.message().contains("nothing to resume"), "{error}");
+    }
+
+    #[test]
+    fn dst_015_a_counter_resume_plans_only_the_ranges_it_may_safely_replay() {
+        let policy = RerunPolicy::for_job(JobKind::Migrate, true, false);
+        let plan = plan(
+            &[
+                record(0, 9, RunStatus::NotStarted),
+                record(10, 19, RunStatus::Started),
+                record(20, 29, RunStatus::Pass),
+            ],
+            policy,
+            1,
+        );
+        let token_plan = plan
+            .token_plan(RunId::from_raw(101), Partitioner::Murmur3)
+            .unwrap();
+        assert_eq!(token_plan.token_ranges(), vec![range(0, 9)]);
+        assert_eq!(plan.quarantined().len(), 1);
     }
 
     #[test]

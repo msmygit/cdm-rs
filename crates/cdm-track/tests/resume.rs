@@ -32,6 +32,18 @@
 //! | A counter table quarantines rather than replays (`DST-015`) | [`tst_041_a_counter_run_quarantines_what_it_cannot_safely_replay`] |
 //! | A resume of a resume still loses nothing | [`tst_041_resuming_a_resume_still_covers_everything`] |
 //! | A run that finished has nothing to resume | [`tst_041_a_completed_run_plans_no_work_and_is_not_a_fallback`] |
+//!
+//! # And what the resume actually writes
+//!
+//! The four above are claims about *plans*. Since `TOK-011` the plan can be executed —
+//! `ResumePlan::token_plan` hands the scheduler the outstanding ranges instead of a fresh split of
+//! the ring — so the claim that matters can be made about writes rather than about intentions:
+//!
+//! | Claim | Test |
+//! |---|---|
+//! | A resume writes the outstanding ranges and no others (`TRK-038`) | [`trk_038_tok_011_a_resumed_run_writes_only_the_ranges_the_first_run_did_not_finish`] |
+//! | A resume interrupted in its turn stays resumable (`ENG-010`) | [`trk_038_a_resumed_run_that_is_itself_interrupted_stays_resumable`] |
+//! | A counter resume never receives a range that may have applied (`DST-015`) | [`dst_015_a_counter_resume_never_hands_the_scheduler_a_range_that_may_have_applied`] |
 
 // A failed assertion *is* the reporting mechanism in a test; the no-panic rule (ERR-004) exists
 // to protect production paths, not test bodies.
@@ -217,9 +229,9 @@ fn interrupted_blocking(
 
 /// What a second, interrupted run over `ranges` leaves in the tracking table.
 ///
-/// The scheduler plans the whole ring, and there is no public way to hand it an arbitrary work
-/// list — that seam belongs to the CLI harness, not to a test. So the second run is driven through
-/// the same [`RangeObserver`] calls the scheduler would make: the first `finished` ranges reach
+/// Driven through the [`RangeObserver`] calls the scheduler would make rather than through the
+/// scheduler itself, because this helper has to produce a *three-way* split that a real run only
+/// reaches by being killed rather than stopped: the first `finished` ranges reach
 /// `PASS`, one more is left `STARTED` because it was in flight when the stop landed, and the rest
 /// stay `NOT_STARTED` because nobody claimed them. That is exactly the three-way split
 /// [`interrupted_run`] produces, which is what makes the two comparable.
@@ -454,6 +466,299 @@ proptest! {
             );
         });
     }
+}
+
+/// A job that records the range of every write it makes.
+///
+/// The counting is the point. "The resume re-planned the right ranges" is a claim about a plan;
+/// "no completed range was written a second time" is a claim about what reached the target, and
+/// only a job that reports its own writes can settle it.
+#[derive(Debug, Default)]
+struct WriteLog {
+    writes: parking_lot::Mutex<Vec<TokenRange>>,
+}
+
+impl WriteLog {
+    /// How many rows each range writes.
+    const ROWS_PER_RANGE: u64 = 4;
+
+    fn ranges_written(&self) -> Vec<TokenRange> {
+        self.writes.lock().clone()
+    }
+}
+
+#[async_trait]
+impl RangeProcessor for WriteLog {
+    fn job(&self) -> JobKind {
+        JobKind::Migrate
+    }
+
+    async fn process(&self, ctx: &RangeContext) -> Result<RangeVerdict, CdmError> {
+        let counters = ctx.counters();
+        let write = counters.counter(CounterKind::Write)?;
+        for _ in 0..WriteLog::ROWS_PER_RANGE {
+            counters.increment(write);
+            self.writes.lock().push(ctx.range());
+        }
+        Ok(RangeVerdict::Pass)
+    }
+}
+
+#[tokio::test]
+async fn trk_038_tok_011_a_resumed_run_writes_only_the_ranges_the_first_run_did_not_finish() {
+    // The claim the whole feature exists to make, settled by counting writes rather than by
+    // reading a plan. An interrupted run writes some ranges; the resume — executed through
+    // `TokenPlan::from_ranges`, which is what the CLI hands the scheduler — writes the rest, and
+    // writes none of the first run's completed ranges a second time.
+    const PARTS: u64 = 8;
+    let store = Arc::new(MemoryStore::new());
+    let first = interrupted_run(&store, RunId::from_raw(1), PARTS, Some(3)).await;
+    let completed = first.finished();
+    assert_eq!(
+        completed.len(),
+        3,
+        "the interruption has to leave work behind"
+    );
+
+    let resume = first.resume(RerunPolicy::idempotent(), 1, RunId::from_raw(2));
+    assert!(!resume.is_fallback());
+    assert_eq!(resume.ranges().len(), 5, "five ranges are outstanding");
+
+    // TOK-011: the seam. The scheduler is handed the resume's work list, not a fresh split.
+    let token_plan = resume
+        .token_plan(RunId::from_raw(2), Partitioner::Murmur3)
+        .unwrap();
+    assert_eq!(token_plan.len(), 5);
+    assert_eq!(token_plan.resumed_from(), Some(RunId::from_raw(1)));
+
+    let log = Arc::new(WriteLog::default());
+    let tracker = Arc::new(
+        RunTracker::start(
+            Arc::clone(&store) as Arc<dyn TrackingStore>,
+            &new_run_record(
+                RunId::from_raw(2),
+                Some(RunId::from_raw(1)),
+                table(),
+                JobKind::Migrate,
+            ),
+            &token_plan.token_ranges(),
+            TrackerConfig::default(),
+        )
+        .await
+        .unwrap(),
+    );
+    let report = Scheduler::new(SchedulerSettings::default().with_workers(2))
+        .unwrap()
+        .run(
+            &token_plan,
+            Arc::clone(&log) as Arc<dyn RangeProcessor>,
+            Arc::clone(&tracker) as Arc<dyn RangeObserver>,
+        )
+        .await
+        .unwrap();
+    tracker
+        .finish(report.status(), committed_run_info(report.counters()))
+        .await
+        .unwrap();
+
+    // 1. Nothing the first run completed was written again. This is the assertion.
+    let written = log.ranges_written();
+    for range in &written {
+        assert!(
+            !completed.contains(range),
+            "{range} completed in run 1 and was written again by the resume",
+        );
+    }
+
+    // 2. The write count is exactly the outstanding work, with no range written twice.
+    assert_eq!(
+        written.len() as u64,
+        5 * WriteLog::ROWS_PER_RANGE,
+        "five ranges of four rows, and not one more",
+    );
+    let distinct: BTreeSet<TokenRange> = written.iter().copied().collect();
+    assert_eq!(distinct.len(), 5);
+
+    // 3. Between them the two runs covered the ring exactly once.
+    let mut covered = completed.clone();
+    covered.extend(distinct.iter().copied());
+    assert_eq!(covered.len(), usize::try_from(PARTS).unwrap());
+    assert_eq!(
+        tokens_covered(&covered.iter().copied().collect::<Vec<_>>()),
+        first.plan.bounds().token_count(),
+        "the two runs together tile the ring, with no token counted twice",
+    );
+
+    // 4. MET-004, TRK-038: the resumed run's own counters, committed, and only its own rows. The
+    // first run's totals stay on the first run's row, where the rows they describe were moved.
+    assert_eq!(
+        report
+            .counters()
+            .count_of(CounterKind::Write, cdm_metrics::CounterView::Committed),
+        5 * WriteLog::ROWS_PER_RANGE,
+    );
+    let resumed = store.run(RunId::from_raw(2)).await.unwrap().unwrap();
+    assert_eq!(resumed.status, RunStatus::Ended);
+    assert_eq!(resumed.previous_run_id, Some(RunId::from_raw(1)));
+    assert!(
+        resumed
+            .info
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Write: 20"),
+        "the resumed run records what it wrote, not what run 1 wrote: {:?}",
+        resumed.info,
+    );
+
+    // 5. And the resumed run, having finished cleanly, is not itself resumable.
+    assert!(!cdm_track::resume::is_resumable(&resumed));
+}
+
+#[tokio::test]
+async fn trk_038_a_resumed_run_that_is_itself_interrupted_stays_resumable() {
+    // Petabyte-scale runs are interrupted more than once. A resume that recorded `ENDED` after
+    // being stopped would strand every range it had not reached — `TRK-030` declines to adopt an
+    // `ENDED` run with no failed partitions — so the chain has to survive its own interruption.
+    let store = Arc::new(MemoryStore::new());
+    let first = interrupted_run(&store, RunId::from_raw(1), 8, Some(2)).await;
+    let resume = first.resume(RerunPolicy::idempotent(), 1, RunId::from_raw(2));
+    let token_plan = resume
+        .token_plan(RunId::from_raw(2), Partitioner::Murmur3)
+        .unwrap();
+
+    let tracker = Arc::new(
+        RunTracker::start(
+            Arc::clone(&store) as Arc<dyn TrackingStore>,
+            &new_run_record(
+                RunId::from_raw(2),
+                Some(RunId::from_raw(1)),
+                table(),
+                JobKind::Migrate,
+            ),
+            &token_plan.token_ranges(),
+            TrackerConfig::default(),
+        )
+        .await
+        .unwrap(),
+    );
+    let scheduler = Scheduler::new(SchedulerSettings::default().with_workers(1)).unwrap();
+    let report = scheduler
+        .run(
+            &token_plan,
+            Arc::new(InterruptingJob::new(scheduler.control(), Some(2))),
+            Arc::clone(&tracker) as Arc<dyn RangeObserver>,
+        )
+        .await
+        .unwrap();
+    tracker
+        .finish(report.status(), committed_run_info(report.counters()))
+        .await
+        .unwrap();
+
+    let resumed = store.run(RunId::from_raw(2)).await.unwrap().unwrap();
+    assert_eq!(
+        resumed.status,
+        RunStatus::Aborted,
+        "an operator stop is an abort"
+    );
+    assert!(cdm_track::resume::is_resumable(&resumed));
+
+    // And a resume of the resume picks up exactly what run 2 did not reach.
+    let records = store.ranges(RunId::from_raw(2)).await.unwrap();
+    let second = plan_resume(
+        RunId::from_raw(2),
+        Some(&resumed),
+        &records,
+        RerunPolicy::idempotent(),
+        1,
+        RunId::from_raw(3),
+    )
+    .unwrap();
+    let finished_by_two = report
+        .outcomes()
+        .iter()
+        .filter(|outcome| outcome.is_success())
+        .count();
+    assert_eq!(second.ranges().len() + finished_by_two, token_plan.len());
+    assert!(second
+        .token_plan(RunId::from_raw(3), Partitioner::Murmur3)
+        .is_ok());
+}
+
+#[tokio::test]
+async fn dst_015_a_counter_resume_never_hands_the_scheduler_a_range_that_may_have_applied() {
+    // The corruption case, at the seam. A counter range left `STARTED` may have applied some of
+    // its updates; re-running it adds to a counter that already moved, and nothing afterwards
+    // could reveal it. The plan the scheduler receives must not contain one.
+    let store = Arc::new(MemoryStore::new());
+    let first = interrupted_run(&store, RunId::from_raw(1), 8, Some(3)).await;
+    let completed = first.finished();
+
+    // A range abandoned in flight: claimed, never finished, left `STARTED` by `ENG-010`. The
+    // stopping job above never produces one — the range that issues the stop drains — so it is
+    // written directly, which is exactly what a killed process leaves behind.
+    let abandoned = *first
+        .records
+        .iter()
+        .find(|record| record.status == RunStatus::NotStarted)
+        .map(|record| &record.range)
+        .expect("the interruption left unclaimed ranges");
+    store
+        .update_range(
+            RunId::from_raw(1),
+            &RangeRecord {
+                range: abandoned,
+                status: RunStatus::Started,
+                started_at: None,
+                info: None,
+            },
+        )
+        .await
+        .unwrap();
+    let records = store.ranges(RunId::from_raw(1)).await.unwrap();
+
+    let policy = RerunPolicy::for_job(JobKind::Migrate, true, false);
+    let resume = plan_resume(
+        RunId::from_raw(1),
+        Some(&first.run),
+        &records,
+        policy,
+        1,
+        RunId::from_raw(2),
+    )
+    .unwrap();
+    let token_plan = resume
+        .token_plan(RunId::from_raw(2), Partitioner::Murmur3)
+        .unwrap();
+
+    for range in token_plan.token_ranges() {
+        assert!(
+            !completed.contains(&range),
+            "{range} completed and must never be replayed on a counter table",
+        );
+        assert_ne!(
+            range, abandoned,
+            "the abandoned range may have half-applied and must not be replayed",
+        );
+        let status = records
+            .iter()
+            .find(|record| record.range == range)
+            .map(|record| record.status);
+        assert_eq!(
+            status,
+            Some(RunStatus::NotStarted),
+            "{range} was not demonstrably untouched, so it must have been quarantined",
+        );
+    }
+    assert_eq!(
+        resume
+            .quarantined()
+            .iter()
+            .map(|q| q.range)
+            .collect::<Vec<_>>(),
+        vec![abandoned],
+        "the range that was in flight has to be reported, not dropped",
+    );
 }
 
 #[tokio::test]

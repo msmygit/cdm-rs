@@ -738,6 +738,24 @@ data, and MUST be available at `POST /v1/plan`.
 `num_parts`, and dynamically subdivide any range whose observed row count exceeds
 `plan.max_rows_per_range`, so stragglers do not dominate wall clock.
 
+**TOK-011 [N]** — A token plan MUST be constructible from a **pre-computed work list** rather than
+by splitting the ring, and MUST record the run it continues. This is what makes `TRK-031` runnable:
+the outstanding ranges of a previous run are not a function of anything the splitter knows — they
+come from `cdm_run_details`, and `TRK-033` may already have subdivided them — so a scheduler that
+could only be handed a fresh split of the ring could not execute a resume at all. Re-splitting and
+calling the result a resume re-processes every completed range, which for a counter table is
+`DST-015`'s corruption rather than a duplicate write.
+
+The work list MUST be executed in the order given (it arrives shuffled for the new run under
+`TOK-007`; a second permutation would make the executed order differ from the reported one), and
+its coverage percentage MUST be recorded as 100 because `TOK-005` was applied when the ranges were
+first planned. Three work lists MUST be refused rather than run:
+
+* an **empty** one, so that "nothing is outstanding" is a conclusion the caller reports rather than
+  a plan that runs nothing and reports `ENDED`;
+* one beyond `NFR-003`'s range ceiling, which `TOK-003` already applies;
+* one whose ranges **overlap**, since a shared token would be processed twice.
+
 ---
 
 ## 7. Execution engine (`ENG`)
@@ -1401,6 +1419,38 @@ On the Cassandra backend this means binding `UNSET` rather than `NULL`, because 
 statement is an `UPDATE ... SET run_info = ?` and a bound `NULL` writes a tombstone. That is the
 same distinction `MIG-012` draws on the data path, for the same reason, and it is why an
 `update_run` taking `Option<&str>` must not hand the `Option` straight to the driver.
+
+**TRK-038 [N]** — `cdm runs resume` MUST execute the outstanding ranges of a recorded run as a run
+of its own: a new `cdm_run_info` row, whose `previous_run_id` names the run it continues, whose
+`run_type` is the one the previous run recorded, and whose planned ranges are exactly `TRK-031`'s
+work list, handed to the scheduler through `TOK-011`.
+
+**The resumed run's counters start at zero and count only its own rows** (`MET-004`). They are
+committed values, like every other run's (`TRK-022`), and they are *not* seeded from the run being
+resumed. Two reasons, and both are about what a reader of the history would conclude: inherited
+totals would report the same rows twice to anyone summing a table's runs, and the inherited
+`Partitions Failed` count would describe an interruption that has by then been dealt with — which
+is the number `TRK-030` reads to decide whether there is work left, so a resumed run that finished
+cleanly would present itself as still needing a resume. A run's totals belong to the run that moved
+the rows; the chain is reconstructed from `previous_run_id`, which is what it is for.
+
+A resume MUST NOT silently fall back to a full plan. `TRK-032`'s fallback is the right answer for
+`auto_rerun` on a job that was going to run anyway, and the wrong one for an operator who asked to
+resume: it would start a full run of the whole ring under the name of a recovery. `cdm runs resume`
+MUST report the fallback reason as an error and leave starting a full run to `cdm migrate` or
+`cdm validate`. For the same reason it MUST NOT adopt a run nobody named: an explicit run id,
+`--auto`, or `track_run.auto_rerun` is required.
+
+**TRK-039 [N]** — A resume that withholds ranges under `DST-015` MUST report every withheld range —
+its token bounds, its recorded status and the reason — and MUST NOT report success. These are
+ranges that are unfinished, were not run, and that no later resume will pick up either, because
+re-running them would double-count a counter that has already moved. They need a human. A resume
+that listed them as a footnote to a zero exit code would be indistinguishable, to a pipeline, from
+a clean recovery, and the data would be quietly short.
+
+They remain recorded against the run that left them, which `cdm runs show <previous-run-id>` lists.
+The resumed run's own `run_info` MUST NOT be extended to mention them: that string is `MET-005`'s
+character-identical contract and tooling parses it.
 
 ---
 

@@ -24,7 +24,9 @@
 mod build;
 pub mod observe;
 mod report;
+mod resume;
 mod session;
+mod tracking;
 
 use std::io::Write;
 use std::sync::Arc;
@@ -32,25 +34,28 @@ use std::sync::Arc;
 use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, RunId};
 use cdm_engine::planner::{Partitioner, Planner, PlannerSettings, TokenPlan};
-use cdm_engine::scheduler::{NoopObserver, RangeObserver, RunReport, Scheduler, SchedulerSettings};
+use cdm_engine::scheduler::{RangeObserver, RunReport, Scheduler, SchedulerSettings};
 use cdm_metrics::EventBus;
 
 pub use build::{BuiltJob, JobBuilder, ResolvedOrigin, ResolvedTables};
-pub use observe::LiveRun;
+pub use observe::{LiveRun, Observers};
 pub use report::{PlanSummary, RunSummary};
+pub use resume::{resume, QuarantineEntry, ResumeOptions, ResumeOutcome, ResumedRun};
 pub use session::Sessions;
+pub use tracking::Tracking;
 
 use crate::cli::JobArgs;
 use crate::loader::load;
 use crate::tui::{LiveDisplay, NodeProvider, Presentation};
 
-/// The run identifier a single-node run plans and publishes under.
+/// The run identifier a run that is not being recorded plans and publishes under.
 ///
-/// Zero, because that is what [`token_plan`] has always passed to the planner: run identifiers are
-/// allocated by the tracking store (`TRK-010`), and a run with tracking disabled has none. Naming
-/// the constant is what keeps the plan and the event stream (`MET-030`) agreeing about which run
-/// they describe.
-const UNTRACKED_RUN_ID: RunId = RunId::from_raw(0);
+/// Zero, which is `RunId::UNSET`: run identifiers exist to key the tracking tables (`TRK-010`), and
+/// a run with `track_run.enabled` off has none. Naming the constant is what keeps the plan, the
+/// event stream (`MET-030`) and the tracking rows (`TRK-020`) agreeing about which run they
+/// describe — a tracked run replaces it with its allocated id in all three at once, and an
+/// untracked one keeps the zero its shuffle has always been seeded with (`TOK-007`).
+const UNTRACKED_RUN_ID: RunId = RunId::UNSET;
 
 /// The job flags that are spellings of configuration rather than of behaviour (`VAL-015`).
 ///
@@ -99,11 +104,20 @@ pub fn execute(
     // command which never touches a cluster — `cdm config validate`, `cdm completions` — does not
     // pay for a thread pool it will not use.
     runtime()?.block_on(async {
+        // TOK-007, TRK-020, MET-030: the run id is allocated before anything that names it. The
+        // plan is shuffled by it, the tracking rows are keyed by it and the event stream reports
+        // it, and a run whose three artefacts disagreed about its own identity would be
+        // unreadable afterwards. A guardrail is never recorded (see below), so it keeps the zero.
+        let run_id = if kind == JobKind::Guardrail {
+            UNTRACKED_RUN_ID
+        } else {
+            tracking::run_id(&config)?
+        };
         // MET-030: one bus per run, created before the job so that a validate job can be handed it
         // (`VAL-002`'s findings are published through it) and before the scheduler so that the
         // display has subscribed by the time the first range starts.
         let node_id = SchedulerSettings::from_config(&config).node_id().to_owned();
-        let bus = Arc::new(EventBus::new(UNTRACKED_RUN_ID, node_id));
+        let bus = Arc::new(EventBus::new(run_id, node_id));
 
         // GRD-001: a guardrail run opens the origin and nothing else, so it takes its own four
         // steps rather than the two-sided ones. The two paths meet again at the plan, because the
@@ -112,15 +126,23 @@ pub fn execute(
             let sessions = Arc::new(Sessions::open_origin(&config).await?);
             let origin = ResolvedOrigin::introspect(&sessions.origin, &config).await?;
             let job = build::guardrail(&sessions.origin, &origin, &config).await?;
-            let plan = token_plan(&config, origin.partitioner())?;
+            // A guardrail is untracked by construction: the tracking tables live in the target
+            // keyspace (`TRK-010`) and `GRD-001` gives this path no target session to reach them
+            // through. There is also nothing to resume — it writes nothing.
+            let tracking = Tracking::disabled();
+            let plan = token_plan(&config, origin.partitioner(), run_id)?;
             let report = run(
                 &config,
-                kind,
-                plan,
+                &plan,
                 Arc::clone(&job.processor),
-                &bus,
-                presentation,
-                node_provider(&sessions),
+                Watchers {
+                    kind,
+                    run_id,
+                    bus: &bus,
+                    presentation,
+                    nodes: node_provider(&sessions),
+                    tracking: &tracking,
+                },
             )
             .await?;
             return Ok(finish(kind, args, &config, &report, &job));
@@ -137,17 +159,29 @@ pub fn execute(
             presentation.is_live().then(|| Arc::clone(&bus)),
         )
         .await?;
-        let plan = token_plan(&config, tables.partitioner())?;
+        let plan = token_plan(&config, tables.partitioner(), run_id)?;
+        // TRK-020: the run row and every range row exist before the first range is claimed. A
+        // crash between the two would leave ranges no resume could know about.
+        let tracking = Tracking::start(&config, &sessions, kind, &plan, None).await?;
         let report = run(
             &config,
-            kind,
-            plan,
+            &plan,
             Arc::clone(&job.processor),
-            &bus,
-            presentation,
-            node_provider(&sessions),
+            Watchers {
+                kind,
+                run_id,
+                bus: &bus,
+                presentation,
+                nodes: node_provider(&sessions),
+                tracking: &tracking,
+            },
         )
         .await?;
+        // TRK-022: the terminal status, whatever it is. `ENDED` only for a run that finished.
+        // After `run`, so the display has already been torn down and the terminal handed back:
+        // this write can fail, and its warning belongs on the operator's real screen rather than
+        // on an alternate one that is about to be discarded.
+        tracking.finish(&report).await?;
         Ok(finish(kind, args, &config, &report, &job))
     })
 }
@@ -223,7 +257,7 @@ pub fn plan(args: &JobArgs) -> Result<PlanSummary, CdmError> {
     runtime()?.block_on(async {
         let sessions = Sessions::open(&config).await?;
         let tables = ResolvedTables::introspect(&sessions, &config).await?;
-        let (plan, planner) = token_plan_with_planner(&config, tables.partitioner())?;
+        let (plan, planner) = token_plan_with_planner(&config, tables.partitioner(), RunId::UNSET)?;
         let report = planner.report(&plan, None)?;
         Ok(PlanSummary::new(&report, &tables, &config))
     })
@@ -324,22 +358,57 @@ fn runtime() -> Result<tokio::runtime::Runtime, CdmError> {
 /// Reading the partitioner from `system.local` rather than assuming Murmur3 is what makes a
 /// RandomPartitioner cluster work at all: its tokens do not fit in an `i64`, and a plan built for
 /// the wrong partitioner covers the wrong ring.
-fn token_plan(config: &EffectiveConfig, partitioner: Partitioner) -> Result<TokenPlan, CdmError> {
-    token_plan_with_planner(config, partitioner).map(|(plan, _)| plan)
+fn token_plan(
+    config: &EffectiveConfig,
+    partitioner: Partitioner,
+    run_id: RunId,
+) -> Result<TokenPlan, CdmError> {
+    token_plan_with_planner(config, partitioner, run_id).map(|(plan, _)| plan)
 }
 
 /// The plan and the planner that produced it, which `cdm plan` needs in order to report on it.
 fn token_plan_with_planner(
     config: &EffectiveConfig,
     partitioner: Partitioner,
+    run_id: RunId,
 ) -> Result<(TokenPlan, Planner), CdmError> {
     let settings = PlannerSettings::from_config(config.config(), partitioner);
     let planner = Planner::new(settings);
-    let plan = planner.plan(RunId::from_raw(0), None)?;
+    let plan = planner.plan(run_id, None)?;
     Ok((plan, planner))
 }
 
+/// Everything that watches one run (`MET-031`, `TRK-021`).
+///
+/// Bundled rather than passed one by one because [`run`] needs all of it and a seven-argument
+/// function is where an argument gets silently transposed. It is also the honest shape: these are
+/// not independent settings, they are the two audiences a run has — the operator watching it now,
+/// and the resume that will read it later.
+struct Watchers<'a> {
+    /// Which job is running, for the display's header and the `RunStarted` event.
+    kind: JobKind,
+    /// The run's identifier: the tracking key, and what the event stream reports.
+    run_id: RunId,
+    /// The structured event stream (`MET-030`).
+    bus: &'a Arc<EventBus>,
+    /// What, if anything, is drawn while the run runs (`MET-031`).
+    presentation: Presentation,
+    /// The driver's current view of the cluster, polled by the display.
+    nodes: NodeProvider,
+    /// The durable record a resume is planned from (`TRK-020`..`TRK-022`).
+    tracking: &'a Tracking,
+}
+
 /// Runs the plan through the scheduler, with whatever is watching it (`ENG-001`, `MET-031`).
+///
+/// # Both watchers, or neither is noticed
+///
+/// A run can be displayed and recorded at once, and until they were composed here each was written
+/// as *the* observer — so whichever landed second would have silently replaced the first. Losing
+/// the display is a cosmetic regression; losing the tracking is a run that cannot be resumed, which
+/// is the defect `TRK-038` exists to prevent and which nothing would report at the time.
+/// [`Observers`] fans out to both, and collapses to exactly what each path used to hand over when
+/// only one of them is present — a `NoopObserver` for a silent, untracked run.
 ///
 /// # The display is started and stopped around the run, never inside it
 ///
@@ -349,22 +418,31 @@ fn token_plan_with_planner(
 /// discarded, and leave the operator's shell in raw mode. See `crate::tui::terminal`.
 async fn run(
     config: &EffectiveConfig,
-    kind: JobKind,
-    plan: TokenPlan,
+    plan: &TokenPlan,
     job: Arc<dyn cdm_engine::scheduler::RangeProcessor>,
-    bus: &Arc<EventBus>,
-    presentation: Presentation,
-    nodes: NodeProvider,
+    watchers: Watchers<'_>,
 ) -> Result<RunReport, CdmError> {
+    let Watchers {
+        kind,
+        run_id,
+        bus,
+        presentation,
+        nodes,
+        tracking,
+    } = watchers;
     let settings = SchedulerSettings::from_config(config);
     let scheduler = Scheduler::new(settings)?;
+
+    // Tracking first: see `Observers`, where the ordering is a safety property rather than a
+    // preference. A run with tracking off contributes nothing here and pays nothing.
+    let observers = Observers::new().and(tracking.observer());
 
     // A silent run keeps the observer it has always had. `LiveRun` is cheap — two calls per range,
     // none per row — but "cheap" is not "free", and a run nobody is watching should pay nothing.
     let Presentation::Silent = presentation else {
         let live = Arc::new(LiveRun::new(
             kind,
-            UNTRACKED_RUN_ID,
+            run_id,
             config.node_id(),
             Arc::clone(bus),
             &plan.token_ranges(),
@@ -389,13 +467,19 @@ async fn run(
         );
 
         let report = scheduler
-            .run(&plan, job, live as Arc<dyn RangeObserver>)
+            .run(
+                plan,
+                job,
+                observers
+                    .and(Some(live as Arc<dyn RangeObserver>))
+                    .into_observer(),
+            )
             .await;
         display.finish().await;
         return report;
     };
 
-    scheduler.run(&plan, job, Arc::new(NoopObserver)).await
+    scheduler.run(plan, job, observers.into_observer()).await
 }
 
 // Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule

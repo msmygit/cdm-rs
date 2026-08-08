@@ -182,12 +182,36 @@ fn cli_005_the_codec_catalogue_is_machine_readable() {
 }
 
 #[test]
-fn trk_034_runs_resume_says_which_half_of_it_is_missing() {
-    // `cdm-track` computes the resume work list already; what is absent is the harness's ability
-    // to be handed one. A message that said only "not implemented" would hide the fact that
-    // `cdm runs show` can already answer what is outstanding.
-    let error = run_err(&["cdm", "runs", "resume"]);
+fn trk_038_runs_resume_refuses_a_configuration_that_recorded_nothing() {
+    // Tracking is off by default, exactly as in Java. Resuming then has no history to read *and*
+    // nowhere to record the run it would start, and both are decided before a session is opened.
+    let error = run_err(&[
+        "cdm",
+        "runs",
+        "resume",
+        "--auto",
+        "--set",
+        "schema.origin.keyspace_table=ks.tbl",
+    ]);
     let message = error.message();
+    assert!(message.contains("track_run.enabled"), "{message}");
+}
+
+#[test]
+fn trk_030_runs_resume_starts_nothing_until_a_run_is_named() {
+    // A bare `cdm runs resume` must not adopt whichever run happened to be last: it starts a run,
+    // and starting one by accident over a petabyte is not a recoverable mistake.
+    let error = run_err(&[
+        "cdm",
+        "runs",
+        "resume",
+        "--set",
+        "schema.origin.keyspace_table=ks.tbl",
+        "--set",
+        "track_run.enabled=true",
+    ]);
+    let message = error.message();
+    assert!(message.contains("--auto"), "{message}");
     assert!(message.contains("cdm runs show"), "{message}");
 }
 
