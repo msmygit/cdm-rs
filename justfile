@@ -78,3 +78,11 @@ book-serve:
 # Install git hooks without a Python dependency.
 hooks:
     cargo xtask install-hooks
+
+# Report disk taken by agent worktrees under `.claude/worktrees/`. Reports only; changes nothing.
+reclaim:
+    scripts/reclaim-agent-space.sh
+
+# Reclaim it. Skips worktrees being built in, and unmerged or dirty ones unless `--all` is added.
+reclaim-apply *ARGS:
+    scripts/reclaim-agent-space.sh --apply {{ARGS}}
