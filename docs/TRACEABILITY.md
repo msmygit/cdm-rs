@@ -223,7 +223,7 @@ test, fails CI.
 | `MIG-010` <sup>P</sup> | INSERT shape: mapped columns bound, constant columns inlined as literals, optional USING TTL and TIMESTAMP | `cdm-cql::statement::upsert` | `mig_010_*` | #18 |
 | `MIG-011` <sup>P</sup> | Bind order MUST be: mapped/derived columns in target-column order, then TTL, then writetime | `cdm-cql::statement::upsert` | `mig_011_*` | #18 |
 | `MIG-012` <sup>P</sup> | A `null` value, or an **empty collection**, MUST be bound as `UNSET` rather than `null`, to avoid creating tombstones | `cdm-cql::statement::bind` | `mig_012_*` | #18 |
-| `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-cql::statement::bind` | `mig_013_*` | #18, #21c |
+| `MIG-013` <sup>P</sup> | A `null` in a target primary-key column MUST be substituted: `String`-typed keys become `""`; `Instant`-typed keys become… | `cdm-cql::statement::bind`, `cdm-cql::rows` | `mig_013_*`, `tst_003_a_null_in_a_target_key_column_is_substituted` | #18, #21c, #21e |
 | `MIG-014` <sup>P</sup> | `transform.map_remove_null_value = true` MUST strip map entries with null values before binding | `cdm-cql::statement::bind` | `mig_014_*` | #18 |
 | `MIG-020` <sup>P</sup> | Batching: when `batch_size > 1`, writes MUST be accumulated into an `UNLOGGED` batch and executed when the batch reaches `batch_size` | `cdm-engine::jobs::migrate::buffer`, `cdm-cql::exec::write` | `mig_020_*` | #21 |
 | `MIG-021` <sup>P</sup> | `batch_size` MUST be coerced to 1 for a counter table, for an active writetime filter, or for a configured value below 1 | `cdm-engine::jobs::migrate::settings` | `mig_021_*` | #21, #22 |

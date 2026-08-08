@@ -552,6 +552,9 @@ async fn validate(
         &tables.mapping,
         &target_select,
         token_kind(tables.partitioner()),
+        // MIG-013: the same policy the binder below writes with, so the key this source derives is
+        // the key the migration wrote the row under.
+        missing_key_policy(config),
     )
     .await?;
 

@@ -41,19 +41,18 @@
 //!
 //! Per `TST-102` these skip — they do not fail — when no container runtime is available.
 //!
-//! # Nine cases cannot run yet, and it is not the suite's fault
+//! # Four cases cannot run yet, and it is not the suite's fault
 //!
 //! Each carries a `blocked <reason>` line in its `case.txt`, and the runner prints it as
 //! `BLOCKED <case>: <reason>` and returns rather than asserting. `#[ignore]` could not carry this
 //! distinction: `--ignored` runs *only* ignored tests, and every case here is ignored because
 //! every case needs a container, so the attribute says nothing about whether a case can pass.
 //!
-//! All nine are blocked in the same file, `crates/cdm-cli/src/harness/build.rs`, which builds
-//! every job with `MappingOptions::default()`, `MigrateFeatures::default()`,
-//! `MissingKeyPolicy::default()` and a codec registry constructed with `None` for its format
-//! options. The features PRs #27–#31 delivered are therefore implemented and tested at the library
-//! level but unreachable from the command line. The cases are written out in full and are expected
-//! to pass unchanged when that wiring lands; nothing in `tests/sit/` needs to change.
+//! Three of the four are the same gap: validate issues one target lookup per *record* where an
+//! explode map produces one target row per map *entry*, so `ComparisonPlan` marks the exploded
+//! columns unobtainable and every entry reports missing. The fourth is `VAL-018`, the TTL and
+//! writetime an autocorrected row must carry. The cases are written out in full and are expected
+//! to pass unchanged when that work lands; nothing in `tests/sit/` needs to change.
 
 // Tests may panic freely: a failed assertion is the reporting mechanism (see AGENTS.md).
 #![allow(
@@ -411,9 +410,6 @@ fn tst_003_four_thousand_rows_across_thirty_two_ranges_lose_nothing() {
     case("regression", "03_performance");
 }
 
-/// Blocked: `build.rs` passes `MissingKeyPolicy::default()` to both `MigratePlan::resolve` and the
-/// validate `Binder`, so `transform.missing.key.ts.replace.value` is parsed and then discarded.
-/// The row with the null `ts` is counted `ERROR` instead of being written with the replacement.
 #[test]
 #[ignore = "needs a container runtime; run with `cargo xtask sit`"]
 fn tst_003_a_null_in_a_target_key_column_is_substituted() {

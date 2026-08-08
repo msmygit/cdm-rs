@@ -36,6 +36,16 @@
 //! looked up: [`CqlRowSink::fetch`] answers "absent" for it without issuing a query, so a caller
 //! that forgets reports every row missing rather than validating against the wrong target row.
 //!
+//! # A substituted key is substituted on both sides (`MIG-013`)
+//!
+//! A `null` in a target primary-key column is written as a substitute, so the substitute — not the
+//! `null` — is what the target row is keyed by. [`TargetKeyPlan`] therefore carries the
+//! [`MissingKeyPolicy`] the write path binds with and applies it as it derives the key, and
+//! [`TargetKeyPlan::substituted`] writes the same replacement back into the origin row wherever
+//! that is unambiguous, so the comparison sees what the migration wrote rather than the `null` it
+//! started from. Without the first, validate looks every substituted row up by a null key and
+//! reports it missing; without the second, it finds the row and reports it mismatched.
+//!
 //! # Counter corrections are converged, not re-added
 //!
 //! `MIG-030` writes a counter as `SET c = c + ?`, so the bound value is a *delta*. When validate
@@ -51,6 +61,7 @@
 //!
 //! - `PLG-005` — [`CqlRowSource`], [`CqlRowSink`]
 //! - `FEA-060` — the paged origin range scan
+//! - `MIG-013` — the null-key substitution, in the key and in the row
 //! - `MIG-030`, `MIG-031` — the counter delta
 //! - `VAL-001` — the target lookup by primary key
 
@@ -70,9 +81,10 @@ use scylla::serialize::SerializationError;
 use scylla::statement::prepared::PreparedStatement;
 
 use crate::raw::RawRow;
+use crate::statement::bind::parse_type;
 use crate::statement::{
-    BindInputs, Binder, Bound, ColumnMapping, OriginRangeSelect, TargetSelectByPk, TargetSource,
-    TokenBound,
+    BindInputs, Binder, Bound, ColumnMapping, MissingKeyPolicy, OriginRangeSelect,
+    TargetSelectByPk, TargetSource, TokenBound,
 };
 
 /// Which partitioner's token type the range scan binds (`TOK-001`).
@@ -137,14 +149,47 @@ impl ExplodedKeyParts<'_> {
     };
 }
 
+/// What a null in one bound key component is replaced with (`MIG-013`).
+#[derive(Debug, Clone)]
+struct KeySubstitute {
+    /// The replacement, already in the target key column's representation — the very bytes
+    /// [`Binder`] would bind for the same column, because both come from
+    /// [`MissingKeyPolicy`]'s substitution.
+    value: RawCell,
+    /// Whether the replacement may also be written back into the origin row's cell.
+    ///
+    /// Only when the origin column's type is the target key column's type, so the bytes mean the
+    /// same thing on both sides, and only when that origin position feeds exactly one target
+    /// column, so writing it cannot change what some other column binds. Everything else keeps
+    /// the origin cell null and substitutes into the key alone.
+    mirror: bool,
+}
+
 /// How the bound components of the target primary key are derived, in bind order (`SCH-006`).
+///
+/// # A null key component is substituted here too (`MIG-013`)
+///
+/// `MIG-013` is usually described as a property of the write: a key column cannot be `NULL`, so the
+/// binder puts the empty string or `transform.missing_key_ts_replace` there instead. But the value
+/// the binder chose is what the target row *is* keyed by, so a validate run that derives its lookup
+/// key from the raw origin cell derives a key the migration never wrote — a null one, which
+/// [`CqlRowSink::fetch`] answers as absent without querying — and reports the row missing forever.
+///
+/// So the plan carries the policy and substitutes as it builds the key, from the same
+/// [`MissingKeyPolicy`] the binder uses. [`TargetKeyPlan::substituted`] additionally
+/// writes the replacement back into the origin row where that is unambiguous, which is what makes
+/// the *comparison* agree: the target holds the substitute, and comparing it against a null origin
+/// cell would turn `MISSING` into `MISMATCH` rather than into `VALID`.
 #[derive(Debug, Clone)]
 pub struct TargetKeyPlan {
     slots: Vec<TargetKeySlot>,
+    /// Per slot, in bind order, the replacement for a null in that component, if it has one.
+    substitutes: Vec<Option<KeySubstitute>>,
 }
 
 impl TargetKeyPlan {
-    /// Resolves the plan from the mapping and the lookup statement built from it.
+    /// Resolves the plan from the mapping, the lookup statement built from it, and the null-key
+    /// policy the write path binds with (`SCH-006`, `MIG-013`).
     ///
     /// # Errors
     ///
@@ -152,14 +197,32 @@ impl TargetKeyPlan {
     /// does not admit as a source for a target primary key: an extracted JSON property, or nothing
     /// at all. An exploded map key or value is *not* such a case — `SCH-006` names it explicitly
     /// and `FEA-022` builds on it — it is carried as a slot that [`TargetKeyPlan::key_of`] fills
-    /// from the entry.
-    pub fn resolve(mapping: &ColumnMapping, select: &TargetSelectByPk) -> Result<Self, CdmError> {
+    /// from the entry. Also when a column's declared type does not parse, which is a disagreement
+    /// with `system_schema` rather than bad data and must stop the run at startup.
+    pub fn resolve(
+        mapping: &ColumnMapping,
+        select: &TargetSelectByPk,
+        missing_key: MissingKeyPolicy,
+    ) -> Result<Self, CdmError> {
         let mut slots = Vec::with_capacity(select.bound_key_columns().len());
+        let mut substitutes = Vec::with_capacity(select.bound_key_columns().len());
         for column in select.bound_key_columns() {
             match mapping.source_of(column) {
-                Some(TargetSource::Origin(index)) => slots.push(TargetKeySlot::Origin(*index)),
-                Some(TargetSource::ExplodeKey) => slots.push(TargetKeySlot::ExplodeKey),
-                Some(TargetSource::ExplodeValue) => slots.push(TargetKeySlot::ExplodeValue),
+                Some(TargetSource::Origin(index)) => {
+                    let index = *index;
+                    substitutes.push(substitute_for(mapping, column, index, missing_key)?);
+                    slots.push(TargetKeySlot::Origin(index));
+                }
+                Some(TargetSource::ExplodeKey) => {
+                    // An exploded entry's key is never null: `FEA-020` produces one target row per
+                    // entry, and a map has no null keys.
+                    substitutes.push(None);
+                    slots.push(TargetKeySlot::ExplodeKey);
+                }
+                Some(TargetSource::ExplodeValue) => {
+                    substitutes.push(None);
+                    slots.push(TargetKeySlot::ExplodeValue);
+                }
                 other => {
                     return Err(CdmError::new(
                         ErrorKind::SchemaMismatch,
@@ -180,7 +243,7 @@ impl TargetKeyPlan {
                 }
             }
         }
-        Ok(Self { slots })
+        Ok(Self { slots, substitutes })
     }
 
     /// The slots, in the order [`TargetSelectByPk`] binds them.
@@ -203,6 +266,11 @@ impl TargetKeyPlan {
 
     /// The key of one origin row, for one exploded map entry.
     ///
+    /// A null component whose column has a `MIG-013` substitute takes the substitute, because that
+    /// is the value the migration wrote and therefore the value the target row is keyed by. A null
+    /// component with no substitute stays null: `MIG-013` counts that record as an error on the
+    /// write side, and on the read side [`CqlRowSink::fetch`] answers it as absent without querying.
+    ///
     /// Pass [`ExplodedKeyParts::NONE`] when no explode map is configured. Passing it while
     /// [`TargetKeyPlan::explodes`] is `true` leaves the exploded components null, which
     /// [`CqlRowSink::fetch`] answers as "absent" without issuing a query.
@@ -211,9 +279,15 @@ impl TargetKeyPlan {
         PrimaryKey::new(
             self.slots
                 .iter()
-                .map(|slot| match slot {
+                .enumerate()
+                .map(|(slot_index, slot)| match slot {
                     TargetKeySlot::Origin(index) => {
-                        row.get(*index).cloned().unwrap_or(RawCell::NULL)
+                        let cell = row.get(*index).cloned().unwrap_or(RawCell::NULL);
+                        if cell.is_null() {
+                            self.substitute_at(slot_index).unwrap_or(cell)
+                        } else {
+                            cell
+                        }
                     }
                     TargetKeySlot::ExplodeKey => cell_of(entry.key),
                     TargetKeySlot::ExplodeValue => cell_of(entry.value),
@@ -221,11 +295,105 @@ impl TargetKeyPlan {
                 .collect(),
         )
     }
+
+    /// The origin row with every substitutable null key cell replaced (`MIG-013`), or `None` when
+    /// the row needs no replacement.
+    ///
+    /// The key alone is not enough. The migration wrote the substitute into the target's key
+    /// column, so a validate run that fetched the right row would still compare that substitute
+    /// against a null origin cell and report a mismatch — the record would move from `MISSING` to
+    /// `MISMATCH` rather than to `VALID`. Replacing the cell puts both sides in the state the
+    /// migration left them in, and it is the same replacement the binder would have made for the
+    /// same column, so migrating from the substituted row writes exactly what migrating from the
+    /// raw one did.
+    ///
+    /// `None` — the overwhelmingly common case — means the caller keeps the row it has, so a scan
+    /// over rows with no null key components allocates nothing extra.
+    #[must_use]
+    pub fn substituted(&self, row: &Row) -> Option<Row> {
+        let mut cells: Option<Vec<RawCell>> = None;
+        for (slot_index, slot) in self.slots.iter().enumerate() {
+            let TargetKeySlot::Origin(index) = slot else {
+                continue;
+            };
+            if !row.get(*index).is_none_or(RawCell::is_null) {
+                continue;
+            }
+            let Some(substitute) = self
+                .substitutes
+                .get(slot_index)
+                .and_then(Option::as_ref)
+                .filter(|substitute| substitute.mirror)
+            else {
+                continue;
+            };
+            let cells = cells.get_or_insert_with(|| row.cells().to_vec());
+            if let Some(cell) = cells.get_mut(*index) {
+                *cell = substitute.value.clone();
+            }
+        }
+        cells.map(Row::new)
+    }
+
+    /// The substitute for the component bound at `slot_index`, if it has one.
+    fn substitute_at(&self, slot_index: usize) -> Option<RawCell> {
+        self.substitutes
+            .get(slot_index)
+            .and_then(Option::as_ref)
+            .map(|substitute| substitute.value.clone())
+    }
 }
 
 /// One half of an exploded entry as a cell, null when the caller supplied none.
 fn cell_of(bytes: Option<&[u8]>) -> RawCell {
     bytes.map_or(RawCell::NULL, |bytes| RawCell::new(bytes.to_vec()))
+}
+
+/// What a null in the key column `column`, sourced from origin position `origin_index`, is
+/// replaced with (`MIG-013`).
+///
+/// # Errors
+///
+/// [`ErrorKind::SchemaMismatch`] when either side's declared type does not parse.
+fn substitute_for(
+    mapping: &ColumnMapping,
+    column: &str,
+    origin_index: usize,
+    missing_key: MissingKeyPolicy,
+) -> Result<Option<KeySubstitute>, CdmError> {
+    let Some(target_column) = mapping
+        .target_columns()
+        .iter()
+        .find(|meta| meta.name == *column)
+    else {
+        // The bound key columns are taken from this very mapping, so this is unreachable; treating
+        // it as "no substitute" keeps the key derivation total rather than inventing an error.
+        return Ok(None);
+    };
+    let target_type = parse_type(target_column, Side::Target)?;
+    let Some(value) = missing_key.substitute(&target_type) else {
+        return Ok(None);
+    };
+    // Written back into the origin row only when the bytes mean the same thing there — the
+    // conversion the binder would apply is the identity — and only when no other target column
+    // reads that origin cell, which would otherwise silently see a value instead of a null and
+    // bind it rather than `UNSET` (`MIG-012`).
+    let same_type = mapping
+        .origin_columns()
+        .get(origin_index)
+        .map(|meta| parse_type(meta, Side::Origin))
+        .transpose()?
+        .is_some_and(|origin_type| origin_type == target_type);
+    let sole_reader = (0..mapping.target_columns().len())
+        .filter(|index| {
+            matches!(mapping.source(*index), Some(TargetSource::Origin(other)) if *other == origin_index)
+        })
+        .count()
+        == 1;
+    Ok(Some(KeySubstitute {
+        value: RawCell::new(value),
+        mirror: same_type && sole_reader,
+    }))
 }
 
 /// The origin side of a run: a paged token-range scan (`PLG-005`, `FEA-060`).
@@ -246,12 +414,17 @@ impl CqlRowSource {
     /// a target primary-key component comes from a source `SCH-006` does not admit. Both are
     /// startup failures: a statement that will never prepare, or a key that can never be built,
     /// must not be discovered on the first row.
+    ///
+    /// `missing_key` must be the policy the write path binds with: the key derived here is looked
+    /// up against rows the write path wrote, and a source that substituted differently — or not at
+    /// all — would report every substituted row missing (`MIG-013`).
     pub async fn prepare(
         session: Arc<Session>,
         select: &OriginRangeSelect,
         mapping: &ColumnMapping,
         target_select: &TargetSelectByPk,
         token_kind: TokenKind,
+        missing_key: MissingKeyPolicy,
     ) -> Result<Self, CdmError> {
         let statement = session
             .prepare(select.cql())
@@ -261,7 +434,7 @@ impl CqlRowSource {
             session,
             statement,
             token_kind,
-            key_plan: TargetKeyPlan::resolve(mapping, target_select)?,
+            key_plan: TargetKeyPlan::resolve(mapping, target_select, missing_key)?,
         })
     }
 
@@ -347,6 +520,10 @@ impl RowStream for RangePager {
                     read_error(Side::Origin, self.statement.get_statement(), &error)
                 })?;
                 let origin = own(&row);
+                // MIG-013: a null in a target key column was written as a substitute, so the row
+                // carries the substitute from here on — both the key it is looked up by and the
+                // value it is compared against.
+                let origin = self.key_plan.substituted(&origin).unwrap_or(origin);
                 // The exploded components, if any, stay null here: which map entry the key is for
                 // is not a question this side of the seam can answer (see the module docs).
                 let key = self.key_plan.key_of(&origin, ExplodedKeyParts::NONE);
@@ -686,7 +863,7 @@ mod tests {
     fn plan_for(options: &MappingOptions) -> Result<TargetKeyPlan, CdmError> {
         let mapping = ColumnMapping::resolve(&origin(), &target(), options)?;
         let select = TargetSelectByPk::new(&mapping)?;
-        TargetKeyPlan::resolve(&mapping, &select)
+        TargetKeyPlan::resolve(&mapping, &select, MissingKeyPolicy::default())
     }
 
     fn text(value: &str) -> RawCell {
@@ -749,7 +926,7 @@ mod tests {
         ];
         let mapping = ColumnMapping::resolve(&origin(), &target, &explode_options()).unwrap();
         let select = TargetSelectByPk::new(&mapping).unwrap();
-        let plan = TargetKeyPlan::resolve(&mapping, &select).unwrap();
+        let plan = TargetKeyPlan::resolve(&mapping, &select, MissingKeyPolicy::default()).unwrap();
         assert_eq!(
             plan.slots(),
             [TargetKeySlot::Origin(0), TargetKeySlot::ExplodeValue]
@@ -805,5 +982,146 @@ mod tests {
             "{error}"
         );
         assert!(error.to_string().contains("SCH-006"), "{error}");
+    }
+
+    /// SIT `regression/04_null_ts_in_pk`: `ts` is an ordinary origin column and a target clustering
+    /// column, and one origin row leaves it null.
+    fn null_ts_origin() -> TableSchema {
+        TableSchema {
+            keyspace: "origin".to_owned(),
+            table: "regression_null_ts_in_pk".to_owned(),
+            columns: vec![
+                column("key", "text", ColumnKind::PartitionKey, 0),
+                column("ts", "timestamp", ColumnKind::Regular, -1),
+                column("value", "text", ColumnKind::Regular, -1),
+            ],
+            is_materialized_view: false,
+        }
+    }
+
+    fn null_ts_target() -> TableSchema {
+        TableSchema {
+            keyspace: "target".to_owned(),
+            table: "regression_null_ts_in_pk".to_owned(),
+            columns: vec![
+                column("key", "text", ColumnKind::PartitionKey, 0),
+                column("ts", "timestamp", ColumnKind::Clustering, 0),
+                column("value", "text", ColumnKind::Regular, -1),
+            ],
+            is_materialized_view: false,
+        }
+    }
+
+    fn null_ts_plan(missing_key: MissingKeyPolicy) -> TargetKeyPlan {
+        let mapping = ColumnMapping::resolve(
+            &null_ts_origin(),
+            &null_ts_target(),
+            &MappingOptions::default(),
+        )
+        .unwrap();
+        let select = TargetSelectByPk::new(&mapping).unwrap();
+        TargetKeyPlan::resolve(&mapping, &select, missing_key).unwrap()
+    }
+
+    /// The row whose `ts` is null, in projection order.
+    fn null_ts_row() -> Row {
+        Row::new(vec![text("key1"), RawCell::NULL, text("valueA")])
+    }
+
+    #[test]
+    fn mig_013_a_null_timestamp_key_is_looked_up_by_its_replacement() {
+        // The migration bound `missing_key_ts_replace` into the target's `ts`, so that — and not
+        // null — is what the target row is keyed by.
+        let replacement = 1_685_577_600_000_i64;
+        let plan = null_ts_plan(MissingKeyPolicy {
+            missing_key_ts_replace: Some(replacement),
+        });
+        let key = plan.key_of(&null_ts_row(), ExplodedKeyParts::NONE);
+        assert_eq!(
+            key.values(),
+            [
+                text("key1"),
+                RawCell::new(replacement.to_be_bytes().to_vec())
+            ],
+            "a null timestamp key component takes transform.missing_key_ts_replace (MIG-013)"
+        );
+    }
+
+    #[test]
+    fn mig_013_the_replacement_is_written_into_the_origin_row() {
+        // Not only the key: the target holds the replacement, so comparing it against a null
+        // origin cell would report a mismatch on a row the migration wrote correctly.
+        let replacement = 1_685_577_600_000_i64;
+        let plan = null_ts_plan(MissingKeyPolicy {
+            missing_key_ts_replace: Some(replacement),
+        });
+        let substituted = plan
+            .substituted(&null_ts_row())
+            .expect("the row has a substitutable null key cell");
+        assert_eq!(
+            substituted.cells(),
+            [
+                text("key1"),
+                RawCell::new(replacement.to_be_bytes().to_vec()),
+                text("valueA"),
+            ]
+        );
+    }
+
+    #[test]
+    fn mig_013_a_row_with_no_null_key_cell_is_left_exactly_as_it_was() {
+        let plan = null_ts_plan(MissingKeyPolicy {
+            missing_key_ts_replace: Some(1),
+        });
+        let row = Row::new(vec![
+            text("key2"),
+            RawCell::new(7_i64.to_be_bytes().to_vec()),
+            text("valueB"),
+        ]);
+        assert!(
+            plan.substituted(&row).is_none(),
+            "nothing to substitute means nothing to allocate"
+        );
+        assert_eq!(
+            plan.key_of(&row, ExplodedKeyParts::NONE).values(),
+            [text("key2"), RawCell::new(7_i64.to_be_bytes().to_vec())]
+        );
+    }
+
+    #[test]
+    fn mig_013_a_null_timestamp_key_with_no_configured_replacement_stays_null() {
+        // `MIG-013` counts that record as an error on the write side; the key stays null here, and
+        // `CqlRowSink::fetch` answers it as absent rather than looking up the wrong row.
+        let plan = null_ts_plan(MissingKeyPolicy::default());
+        assert!(plan.substituted(&null_ts_row()).is_none());
+        assert_eq!(
+            plan.key_of(&null_ts_row(), ExplodedKeyParts::NONE).values(),
+            [text("key1"), RawCell::NULL]
+        );
+    }
+
+    #[test]
+    fn mig_013_a_null_text_key_becomes_the_empty_string_with_no_configuration_at_all() {
+        // Java's `defaultForMissingString`, which is not configurable there and is not made
+        // configurable here.
+        let mut target = null_ts_target();
+        target.columns = vec![
+            column("key", "text", ColumnKind::PartitionKey, 0),
+            column("value", "text", ColumnKind::Clustering, 0),
+            column("ts", "timestamp", ColumnKind::Regular, -1),
+        ];
+        let mapping =
+            ColumnMapping::resolve(&null_ts_origin(), &target, &MappingOptions::default()).unwrap();
+        let select = TargetSelectByPk::new(&mapping).unwrap();
+        let plan = TargetKeyPlan::resolve(&mapping, &select, MissingKeyPolicy::default()).unwrap();
+        let row = Row::new(vec![text("key1"), RawCell::NULL, RawCell::NULL]);
+        assert_eq!(
+            plan.key_of(&row, ExplodedKeyParts::NONE).values(),
+            [text("key1"), text("")]
+        );
+        let substituted = plan
+            .substituted(&row)
+            .expect("an empty string is written back");
+        assert_eq!(substituted.get(2), Some(&text("")));
     }
 }
