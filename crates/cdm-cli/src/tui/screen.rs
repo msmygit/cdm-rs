@@ -50,7 +50,7 @@ pub fn draw(frame: &mut Frame<'_>, view: &Dashboard) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // progress bar
-            Constraint::Length(6), // throughput and ranges
+            Constraint::Length(7), // throughput, latency and ranges
             Constraint::Length(5), // sparklines
             Constraint::Length(5), // nodes
             Constraint::Min(3),    // error tail
@@ -107,17 +107,27 @@ fn draw_progress(frame: &mut Frame<'_>, area: Rect, view: &Dashboard) {
     frame.render_widget(gauge, area);
 }
 
-/// Throughput on the left, ranges by state on the right (`MET-010`).
+/// Throughput, request latency and ranges by state, side by side (`MET-010`).
+///
+/// Three columns rather than two: `MET-010`'s latencies are per side *and* per operation, so they
+/// are several lines rather than one, and squeezing them under the throughput figures pushed both
+/// past the height of the block — a panel that renders nothing at all is worse than one that
+/// renders less.
 fn draw_stats(frame: &mut Frame<'_>, area: Rect, view: &Dashboard) {
-    let halves = Layout::default()
+    let columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+        ])
         .split(area);
-    let (Some(&left), Some(&right)) = (halves.first(), halves.get(1)) else {
+    let (Some(&left), Some(&middle), Some(&right)) =
+        (columns.first(), columns.get(1), columns.get(2))
+    else {
         return;
     };
 
-    let latency = view.range_latency;
     let throughput = vec![
         labelled(
             "origin",
@@ -129,22 +139,18 @@ fn draw_stats(frame: &mut Frame<'_>, area: Rect, view: &Dashboard) {
         ),
         labelled("rows read", count(view.instruments.origin.rows.total)),
         labelled("rows written", count(view.instruments.target.rows.total)),
-        // `MET-010`'s per-operation request latencies are not fed by the engine yet; what is
-        // measured is how long a range takes end to end. Labelled as what it is — see
-        // `cdm_metrics::dashboard::RangeTimings`.
-        labelled(
-            "range p50/p99",
-            format!(
-                "{} / {}",
-                nanos_as_millis(latency.percentile(0.5)),
-                nanos_as_millis(latency.percentile(0.99))
-            ),
-        ),
+        labelled("bytes read", count(view.instruments.origin.bytes.total)),
     ];
     frame.render_widget(
         Paragraph::new(throughput)
             .block(Block::default().borders(Borders::ALL).title(" Throughput ")),
         left,
+    );
+
+    frame.render_widget(
+        Paragraph::new(latency_lines(view))
+            .block(Block::default().borders(Borders::ALL).title(" Latency ")),
+        middle,
     );
 
     let mut ranges = vec![
@@ -165,6 +171,61 @@ fn draw_stats(frame: &mut Frame<'_>, area: Rect, view: &Dashboard) {
         Paragraph::new(ranges).block(Block::default().borders(Borders::ALL).title(" Ranges ")),
         right,
     );
+}
+
+/// `MET-010`'s request-latency percentiles, per side and per operation.
+///
+/// One line per operation a job has actually issued: a guardrail run never opens a target session
+/// (`GRD-001`), so it contributes no target lines, and a run with no batching contributes no
+/// `batch` line. An operation with an empty histogram is not drawn rather than drawn as zero —
+/// `SideSnapshot::recorded_latencies` is the same filter the exporters apply.
+///
+/// Before the first request comes back there is nothing to draw at all, and the range duration is
+/// shown instead. That is a real measurement of a real unit of work — see
+/// `cdm_metrics::dashboard::RangeTimings` — and it is labelled as what it is rather than as a
+/// latency it is not.
+fn latency_lines(view: &Dashboard) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = [Side::Origin, Side::Target]
+        .into_iter()
+        .flat_map(|side| {
+            view.instruments
+                .side(side)
+                .recorded_latencies()
+                .into_iter()
+                .map(move |(operation, histogram)| {
+                    Line::from(vec![
+                        Span::styled(
+                            format!(
+                                "{:<18}",
+                                format!("{} {}", side.as_str(), operation.as_str())
+                            ),
+                            Style::default().add_modifier(Modifier::DIM),
+                        ),
+                        Span::raw(format!(
+                            "{} / {}",
+                            nanos_as_millis(histogram.percentile(0.5)),
+                            nanos_as_millis(histogram.percentile(0.99))
+                        )),
+                    ])
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if lines.is_empty() {
+        let range = view.range_latency;
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:<18}", "range p50/p99"),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+            Span::raw(format!(
+                "{} / {}",
+                nanos_as_millis(range.percentile(0.5)),
+                nanos_as_millis(range.percentile(0.99))
+            )),
+        ]));
+    }
+    lines
 }
 
 /// The two sparklines `MET-031` asks for.
@@ -188,15 +249,21 @@ fn draw_sparklines(frame: &mut Frame<'_>, area: Rect, view: &Dashboard) {
             .data(view.rows_history.clone()),
         left,
     );
+    // `MET-010`'s request latency once anything has been recorded, and the range duration until
+    // then — each under its own title, because they measure different things and a sparkline with
+    // a borrowed label is worse than no sparkline.
+    let (title, data) = if view.instruments.origin.latency.iter().any(|h| h.count > 0)
+        || view.instruments.target.latency.iter().any(|h| h.count > 0)
+    {
+        (" request latency (ms) ", &view.request_latency_history)
+    } else {
+        (" range duration (ms) ", &view.latency_history)
+    };
     frame.render_widget(
         Sparkline::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" range duration (ms) "),
-            )
+            .block(Block::default().borders(Borders::ALL).title(title))
             .style(Style::default().fg(Color::Cyan))
-            .data(view.latency_history.clone()),
+            .data(data.clone()),
         right,
     );
 }
@@ -445,6 +512,66 @@ mod tests {
         assert!(frame.contains("connected"), "{frame}");
         assert!(frame.contains("the target refused the write"), "{frame}");
         assert!(frame.contains("stop the run gracefully"), "{frame}");
+    }
+
+    #[test]
+    fn met_010_the_latency_panel_draws_request_latency_once_there_is_any() {
+        // What this panel showed before the engine fed anything: the range duration, honestly
+        // labelled, because the histograms `MET-010` specifies were always empty. Now they are fed,
+        // and the panel has to show what the requirement asks for — per side and per operation.
+        let start = Instant::now();
+        let ranges = TokenRange::MURMUR3_FULL.split(8).unwrap();
+        let instruments = Arc::new(Instruments::new(start));
+        let mut state = DashboardState::new(
+            JobKind::Migrate,
+            RunId::from_raw(7),
+            "node-a",
+            Arc::new(ProgressTracker::by_token_span(&ranges, start)),
+            Arc::clone(&instruments),
+            Arc::new(RangeTimings::new()),
+        );
+
+        // Through the seam `cdm-cql` uses, not through `Instruments`' own methods: the panel has
+        // to render what a real request path produces.
+        let observer: &dyn cdm_core::RequestObserver = instruments.as_ref();
+        for _ in 0..10 {
+            observer.request_started(Side::Origin);
+            observer.request_finished(
+                Side::Origin,
+                cdm_metrics::Operation::RangeRead,
+                Duration::from_millis(12),
+            );
+            observer.request_started(Side::Target);
+            observer.request_finished(
+                Side::Target,
+                cdm_metrics::Operation::Write,
+                Duration::from_millis(3),
+            );
+        }
+        state.sample_at(start + Duration::from_secs(1));
+
+        let frame = render(&state.snapshot_at(start + Duration::from_secs(1)), 100, 30);
+        assert!(frame.contains("origin range_read"), "{frame}");
+        assert!(frame.contains("target write"), "{frame}");
+        assert!(frame.contains("request latency"), "{frame}");
+        // An operation neither side issued contributes no line at all.
+        assert!(!frame.contains("origin key_read"), "{frame}");
+        assert!(!frame.contains("target batch"), "{frame}");
+        // And the fallback is gone, because there is a real latency to draw.
+        assert!(!frame.contains("range duration"), "{frame}");
+        assert!(!frame.contains("range p50/p99"), "{frame}");
+    }
+
+    #[test]
+    fn met_010_the_latency_panel_falls_back_to_range_duration_before_the_first_request() {
+        // The first frame of a run is drawn before any request has come back. Drawing an empty
+        // histogram as a latency would be a display that reads zero and means "no data"; the
+        // range duration is a real measurement and is labelled as itself.
+        let (state, _, _, start) = dashboard();
+        let frame = render(&state.snapshot_at(start), 100, 30);
+        assert!(frame.contains("range p50/p99"), "{frame}");
+        assert!(frame.contains("range duration"), "{frame}");
+        assert!(!frame.contains("request latency"), "{frame}");
     }
 
     #[test]

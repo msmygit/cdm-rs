@@ -158,6 +158,15 @@ graph TD
 * **`cdm-codec` does not depend on `cdm-cql`**; it operates on a driver-independent `CqlTypeInfo`
   and raw byte buffers, so codecs are unit-testable with no session and remain valid if the
   underlying driver is ever swapped.
+* **`cdm-cql` and `cdm-engine` do not depend on `cdm-metrics`**, and `MET-010`'s per-request
+  measurements still come from them, because the only place a request exists is the crate that
+  issues it. The seam is `cdm_core::observe::RequestObserver` — the same shape as `SchemaProvider`
+  above — which `cdm_metrics::Instruments` implements: `cdm-cql` times a driver request and
+  `cdm-engine` reports a rate-limiter wait against `dyn RequestObserver`, and `cdm-cli` is the
+  crate that holds both ends and joins them. `Operation` and `RetryCause` live in `cdm-core` for
+  the same reason and are re-exported by `cdm-metrics`. **Do not add a `cdm-cql → cdm-metrics`
+  edge** to "simplify" this: it puts the metric registry underneath the driver and is the change
+  the trait exists to prevent.
 
 ---
 

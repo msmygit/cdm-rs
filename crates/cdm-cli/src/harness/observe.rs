@@ -54,7 +54,14 @@ pub struct LiveRun {
     pub events: Arc<EventBus>,
     /// Weighted progress and the ETA (`MET-011`).
     pub progress: Arc<ProgressTracker>,
-    /// Throughput (`MET-010`).
+    /// Throughput, request latency, in-flight requests, retries and rate-limiter waits
+    /// (`MET-010`).
+    ///
+    /// Shared with the executors that issue the requests: `Instruments` implements
+    /// [`cdm_core::RequestObserver`], so `cdm-cql` records a page request and `cdm-engine` records
+    /// a rate-limiter wait straight into this value, without either of them naming a metrics
+    /// type. That is why it is constructed by the caller and handed in rather than created here —
+    /// the jobs are built before the observer is.
     pub instruments: Arc<Instruments>,
     /// How long ranges are taking (`MET-031`).
     pub timings: Arc<RangeTimings>,
@@ -68,13 +75,18 @@ pub struct LiveRun {
 }
 
 impl LiveRun {
-    /// Prepares the observers for a run over `ranges`.
+    /// Prepares the observers for a run over `ranges`, recording into `instruments`.
+    ///
+    /// `instruments` is a parameter because the jobs are built before the run is: `MET-010`'s
+    /// request latencies are recorded by the executors inside those jobs, which have to be handed
+    /// the very same value this observer later reports.
     #[must_use]
     pub fn new(
         job: JobKind,
         run_id: RunId,
         node_id: impl Into<String>,
         events: Arc<EventBus>,
+        instruments: Arc<Instruments>,
         ranges: &[TokenRange],
         now: Instant,
     ) -> Self {
@@ -84,7 +96,7 @@ impl LiveRun {
             node_id: node_id.into(),
             events,
             progress: Arc::new(ProgressTracker::by_token_span(ranges, now)),
-            instruments: Arc::new(Instruments::new(now)),
+            instruments,
             timings: Arc::new(RangeTimings::new()),
             started: Mutex::new(BTreeMap::new()),
         }
@@ -383,13 +395,15 @@ mod tests {
 
     fn live(ranges: &[TokenRange]) -> (LiveRun, Arc<EventBus>) {
         let bus = Arc::new(EventBus::new(RunId::from_raw(7), "node-a"));
+        let now = Instant::now();
         let run = LiveRun::new(
             JobKind::Migrate,
             RunId::from_raw(7),
             "node-a",
             Arc::clone(&bus),
+            Arc::new(Instruments::new(now)),
             ranges,
-            Instant::now(),
+            now,
         );
         (run, bus)
     }
@@ -527,13 +541,15 @@ mod tests {
             .unwrap();
         let bus = Arc::new(EventBus::new(RunId::from_raw(7), "node-a"));
         let mut events = bus.subscribe();
+        let now = Instant::now();
         let live = Arc::new(LiveRun::new(
             JobKind::Migrate,
             RunId::from_raw(7),
             "node-a",
             Arc::clone(&bus),
+            Arc::new(Instruments::new(now)),
             &plan.token_ranges(),
-            Instant::now(),
+            now,
         ));
         let mut dashboard = live.dashboard();
 
@@ -578,13 +594,15 @@ mod tests {
             .unwrap();
         let bus = Arc::new(EventBus::new(RunId::from_raw(7), "node-a"));
         let mut events = bus.subscribe();
+        let now = Instant::now();
         let live = Arc::new(LiveRun::new(
             JobKind::Migrate,
             RunId::from_raw(7),
             "node-a",
             Arc::clone(&bus),
+            Arc::new(Instruments::new(now)),
             &plan.token_ranges(),
-            Instant::now(),
+            now,
         ));
 
         Scheduler::new(SchedulerSettings::default())

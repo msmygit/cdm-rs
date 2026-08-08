@@ -46,8 +46,11 @@ use scylla::serialize::writers::RowWriter;
 use scylla::serialize::SerializationError;
 use scylla::statement::prepared::PreparedStatement;
 
+use cdm_core::Operation;
+
 use crate::connect::Backoff;
 use crate::errors::side_error_from;
+use crate::observe::RequestMetrics;
 use crate::raw::RawRow;
 use crate::statement::TokenBound;
 
@@ -162,6 +165,7 @@ impl ScanState {
         &mut self,
         session: &DriverSession,
         prepared: &PreparedStatement,
+        metrics: &RequestMetrics,
     ) -> Result<Option<Page>, CdmError> {
         if self.finished {
             return Ok(None);
@@ -169,12 +173,17 @@ impl ScanState {
         let mut attempts = 0u32;
         loop {
             attempts = attempts.saturating_add(1);
-            match self.attempt(session, prepared).await {
+            match self.attempt(session, prepared, metrics).await {
                 Ok(page) => return Ok(page),
                 Err(error) => {
                     if !self.backoff.should_retry(&error, attempts) {
                         return Err(error);
                     }
+                    // MET-010: counted where the decision is taken, so the breakdown reports
+                    // re-issues rather than failures — a request that failed once and then
+                    // succeeded contributes one retry, and one that gave up contributes none for
+                    // the attempt nobody made.
+                    metrics.retried(&error);
                     let delay = self.backoff.delay_for(attempts);
                     tracing::warn!(
                         target: "cdm::cql::exec",
@@ -194,13 +203,19 @@ impl ScanState {
         &mut self,
         session: &DriverSession,
         prepared: &PreparedStatement,
+        metrics: &RequestMetrics,
     ) -> Result<Option<Page>, CdmError> {
-        let (result, next) = session
+        // MET-010: the bracket is around the request and nothing else. Decoding the page and
+        // deciding what to do with it is cdm-rs's own time, not the cluster's, and folding it in
+        // would make a slow codec look like a slow origin.
+        let guard = metrics.begin(Side::Origin, Operation::RangeRead);
+        let executed = session
             .execute_single_page(prepared, &self.bounds, self.paging_state.clone())
-            .await
-            .map_err(|error: ExecutionError| {
-                read_error("the origin token-range scan failed", error)
-            })?;
+            .await;
+        drop(guard);
+        let (result, next) = executed.map_err(|error: ExecutionError| {
+            read_error("the origin token-range scan failed", error)
+        })?;
 
         match next.into_paging_control_flow() {
             std::ops::ControlFlow::Continue(state) => self.paging_state = state,
@@ -210,7 +225,9 @@ impl ScanState {
         let rows = result
             .into_rows_result()
             .map_err(|error| read_error("the origin page carried no rows section", error))?;
-        Ok(Some(Page { rows }))
+        let page = Page { rows };
+        metrics.bytes(Side::Origin, page.bytes());
+        Ok(Some(page))
     }
 }
 
@@ -220,6 +237,7 @@ pub struct RangeScan<'a> {
     session: &'a DriverSession,
     prepared: &'a PreparedStatement,
     state: ScanState,
+    metrics: RequestMetrics,
 }
 
 impl<'a> RangeScan<'a> {
@@ -234,11 +252,13 @@ impl<'a> RangeScan<'a> {
         min: TokenBound,
         max: TokenBound,
         backoff: Backoff,
+        metrics: RequestMetrics,
     ) -> Self {
         Self {
             session,
             prepared,
             state: ScanState::new(min, max, backoff),
+            metrics,
         }
     }
 
@@ -255,9 +275,10 @@ impl<'a> RangeScan<'a> {
         range: TokenRange,
         partitioner: TokenWidth,
         backoff: Backoff,
+        metrics: RequestMetrics,
     ) -> Self {
         let (min, max) = ScanState::bounds_of(range, partitioner);
-        Self::new(session, prepared, min, max, backoff)
+        Self::new(session, prepared, min, max, backoff, metrics)
     }
 
     /// The next page, or `None` once the range is exhausted.
@@ -268,7 +289,9 @@ impl<'a> RangeScan<'a> {
     /// or immediately for a failure the retry classification calls deterministic. The error fails
     /// the range and only the range (`ENG-008`).
     pub async fn next_page(&mut self) -> Result<Option<Page>, CdmError> {
-        self.state.next_page(self.session, self.prepared).await
+        self.state
+            .next_page(self.session, self.prepared, &self.metrics)
+            .await
     }
 }
 
@@ -288,6 +311,7 @@ pub struct OwnedRangeScan {
     session: Arc<DriverSession>,
     prepared: PreparedStatement,
     state: ScanState,
+    metrics: RequestMetrics,
 }
 
 impl OwnedRangeScan {
@@ -303,12 +327,14 @@ impl OwnedRangeScan {
         range: TokenRange,
         partitioner: TokenWidth,
         backoff: Backoff,
+        metrics: RequestMetrics,
     ) -> Self {
         let (min, max) = ScanState::bounds_of(range, partitioner);
         Self {
             session,
             prepared,
             state: ScanState::new(min, max, backoff),
+            metrics,
         }
     }
 
@@ -319,7 +345,9 @@ impl OwnedRangeScan {
     /// Exactly as [`RangeScan::next_page`]: [`ErrorKind::Read`] once the allowed attempts are used
     /// up, failing this range and no other (`ENG-008`).
     pub async fn next_page(&mut self) -> Result<Option<Page>, CdmError> {
-        self.state.next_page(&self.session, &self.prepared).await
+        self.state
+            .next_page(&self.session, &self.prepared, &self.metrics)
+            .await
     }
 }
 

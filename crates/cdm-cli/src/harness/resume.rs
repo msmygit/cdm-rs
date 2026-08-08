@@ -198,6 +198,13 @@ pub fn resume(
                 .node_id()
                 .to_owned(),
         ));
+        // MET-010: on the same condition as the bus, and before the job, because the executors
+        // inside the job are what record a request. A resumed run is watched exactly as a fresh
+        // one is.
+        let started = std::time::Instant::now();
+        let instruments = presentation
+            .is_live()
+            .then(|| Arc::new(cdm_metrics::Instruments::new(started)));
         let built = build::job(
             job,
             &sessions,
@@ -205,6 +212,7 @@ pub fn resume(
             &config,
             args,
             presentation.is_live().then(|| Arc::clone(&bus)),
+            instruments.clone(),
         )
         .await?;
 
@@ -227,6 +235,8 @@ pub fn resume(
                 kind: job,
                 run_id,
                 bus: &bus,
+                instruments,
+                started,
                 presentation,
                 nodes: node_provider(&sessions),
                 tracking: &tracking,

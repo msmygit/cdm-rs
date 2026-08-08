@@ -35,7 +35,7 @@ use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, RunId};
 use cdm_engine::planner::{Partitioner, Planner, PlannerSettings, TokenPlan};
 use cdm_engine::scheduler::{RangeObserver, RunReport, Scheduler, SchedulerSettings};
-use cdm_metrics::EventBus;
+use cdm_metrics::{EventBus, Instruments};
 
 pub use build::{BuiltJob, JobBuilder, ResolvedOrigin, ResolvedTables};
 pub use observe::{LiveRun, Observers};
@@ -119,13 +119,24 @@ pub fn execute(
         let node_id = SchedulerSettings::from_config(&config).node_id().to_owned();
         let bus = Arc::new(EventBus::new(run_id, node_id));
 
+        // MET-010: the instruments have to exist before the job does, because the executors
+        // *inside* the job are what record a request's latency — there is nowhere else a request
+        // is visible. They are built on the same condition as the bus: a silent run pays nothing,
+        // and `RequestMetrics::unobserved` then costs one null check per request rather than a
+        // clock read.
+        let started = std::time::Instant::now();
+        let instruments = presentation
+            .is_live()
+            .then(|| Arc::new(Instruments::new(started)));
+
         // GRD-001: a guardrail run opens the origin and nothing else, so it takes its own four
         // steps rather than the two-sided ones. The two paths meet again at the plan, because the
         // ring is split the same way whatever is going to read it.
         if kind == JobKind::Guardrail {
             let sessions = Arc::new(Sessions::open_origin(&config).await?);
             let origin = ResolvedOrigin::introspect(&sessions.origin, &config).await?;
-            let job = build::guardrail(&sessions.origin, &origin, &config).await?;
+            let job =
+                build::guardrail(&sessions.origin, &origin, &config, instruments.clone()).await?;
             // A guardrail is untracked by construction: the tracking tables live in the target
             // keyspace (`TRK-010`) and `GRD-001` gives this path no target session to reach them
             // through. There is also nothing to resume — it writes nothing.
@@ -139,6 +150,8 @@ pub fn execute(
                     kind,
                     run_id,
                     bus: &bus,
+                    instruments,
+                    started,
                     presentation,
                     nodes: node_provider(&sessions),
                     tracking: &tracking,
@@ -157,6 +170,7 @@ pub fn execute(
             &config,
             args,
             presentation.is_live().then(|| Arc::clone(&bus)),
+            instruments.clone(),
         )
         .await?;
         let plan = token_plan(&config, tables.partitioner(), run_id)?;
@@ -171,6 +185,8 @@ pub fn execute(
                 kind,
                 run_id,
                 bus: &bus,
+                instruments,
+                started,
                 presentation,
                 nodes: node_provider(&sessions),
                 tracking: &tracking,
@@ -391,6 +407,14 @@ struct Watchers<'a> {
     run_id: RunId,
     /// The structured event stream (`MET-030`).
     bus: &'a Arc<EventBus>,
+    /// The per-request instruments of `MET-010`, when a run is being watched.
+    ///
+    /// Built before the job, because the executors *inside* the job are what record a request's
+    /// latency — there is nowhere else a request is visible. `None` on a silent run, which is what
+    /// makes `RequestMetrics::unobserved` cost a null check per request rather than a clock read.
+    instruments: Option<Arc<Instruments>>,
+    /// When the run began, the origin for every rate and window the display reports.
+    started: std::time::Instant,
     /// What, if anything, is drawn while the run runs (`MET-031`).
     presentation: Presentation,
     /// The driver's current view of the cluster, polled by the display.
@@ -426,12 +450,21 @@ async fn run(
         kind,
         run_id,
         bus,
+        instruments,
+        started,
         presentation,
         nodes,
         tracking,
     } = watchers;
     let settings = SchedulerSettings::from_config(config);
-    let scheduler = Scheduler::new(settings)?;
+    // MET-010: the rate-limiter wait of `ENG-005` is measured where the limiter is, which is the
+    // one instrument `cdm-cql` cannot see.
+    let scheduler = Scheduler::observing(
+        settings,
+        instruments
+            .clone()
+            .map(|i| i as Arc<dyn cdm_core::RequestObserver>),
+    )?;
 
     // Tracking first: see `Observers`, where the ordering is a safety property rather than a
     // preference. A run with tracking off contributes nothing here and pays nothing.
@@ -445,8 +478,9 @@ async fn run(
             run_id,
             config.node_id(),
             Arc::clone(bus),
+            instruments.unwrap_or_else(|| Arc::new(Instruments::new(started))),
             &plan.token_ranges(),
-            std::time::Instant::now(),
+            started,
         ));
         let display = LiveDisplay::start(
             presentation,

@@ -22,8 +22,9 @@
 //! 16 384.
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use cdm_core::{CdmError, ErrorKind};
+use cdm_core::{CdmError, ErrorKind, RequestObserver, Side};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::scheduler::ratelimit::RateLimiter;
@@ -45,6 +46,12 @@ pub struct RuntimeLimits {
     target_rate: RateLimiter,
     reads: Arc<Semaphore>,
     writes: Arc<Semaphore>,
+    /// Where a rate-limiter wait is reported (`MET-010`), or nowhere.
+    ///
+    /// `None` on a run nobody is watching, in which case the wait costs one null check on top of
+    /// the sleep it is measuring. The limiter has already computed the delay, so there is no
+    /// clock read here even when it is `Some`.
+    requests: Option<Arc<dyn RequestObserver>>,
 }
 
 impl RuntimeLimits {
@@ -63,7 +70,19 @@ impl RuntimeLimits {
                 "perfops.max_inflight_writes",
                 settings.max_inflight_writes(),
             )?,
+            requests: None,
         })
+    }
+
+    /// Reports rate-limiter waits to `requests` (`MET-010`, `ENG-005`).
+    ///
+    /// A builder rather than a constructor argument for the same reason the executors of
+    /// `cdm-cql` take one: the observer belongs to the run, and the limits are built from the
+    /// settings before anything is watching.
+    #[must_use]
+    pub fn observing(mut self, requests: Option<Arc<dyn RequestObserver>>) -> Self {
+        self.requests = requests;
+        self
     }
 
     /// The origin read limiter, in rows per second (`ENG-004`).
@@ -80,12 +99,25 @@ impl RuntimeLimits {
 
     /// Waits until `rows` more rows may be read from the origin (`ENG-004`, `ENG-005`).
     pub async fn acquire_read_rows(&self, rows: u32) {
-        self.origin_rate.acquire(rows).await;
+        let waited = self.origin_rate.acquire(rows).await;
+        self.record_wait(Side::Origin, waited);
     }
 
     /// Waits until `rows` more rows may be written to the target (`ENG-004`, `ENG-005`).
     pub async fn acquire_write_rows(&self, rows: u32) {
-        self.target_rate.acquire(rows).await;
+        let waited = self.target_rate.acquire(rows).await;
+        self.record_wait(Side::Target, waited);
+    }
+
+    /// Records one rate-limiter wait (`MET-010`).
+    ///
+    /// A zero-length wait is recorded too: the distribution's whole purpose is to answer "is the
+    /// run being held back?", and dropping the zeroes would make one throttled call in a thousand
+    /// look like a permanently throttled run.
+    fn record_wait(&self, side: Side, waited: Duration) {
+        if let Some(observer) = self.requests.as_deref() {
+            observer.ratelimit_waited(side, waited);
+        }
     }
 
     /// Claims one in-flight origin read slot (`ENG-007`).
@@ -182,6 +214,47 @@ mod tests {
 
     fn settings() -> SchedulerSettings {
         SchedulerSettings::default()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn met_010_a_rate_limited_acquire_reports_its_wait_to_the_instruments() {
+        // `MET-010` names rate-limiter wait time, and this is the only place it can be measured:
+        // the limiter is the thing that waits. `Instruments` implements `cdm_core::RequestObserver`,
+        // so the real instrument is under test here, not a double — a double would prove the call
+        // is made and nothing about what it lands in.
+        let instruments = Arc::new(cdm_metrics::Instruments::new(std::time::Instant::now()));
+        // One row per second with one second of burst, so the second call has to wait a whole
+        // second on the virtual clock.
+        let limits = RuntimeLimits::new(&settings().with_ratelimits(1, 0))
+            .unwrap()
+            .observing(Some(
+                Arc::clone(&instruments) as Arc<dyn cdm_core::RequestObserver>
+            ));
+
+        limits.acquire_read_rows(1).await;
+        limits.acquire_read_rows(1).await;
+        limits.acquire_write_rows(1).await;
+
+        let snapshot = instruments.snapshot();
+        assert_eq!(
+            snapshot.origin.ratelimit_wait.count, 2,
+            "both origin acquisitions must be recorded, including the one that did not wait"
+        );
+        assert!(
+            snapshot.origin.ratelimit_wait.max > 0,
+            "an acquisition past the burst budget waited, and the wait must be visible"
+        );
+        // `ENG-004` gives the two sides separate limiters; unlimited means no wait, not no sample.
+        assert_eq!(snapshot.target.ratelimit_wait.count, 1);
+        assert_eq!(snapshot.target.ratelimit_wait.max, 0);
+    }
+
+    #[tokio::test]
+    async fn met_010_an_unobserved_run_records_no_wait_and_still_paces_itself() {
+        let limits = RuntimeLimits::new(&settings().with_ratelimits(0, 0)).unwrap();
+        // No observer, no panic, no cost: the whole of what a silent run pays for `MET-010`.
+        limits.acquire_read_rows(10).await;
+        limits.acquire_write_rows(10).await;
     }
 
     #[tokio::test]

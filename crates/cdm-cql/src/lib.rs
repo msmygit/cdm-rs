@@ -22,6 +22,8 @@
 //! * [`exec`] — running those statements: paging a token range off the origin without decoding a
 //!   cell, writing the target with the retry policy each kind of write is entitled to, and
 //!   noticing a schema that moved underneath the run.
+//! * [`observe`] — the per-request timing `MET-010`'s latency percentiles are computed from,
+//!   recorded where the requests are actually issued.
 //!
 //! # Specification
 //!
@@ -40,6 +42,7 @@
 //! - `MIG-010`..`MIG-014` — [`statement::TargetUpsert`], [`statement::Binder`]
 //! - `ERR-005` — [`statement::BindFailure`]
 //! - `ENG-003`, `CON-011`, `CON-012` — [`exec::RangeScan`], [`exec::TargetWriter`]
+//! - `MET-010` — [`observe::RequestMetrics`], which times every request the four executors issue
 //! - `GRD-001` — [`exec::OriginReader`], the origin-only reader a guardrail run is built on
 //! - `SCH-009` — [`exec::SchemaWatch`]
 //!
@@ -53,6 +56,7 @@
 pub mod astra;
 pub mod connect;
 pub mod exec;
+pub mod observe;
 pub mod raw;
 pub mod rows;
 pub mod schema;

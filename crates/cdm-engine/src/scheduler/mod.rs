@@ -191,7 +191,21 @@ impl Scheduler {
     /// [`ErrorKind::Config`] if an in-flight bound is zero or beyond the runtime's maximum
     /// (`ENG-007`).
     pub fn new(settings: SchedulerSettings) -> Result<Self, CdmError> {
-        let limits = Arc::new(RuntimeLimits::new(&settings)?);
+        Self::observing(settings, None)
+    }
+
+    /// Builds a scheduler whose rate-limiter waits are reported to `requests` (`MET-010`).
+    ///
+    /// `None` is [`Scheduler::new`]: nothing is recorded and nothing is paid for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Scheduler::new`].
+    pub fn observing(
+        settings: SchedulerSettings,
+        requests: Option<Arc<dyn cdm_core::RequestObserver>>,
+    ) -> Result<Self, CdmError> {
+        let limits = Arc::new(RuntimeLimits::new(&settings)?.observing(requests));
         Ok(Self {
             settings,
             control: RunControl::new(),

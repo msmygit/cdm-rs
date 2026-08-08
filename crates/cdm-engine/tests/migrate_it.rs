@@ -14,6 +14,7 @@
 //! | A counter run refuses to batch, whatever the configuration says (`MIG-021`) | [`mig_021_a_counter_run_coerces_the_batch_size_to_one`] |
 //! | A dry run reads, binds and counts, and writes nothing (`MIG-041`) | [`mig_041_a_dry_run_writes_nothing_and_counts_everything`] |
 //! | A schema changed mid-run aborts with its own error kind (`SCH-009`) | [`sch_009_a_schema_change_aborts_the_run`] |
+//! | The request-latency histograms are filled by a real migration (`MET-010`) | [`met_010_a_real_migration_fills_the_request_latency_histograms`] |
 //!
 //! Per `TST-102` these skip — rather than fail — when no container runtime is available. Run them
 //! with `cargo test -p cdm-engine --test migrate_it -- --ignored --test-threads=1`, or via
@@ -47,7 +48,7 @@ use cdm_cql::statement::{
 use cdm_engine::jobs::migrate::{MigrateFeatures, MigrateJob, MigratePlan, MigrateSettings};
 use cdm_engine::planner::{Partitioner, Planner, PlannerSettings};
 use cdm_engine::scheduler::{NoopObserver, Scheduler, SchedulerSettings};
-use cdm_metrics::{CounterKind, CounterView};
+use cdm_metrics::{CounterKind, CounterView, Instruments, Operation};
 use cdm_testkit::{skip_without_container_runtime, ClusterFixture, Engine};
 
 /// The keyspace every case in this file uses.
@@ -102,6 +103,18 @@ async fn plan_for(
     target_table: &str,
     settings: MigrateSettings,
 ) -> MigratePlan {
+    plan_observed(origin, target, origin_table, target_table, settings, None).await
+}
+
+/// The same plan, with `MET-010`'s observer attached to the executor that issues the requests.
+async fn plan_observed(
+    origin: &ClusterSession,
+    target: &ClusterSession,
+    origin_table: &str,
+    target_table: &str,
+    settings: MigrateSettings,
+    instruments: Option<Arc<Instruments>>,
+) -> MigratePlan {
     let origin_schema = fetch_table(
         Side::Origin,
         origin.session(),
@@ -149,7 +162,10 @@ async fn plan_for(
         TokenWidth::Murmur3,
     )
     .await
-    .unwrap();
+    .unwrap()
+    .observing(cdm_cql::observe::RequestMetrics::from_option(
+        instruments.map(|i| i as Arc<dyn cdm_core::RequestObserver>),
+    ));
 
     let codecs = CodecPlanner::new(
         CodecRegistry::with_builtins(&[], None).unwrap(),
@@ -170,15 +186,27 @@ async fn plan_for(
 
 /// Runs a whole migration over the full ring and returns the report.
 async fn migrate(plan: MigratePlan) -> cdm_engine::scheduler::RunReport {
+    migrate_observed(plan, None, SchedulerSettings::default().with_workers(4)).await
+}
+
+/// The same migration, with `MET-010`'s observer attached to the scheduler.
+async fn migrate_observed(
+    plan: MigratePlan,
+    instruments: Option<Arc<Instruments>>,
+    settings: SchedulerSettings,
+) -> cdm_engine::scheduler::RunReport {
     let job = Arc::new(MigrateJob::new(Arc::new(plan)));
     let token_plan = Planner::new(PlannerSettings::new(Partitioner::Murmur3).with_num_parts(8))
         .plan(RunId::from_raw(1), None)
         .unwrap();
-    Scheduler::new(SchedulerSettings::default().with_workers(4))
-        .unwrap()
-        .run(&token_plan, job, Arc::new(NoopObserver))
-        .await
-        .unwrap()
+    Scheduler::observing(
+        settings,
+        instruments.map(|i| i as Arc<dyn cdm_core::RequestObserver>),
+    )
+    .unwrap()
+    .run(&token_plan, job, Arc::new(NoopObserver))
+    .await
+    .unwrap()
 }
 
 async fn count_rows(session: &ClusterSession, table: &str) -> i64 {
@@ -560,6 +588,97 @@ async fn read_counters(session: &ClusterSession, table: &str) -> Vec<(i32, Strin
     rows.sort();
     rows
 }
+
+against_a_cluster!(
+    met_010_a_real_migration_fills_the_request_latency_histograms,
+    |origin, target| {
+        // The test the defect needed. `MET-010`'s instruments existed, were unit-tested, were
+        // exported and were rendered — and no code path fed the latency histograms, so every
+        // percentile in a real run was zero and nothing was red. Asserting on a *real* migration
+        // through the *real* executor is the only thing that could have said so: a test that
+        // records into `Instruments` by hand proves the recorder and nothing about the wiring.
+        ddl(
+            &origin,
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {KEYSPACE}.obs_src (id int PRIMARY KEY, data text)"
+            ),
+        )
+        .await;
+        ddl(
+            &target,
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {KEYSPACE}.obs_dst (id int PRIMARY KEY, data text)"
+            ),
+        )
+        .await;
+        for id in 0..120i32 {
+            origin
+                .session()
+                .query_unpaged(
+                    format!("INSERT INTO {KEYSPACE}.obs_src (id, data) VALUES (?, ?)"),
+                    (id, format!("row-{id}")),
+                )
+                .await
+                .unwrap();
+        }
+
+        let instruments = Arc::new(Instruments::new(std::time::Instant::now()));
+        // A batch size above one so that the `batch` operation and the batch-size distribution are
+        // exercised too, and a rate limit so that `ENG-005`'s wait time is a real measurement.
+        let settings = MigrateSettings::new(5, 50, BatchGrouping::Strict, false, false, false);
+        let plan = plan_observed(
+            &origin,
+            &target,
+            "obs_src",
+            "obs_dst",
+            settings,
+            Some(Arc::clone(&instruments)),
+        )
+        .await;
+        let report = migrate_observed(
+            plan,
+            Some(Arc::clone(&instruments)),
+            SchedulerSettings::default()
+                .with_workers(4)
+                .with_ratelimits(2_000, 2_000),
+        )
+        .await;
+        assert_eq!(report.ranges_failed(), 0);
+        assert_eq!(count_rows(&target, "obs_dst").await, 120);
+
+        let snapshot = instruments.snapshot();
+
+        // Per side and per operation, which is what `MET-010` actually asks for.
+        let range_read = snapshot.origin.latency_for(Operation::RangeRead);
+        assert!(
+            range_read.count > 0,
+            "the origin range read recorded no latency: {range_read:?}"
+        );
+        assert!(range_read.percentile(0.5) > 0, "a page took no time at all");
+        let batch = snapshot.target.latency_for(Operation::Batch);
+        assert!(
+            batch.count > 0,
+            "the target batch recorded no latency: {batch:?}"
+        );
+
+        // An operation this run never issued stays empty rather than reporting zeroes, which is
+        // what keeps a guardrail run from exporting four empty target families.
+        assert!(snapshot.target.latency_for(Operation::KeyRead).is_empty());
+        assert!(snapshot.origin.latency_for(Operation::Write).is_empty());
+
+        // Every guard balanced its start, on the success path and the failing path alike.
+        assert_eq!(snapshot.origin.inflight, 0);
+        assert_eq!(snapshot.target.inflight, 0);
+
+        // The rest of `MET-010`'s list, on the same run.
+        assert!(snapshot.origin.bytes.total > 0, "no origin bytes counted");
+        assert!(snapshot.batch_size.count > 0, "no batch size recorded");
+        assert!(
+            !snapshot.origin.ratelimit_wait.is_empty(),
+            "the rate limiter of ENG-005 reported no wait, not even a zero-length one"
+        );
+    }
+);
 
 /// The suite's own sanity check: without a container runtime everything above skips, and this is
 /// the one case that must still run so `cargo test --workspace` proves the file compiles.

@@ -28,6 +28,7 @@ use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, Row, RunId, Side, TableRef};
 use cdm_cql::connect::ClusterSession;
 use cdm_cql::exec::{OriginReadOptions, OriginReader, PreparedSetOptions, RunExecutor, TokenWidth};
+use cdm_cql::observe::RequestMetrics;
 use cdm_cql::rows::{CqlRowSink, CqlRowSource, RowTimestamps};
 use cdm_cql::schema::introspect::fetch_table;
 use cdm_cql::schema::table::{ColumnMeta, TableSchema};
@@ -349,6 +350,9 @@ impl BuiltJob {
 ///
 /// [`ErrorKind::SchemaMismatch`] for a mapping the job cannot execute, and
 /// [`ErrorKind::Config`] for a feature this schema cannot satisfy.
+///
+/// `requests` is where every driver request the job issues is timed (`MET-010`); `None` records
+/// nothing and reads no clock.
 pub(super) async fn job(
     kind: JobKind,
     sessions: &Sessions,
@@ -356,12 +360,14 @@ pub(super) async fn job(
     config: &EffectiveConfig,
     args: &JobArgs,
     events: Option<Arc<cdm_metrics::EventBus>>,
+    requests: Option<Arc<cdm_metrics::Instruments>>,
 ) -> Result<BuiltJob, CdmError> {
+    let requests = request_metrics(requests);
     match kind {
-        JobKind::Migrate => migrate(sessions, tables, config, args)
+        JobKind::Migrate => migrate(sessions, tables, config, args, requests)
             .await
             .map(BuiltJob::bare),
-        JobKind::Validate => validate(sessions, tables, config, events).await,
+        JobKind::Validate => validate(sessions, tables, config, events, requests).await,
         // The guardrail is built from `ResolvedOrigin` and the origin session alone, so it cannot
         // be reached through a value that holds a target (`GRD-001`). `super::execute` routes it.
         JobKind::Guardrail => Err(CdmError::new(
@@ -378,6 +384,7 @@ async fn migrate(
     tables: &ResolvedTables,
     config: &EffectiveConfig,
     args: &JobArgs,
+    requests: RequestMetrics,
 ) -> Result<Arc<dyn RangeProcessor>, CdmError> {
     let counter_target = tables.target.is_counter_table();
     let writetime_filter = config.config().filter.writetime.min.is_some()
@@ -415,7 +422,10 @@ async fn migrate(
         settings.batch_size(),
         token_width(tables.partitioner()),
     )
-    .await?;
+    .await?
+    // MET-010: every origin page, target write and unlogged batch this run issues is timed here,
+    // because here is the only place a request exists.
+    .observing(requests);
 
     let plan = MigratePlan::resolve(
         executor,
@@ -446,6 +456,7 @@ pub(super) async fn guardrail(
     session: &ClusterSession,
     origin: &ResolvedOrigin,
     config: &EffectiveConfig,
+    requests: Option<Arc<cdm_metrics::Instruments>>,
 ) -> Result<BuiltJob, CdmError> {
     let select = OriginRangeSelect::new(
         &origin.origin,
@@ -459,7 +470,10 @@ pub(super) async fn guardrail(
         OriginReadOptions::default(),
         token_width(origin.partitioner()),
     )
-    .await?;
+    .await?
+    // MET-010: a guardrail run issues origin range reads and nothing else, so its target
+    // histograms stay empty and are not exported — which is what `GRD-001` implies.
+    .observing(request_metrics(requests));
     let rows = CqlOriginRows::resolve(Arc::new(reader), &origin.origin, &origin.projection)?;
     let guardrail = Guardrail::load(&config.to_core())?.resolve(&origin.facts)?;
     Ok(BuiltJob::bare(Arc::new(GuardrailJob::new(
@@ -565,6 +579,15 @@ fn using_clause(plan: &WritetimeTtlPlan) -> cdm_cql::statement::UsingClause {
     }
 }
 
+/// The request-timing seam `cdm-cql` records through, from the run's instruments (`MET-010`).
+///
+/// `cdm-metrics` is on the far side of the dependency edge from `cdm-cql` (`ARCHITECTURE.md` §3),
+/// so the two meet through `cdm_core::RequestObserver`, which `Instruments` implements. This is
+/// the one line that joins them, and it is in the crate that builds both.
+fn request_metrics(instruments: Option<Arc<cdm_metrics::Instruments>>) -> RequestMetrics {
+    RequestMetrics::from_option(instruments.map(|i| i as Arc<dyn cdm_core::RequestObserver>))
+}
+
 /// What to substitute for a null in a target key column (`MIG-013`).
 fn missing_key_policy(config: &EffectiveConfig) -> MissingKeyPolicy {
     MissingKeyPolicy {
@@ -578,6 +601,7 @@ async fn validate(
     tables: &ResolvedTables,
     config: &EffectiveConfig,
     events: Option<Arc<cdm_metrics::EventBus>>,
+    requests: RequestMetrics,
 ) -> Result<BuiltJob, CdmError> {
     let counter_target = tables.target.is_counter_table();
 
@@ -610,7 +634,9 @@ async fn validate(
         // the key the migration wrote the row under.
         missing_key_policy(config),
     )
-    .await?;
+    .await?
+    // MET-010: validate's origin scan, per page.
+    .observing(requests.clone());
 
     let codecs = codec_planner(config)?;
     let using = StatementOptions {
@@ -632,7 +658,9 @@ async fn validate(
         // selects for: a clause with no values bound into it writes `UNSET` (`VAL-018`).
         Some(Arc::new(PlanTimestamps(writetime))),
     )
-    .await?;
+    .await?
+    // MET-010: validate's target lookup (`VAL-001`) and its autocorrect write (`VAL-003`).
+    .observing(requests);
 
     // FEA-031, FEA-032: the extracted property is a target column like any other, and whether it
     // overwrites decides what a *comparison* of that column even means. A validate run that did
@@ -825,6 +853,40 @@ mod tests {
     }
 
     const TABLE: &str = "schema.origin.keyspace_table=ks.tbl";
+
+    #[test]
+    fn met_010_the_run_instruments_are_what_the_cql_executors_record_into() {
+        // The one line that joins the two halves. `cdm-cql` records into `dyn RequestObserver` and
+        // cannot name `Instruments`; `cdm-metrics` implements the trait and cannot name a driver.
+        // If this conversion produced a *different* set of instruments from the one `LiveRun`
+        // reports, every crate's own tests would still pass and every percentile in a real run
+        // would still be zero — which is exactly the shape of the defect this fixes.
+        let instruments = Arc::new(cdm_metrics::Instruments::new(std::time::Instant::now()));
+        let metrics = request_metrics(Some(Arc::clone(&instruments)));
+        assert!(metrics.is_observed());
+
+        // Recorded the way the executors record, through the seam and not through `Instruments`.
+        let observer: &dyn cdm_core::RequestObserver = instruments.as_ref();
+        observer.request_started(cdm_core::Side::Origin);
+        observer.request_finished(
+            cdm_core::Side::Origin,
+            cdm_metrics::Operation::RangeRead,
+            std::time::Duration::from_millis(9),
+        );
+
+        let snapshot = instruments.snapshot();
+        assert_eq!(
+            snapshot
+                .origin
+                .latency_for(cdm_metrics::Operation::RangeRead)
+                .count,
+            1
+        );
+
+        // And a run nobody is watching hands the executors nothing to record into, which is what
+        // keeps the unobserved path free of a clock read.
+        assert!(!request_metrics(None).is_observed());
+    }
 
     #[test]
     fn fea_010_constant_columns_reach_the_column_mapping() {

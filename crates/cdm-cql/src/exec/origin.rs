@@ -37,6 +37,7 @@ use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::Consistency;
 
 use crate::connect::{Backoff, ClusterSession};
+use crate::observe::RequestMetrics;
 use crate::statement::OriginRangeSelect;
 
 use super::scan::{OwnedRangeScan, TokenWidth};
@@ -77,6 +78,7 @@ pub struct OriginReader {
     prepared: PreparedStatement,
     token_width: TokenWidth,
     backoff: Backoff,
+    metrics: RequestMetrics,
 }
 
 impl OriginReader {
@@ -105,7 +107,17 @@ impl OriginReader {
             prepared,
             token_width,
             backoff: origin.backoff(),
+            // MET-010: unobserved until a caller asks, so a guardrail run that nobody is watching
+            // reads no clock per page.
+            metrics: RequestMetrics::unobserved(),
         })
+    }
+
+    /// Records every page request this reader issues against `metrics` (`MET-010`).
+    #[must_use]
+    pub fn observing(mut self, metrics: RequestMetrics) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// A paged scan of `range`, reading at most `fetch_size` rows per page (`ENG-003`).
@@ -122,6 +134,7 @@ impl OriginReader {
             range,
             self.token_width,
             self.backoff,
+            self.metrics.clone(),
         )
     }
 
