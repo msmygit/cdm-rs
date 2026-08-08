@@ -16,6 +16,19 @@ INSERT INTO origin.smoke_ttl_writetime(key, w_col3)  VALUES ('record6','C---') U
 -- record7: tw_col2 is both, so both move.
 INSERT INTO origin.smoke_ttl_writetime(key, tw_col2) VALUES ('record7','B---') USING TTL 700000 AND TIMESTAMP 1087384200000000;
 
--- record8: t_col1 changes but no writetime source does, so the change is written with the old
--- timestamp and is lost. That is the case's point, and it is exact parity with Java.
+-- record8: t_col1 changes but no writetime source does, so the correction is written with the
+-- row's *old* timestamp, 1087383720000000, and must therefore lose against anything the target
+-- holds at a later one. That is the case's point and the mirror image of record5..record7.
+--
+-- The second statement is what makes the point decidable. Without it the correction lands on a
+-- target cell written by the migrate step at exactly 1087383720000000 — the same timestamp,
+-- because that is the per-row maximum both times — and which of the two survives is then a
+-- tie-break Cassandra does not specify and has changed: 3.11 compares the values and keeps the
+-- larger ('AAAA'), 4.0+ compares the expiry first and keeps the longer-lived cell ('A---', TTL
+-- 700000). Java's own expected.out records the 4.0+ outcome, so its fixture has the same
+-- version dependency; asserting either answer here would fail on half the supported engines.
+-- Seeding the target at a strictly later timestamp removes the tie: the correction loses on
+-- every version, and it loses only because it carried the origin's writetime rather than the
+-- coordinator's wall clock, which is exactly what VAL-018 requires.
 INSERT INTO origin.smoke_ttl_writetime(key, t_col1)  VALUES ('record8','A---') USING TTL 700000 AND TIMESTAMP 1087384200000000;
+INSERT INTO target.smoke_ttl_writetime(key, t_col1)  VALUES ('record8','ANEW') USING TIMESTAMP 1087384200000000;

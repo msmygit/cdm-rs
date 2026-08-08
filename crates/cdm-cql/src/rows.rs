@@ -46,6 +46,16 @@
 //! started from. Without the first, validate looks every substituted row up by a null key and
 //! reports it missing; without the second, it finds the row and reports it mismatched.
 //!
+//! # A corrected row carries the origin's TTL and writetime (`VAL-018`)
+//!
+//! Autocorrect writes through [`CqlRowSink::write`], and `VAL-018` requires that write to carry the
+//! origin row's TTL and writetime exactly as a migrate write does. The two values are resolved by
+//! `FEA-040`..`FEA-046`, from `TTL(…)`/`WRITETIME(…)` cells the origin projection selects — which is
+//! `cdm-feature`'s work, on the far side of the dependency edge (`ARCHITECTURE.md` §3). So the sink
+//! holds a [`RowTimestamps`] rather than the plan itself, and the harness that resolved the plan for
+//! the statement's `USING` clause hands the same plan in here. A sink built without one binds
+//! `UNSET` for both, which is what an upsert with no `USING` clause has bind markers for anyway.
+//!
 //! # Counter corrections are converged, not re-added
 //!
 //! `MIG-030` writes a counter as `SET c = c + ?`, so the bound value is a *delta*. When validate
@@ -64,6 +74,7 @@
 //! - `MIG-013` — the null-key substitution, in the key and in the row
 //! - `MIG-030`, `MIG-031` — the counter delta
 //! - `VAL-001` — the target lookup by primary key
+//! - `VAL-018` — [`RowTimestamps`], bound by [`CqlRowSink::write`]
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -537,6 +548,32 @@ impl RowStream for RangePager {
     }
 }
 
+/// The TTL and the writetime one origin row is written with (`FEA-040`..`FEA-046`, `VAL-018`).
+///
+/// `WritetimeTtlPlan` in `cdm-feature` is the implementation, and it cannot be named here:
+/// `cdm-feature` depends on this crate and not the other way round (`ARCHITECTURE.md` §3). The trait
+/// is the seam, so that a corrected row is stamped from the same resolved plan a migrated row is —
+/// the whole of `VAL-018` is that the two paths must not compute this differently.
+///
+/// [`CqlRowSink`] calls both methods once per corrected row, and passes the results straight to
+/// [`BindInputs::ttl`] and [`BindInputs::writetime`]. `None` means the plan resolves no value, which
+/// binds `UNSET` and leaves the server to assign the timestamp (`FEA-046`).
+pub trait RowTimestamps: std::fmt::Debug + Send + Sync {
+    /// The row's TTL, in seconds.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::TypeConversion`] if a selected `TTL(…)` cell is not an `int`.
+    fn ttl(&self, row: &Row) -> Result<Option<i32>, CdmError>;
+
+    /// The row's writetime, in microseconds.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::TypeConversion`] if a selected `WRITETIME(…)` cell is not a `bigint`.
+    fn writetime(&self, row: &Row) -> Result<Option<i64>, CdmError>;
+}
+
 /// The target side of a run: the lookup by primary key and the upsert (`PLG-005`, `VAL-001`).
 #[derive(Debug)]
 pub struct CqlRowSink {
@@ -545,6 +582,7 @@ pub struct CqlRowSink {
     upsert: PreparedStatement,
     binder: Binder,
     counters: Vec<CounterColumn>,
+    timestamps: Option<Arc<dyn RowTimestamps>>,
 }
 
 /// A counter column, and where its two operands live (`MIG-031`).
@@ -560,11 +598,18 @@ impl CqlRowSink {
     /// # Errors
     ///
     /// [`ErrorKind::Read`] or [`ErrorKind::Write`] if a statement does not prepare.
+    ///
+    /// `timestamps` must be resolved from the same `TTL(…)`/`WRITETIME(…)` projection the origin
+    /// scan selects and must be the plan the `binder`'s statement took its `USING` clause from
+    /// (`VAL-018`). A parameter rather than a setter because a sink that silently omitted them
+    /// still writes the row, still agrees with every counter, and still exits 0 — only the
+    /// timestamp is wrong, which is precisely how this was lost once already.
     pub async fn prepare(
         session: Arc<Session>,
         select: &TargetSelectByPk,
         binder: Binder,
         mapping: &ColumnMapping,
+        timestamps: Option<Arc<dyn RowTimestamps>>,
     ) -> Result<Self, CdmError> {
         let prepared_select = session
             .prepare(select.cql())
@@ -606,6 +651,7 @@ impl CqlRowSink {
             upsert: prepared_upsert,
             binder,
             counters,
+            timestamps,
         })
     }
 
@@ -659,10 +705,16 @@ impl RowSink for CqlRowSink {
         // `&Row` is what implements `SourceRow`, not `Row`: the trait is over the frame lifetime so
         // that a borrowed cell can outlive the call, which is what `MIG-040` is built on.
         let source: &Row = adjusted.as_ref().unwrap_or_else(|| record.origin());
+        // VAL-018: read off the origin row rather than off `source`, because the two differ only in
+        // the counter cells `MIG-031` rewrote — and a row whose TTL and writetime are read from a
+        // delta is a row whose correction is stamped with an arithmetic artefact.
+        let (ttl, writetime) = timestamps_of(self.timestamps.as_deref(), record.origin())?;
         let bound = self.binder.bind(
             &source,
             BindInputs {
                 key: Some(record.key()),
+                ttl,
+                writetime,
                 ..BindInputs::default()
             },
         )?;
@@ -728,6 +780,25 @@ impl RowSink for CqlRowSink {
             }
         }
     }
+}
+
+/// The TTL and writetime to stamp one corrected row with (`VAL-018`).
+///
+/// `(None, None)` when the sink was built without a plan, and when the plan resolves neither —
+/// `FEA-045`'s counter table, or a run that configured no writetime column — both of which the
+/// binder turns into `UNSET`, against a statement that has no `USING` clause to bind them into.
+///
+/// # Errors
+///
+/// Whatever the plan reports for a cell it cannot decode.
+fn timestamps_of(
+    plan: Option<&dyn RowTimestamps>,
+    row: &Row,
+) -> Result<(Option<i32>, Option<i64>), CdmError> {
+    let Some(plan) = plan else {
+        return Ok((None, None));
+    };
+    Ok((plan.ttl(row)?, plan.writetime(row)?))
 }
 
 /// A failed read, naming the side and the statement but never a value (`ERR-001`, `SEC-002`).
@@ -982,6 +1053,53 @@ mod tests {
             "{error}"
         );
         assert!(error.to_string().contains("SCH-006"), "{error}");
+    }
+
+    /// A plan that answers from the last two cells of the row, as `FEA-040`'s does.
+    #[derive(Debug)]
+    struct LastTwoCells;
+
+    impl RowTimestamps for LastTwoCells {
+        fn ttl(&self, row: &Row) -> Result<Option<i32>, CdmError> {
+            Ok(row
+                .get(row.len() - 2)
+                .and_then(RawCell::bytes)
+                .and_then(|bytes| <[u8; 4]>::try_from(&**bytes).ok())
+                .map(i32::from_be_bytes))
+        }
+
+        fn writetime(&self, row: &Row) -> Result<Option<i64>, CdmError> {
+            Ok(row
+                .get(row.len() - 1)
+                .and_then(RawCell::bytes)
+                .and_then(|bytes| <[u8; 8]>::try_from(&**bytes).ok())
+                .map(i64::from_be_bytes))
+        }
+    }
+
+    #[test]
+    fn val_018_a_correction_takes_its_ttl_and_writetime_from_the_origin_row() {
+        // The whole of the defect: the sink bound `BindInputs { key, ..default() }`, so both
+        // markers went out as `UNSET` and the coordinator stamped the repaired row with its own
+        // wall clock — a timestamp that shadows every later origin write.
+        let row = Row::new(vec![
+            text("key1"),
+            RawCell::new(3600_i32.to_be_bytes().to_vec()),
+            RawCell::new(1_087_384_200_000_000_i64.to_be_bytes().to_vec()),
+        ]);
+        let (ttl, writetime) = timestamps_of(Some(&LastTwoCells), &row).unwrap();
+        assert_eq!(ttl, Some(3600));
+        assert_eq!(writetime, Some(1_087_384_200_000_000));
+    }
+
+    #[test]
+    fn val_018_a_sink_with_no_plan_binds_neither_value() {
+        // `FEA-045`'s counter table and a run that configured no writetime column both arrive here.
+        // `FEA-046` then omits the `USING` clause, and the server assigns the timestamp — which is
+        // the one case in which a corrected row may carry one.
+        let (ttl, writetime) = timestamps_of(None, &origin_row()).unwrap();
+        assert_eq!(ttl, None);
+        assert_eq!(writetime, None);
     }
 
     /// SIT `regression/04_null_ts_in_pk`: `ts` is an ordinary origin column and a target clustering

@@ -202,6 +202,9 @@ async fn build_reporting(
         &target_select,
         binder,
         &mapping,
+        // These cases configure no TTL or writetime, so `VAL-018` resolves no plan and the upsert
+        // above carries no `USING` clause to bind one into.
+        None,
     )
     .await
     .unwrap();

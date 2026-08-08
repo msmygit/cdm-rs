@@ -35,14 +35,25 @@ from `docs/SPEC.md` first and confirmed against a run second. Where a value diff
 original, the case file says which numbered divergence in `docs/MIGRATION_FROM_JAVA.md` explains
 it.
 
+## No case may depend on an equal-timestamp tie-break
+
+A case that writes two cells at the *same* `USING TIMESTAMP` is asserting a reconciliation rule
+Cassandra does not specify and has changed: 3.11 resolves the tie on the cell values and keeps the
+larger, 4.0+ resolves it on the expiry first and keeps the longer-lived cell. `smoke/03_ttl_writetime`
+inherited exactly that from Java — its `record8` correction is stamped with the row's own unchanged
+writetime, so it collides with the cell the migrate step wrote at that same timestamp, and Java's
+`expected.out` simply records whichever answer the version it was generated against produced. The
+fixture seeds the target at a strictly later timestamp instead, so the outcome is the same on every
+supported engine; `break.cql` says so at the statement. This is a fixture change, not a divergence:
+cdm-rs emits the same statement Java does.
+
 Row **order** is not asserted. Java's `expected.out` files record the order `cqlsh` returned, which
 for a partition-key scan is murmur3 token order — a fact about the fixture's keys rather than about
 the migration. The harness compares the sorted row set, the column list and the `(N rows)` count.
 
 ## Cases that cannot run yet
 
-Four cases carry a `blocked <reason>` line in their `case.txt`, which the runner prints instead of
-asserting. Three of them are the same gap: validate issues one target lookup per *record*, where an
-explode map produces one target row per map *entry*, so every entry reports missing. The fourth is
-`VAL-018` — the TTL and writetime an autocorrected row must carry. The cases are written in full
-and will pass unchanged once that work lands.
+Three cases carry a `blocked <reason>` line in their `case.txt`, which the runner prints instead of
+asserting. All three are the same gap: validate issues one target lookup per *record*, where an
+explode map produces one target row per map *entry*, so every entry reports missing. The cases are
+written in full and will pass unchanged once that work lands.
