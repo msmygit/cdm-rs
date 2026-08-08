@@ -227,6 +227,9 @@ cargo xtask it                  # integration tests (needs Docker or Podman)
 Every pull request maps to one or more requirement IDs from `docs/SPEC.md`, updates
 `docs/TRACEABILITY.md`, and ships tests that cite those IDs. CI enforces all three.
 
+If you drive this repository with coding agents, each one builds in its own git worktree and those
+build directories add up fast — see [`scripts/README.md`](scripts/README.md) and `just reclaim`.
+
 ## License
 
 Apache License 2.0 — see [`LICENSE`](LICENSE).
