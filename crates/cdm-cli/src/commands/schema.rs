@@ -313,5 +313,6 @@ fn job_args(config: &ConfigArgs) -> JobArgs {
         config: config.clone(),
         dry_run: false,
         summary_out: None,
+        tui: false,
     }
 }

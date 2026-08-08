@@ -25,10 +25,10 @@ delivered as one PR where splitting them would have merged a knowingly-wrong int
 
 | Roadmap PRs | State |
 |---|---|
-| #1–#20, #27–#31, #36–#38 | **Delivered.** Docs and scaffolding, the driver spike, `cdm-core`, all of `cdm-config`, all of `cdm-codec`, `cdm-cql` through statement construction, the CLI skeleton, the testkit, the token planner, the scheduler, and metrics through the event bus. |
+| #1–#20, #27–#31, #36–#39 | **Delivered.** Docs and scaffolding, the driver spike, `cdm-core`, all of `cdm-config`, all of `cdm-codec`, `cdm-cql` through statement construction, the CLI skeleton, the testkit, the token planner, the scheduler, and metrics through the event bus and the terminal UI. |
 | #21–#26 | **Delivered.** The three jobs (migrate with counters, validate with autocorrect, guardrail), run tracking with resume and rerun, the error limit and graceful shutdown. |
 | #32 | **Delivered.** All nineteen Java SIT cases ported to a declarative harness under `tests/sit/`, driven against a container by `cargo xtask sit`, with `sit.yml` restored to `push: [main]` and a nightly schedule. Ten cases ran and passed on delivery; the nine that reported `BLOCKED` each named the `cdm-cli` wiring they waited on — every one of them the same four defaulted arguments in `crates/cdm-cli/src/harness/build.rs`. #21c, #21d and #21e supplied those arguments, and #21f closed the last gap — validate looked a target row up once per record where an explode map produces one per map *entry*. All nineteen cases now run and pass; none is `BLOCKED`. |
-| #33–#35, #39–#58 | **Not started.** The property and differential harnesses, `--compat-java`, the terminal UI, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
+| #33–#35, #40–#58 | **Not started.** The property and differential harnesses, `--compat-java`, the service facade, the API/MCP/A2A/UI surface, the distributed coordinator, and the release machinery. |
 
 **That gap is now closed.** The shared *connect → introspect → plan → run* path had no roadmap PR
 of its own: it was assumed into #21–#24 and fell between them, because each job could be built and

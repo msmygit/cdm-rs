@@ -355,12 +355,13 @@ pub(super) async fn job(
     tables: &ResolvedTables,
     config: &EffectiveConfig,
     args: &JobArgs,
+    events: Option<Arc<cdm_metrics::EventBus>>,
 ) -> Result<BuiltJob, CdmError> {
     match kind {
         JobKind::Migrate => migrate(sessions, tables, config, args)
             .await
             .map(BuiltJob::bare),
-        JobKind::Validate => validate(sessions, tables, config).await,
+        JobKind::Validate => validate(sessions, tables, config, events).await,
         // The guardrail is built from `ResolvedOrigin` and the origin session alone, so it cannot
         // be reached through a value that holds a target (`GRD-001`). `super::execute` routes it.
         JobKind::Guardrail => Err(CdmError::new(
@@ -576,6 +577,7 @@ async fn validate(
     sessions: &Sessions,
     tables: &ResolvedTables,
     config: &EffectiveConfig,
+    events: Option<Arc<cdm_metrics::EventBus>>,
 ) -> Result<BuiltJob, CdmError> {
     let counter_target = tables.target.is_counter_table();
 
@@ -705,6 +707,15 @@ async fn validate(
         job = job.with_explode(explode);
     }
 
+    // MET-030: a `Discrepancy` event per finding, but only when something is listening. The bus is
+    // handed over exactly when a live display (`MET-031`) has subscribed; on a silent run the
+    // events would be constructed — key fingerprint and all, per differing row — and then dropped
+    // for want of a subscriber, which is real work on the one job that can produce a finding per
+    // row. `SEC-002`'s redaction is applied by the bus at construction either way.
+    if let Some(events) = events {
+        job = job.with_events(events);
+    }
+
     Ok(BuiltJob {
         processor: Arc::new(job),
         discrepancies: report.is_enabled().then_some(report),
@@ -794,6 +805,7 @@ mod tests {
                 },
                 dry_run: false,
                 summary_out: None,
+                tui: false,
             },
             super::super::JobOptions::default(),
         )

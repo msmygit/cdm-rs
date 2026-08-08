@@ -22,6 +22,7 @@
 //! (`PLG-004`) — has to supply.
 
 mod build;
+pub mod observe;
 mod report;
 mod session;
 
@@ -31,14 +32,25 @@ use std::sync::Arc;
 use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, RunId};
 use cdm_engine::planner::{Partitioner, Planner, PlannerSettings, TokenPlan};
-use cdm_engine::scheduler::{NoopObserver, RunReport, Scheduler, SchedulerSettings};
+use cdm_engine::scheduler::{NoopObserver, RangeObserver, RunReport, Scheduler, SchedulerSettings};
+use cdm_metrics::EventBus;
 
 pub use build::{BuiltJob, JobBuilder, ResolvedOrigin, ResolvedTables};
+pub use observe::LiveRun;
 pub use report::{PlanSummary, RunSummary};
 pub use session::Sessions;
 
 use crate::cli::JobArgs;
 use crate::loader::load;
+use crate::tui::{LiveDisplay, NodeProvider, Presentation};
+
+/// The run identifier a single-node run plans and publishes under.
+///
+/// Zero, because that is what [`token_plan`] has always passed to the planner: run identifiers are
+/// allocated by the tracking store (`TRK-010`), and a run with tracking disabled has none. Naming
+/// the constant is what keeps the plan and the event stream (`MET-030`) agreeing about which run
+/// they describe.
+const UNTRACKED_RUN_ID: RunId = RunId::from_raw(0);
 
 /// The job flags that are spellings of configuration rather than of behaviour (`VAL-015`).
 ///
@@ -76,31 +88,91 @@ pub struct JobOutcome {
 /// mapped (`ErrorKind::SchemaMismatch`). A run that *starts* and then fails ranges returns `Ok`
 /// with a summary saying so — that is a completed command reporting a bad result, which
 /// `CLI-004` distinguishes from the command itself failing.
-pub fn execute(args: &JobArgs, kind: JobKind, options: JobOptions) -> Result<JobOutcome, CdmError> {
+pub fn execute(
+    args: &JobArgs,
+    kind: JobKind,
+    options: JobOptions,
+    presentation: Presentation,
+) -> Result<JobOutcome, CdmError> {
     let config = resolve(args, options)?;
     // The whole run happens inside one runtime, built here rather than in `main`, so that a
     // command which never touches a cluster — `cdm config validate`, `cdm completions` — does not
     // pay for a thread pool it will not use.
     runtime()?.block_on(async {
+        // MET-030: one bus per run, created before the job so that a validate job can be handed it
+        // (`VAL-002`'s findings are published through it) and before the scheduler so that the
+        // display has subscribed by the time the first range starts.
+        let node_id = SchedulerSettings::from_config(&config).node_id().to_owned();
+        let bus = Arc::new(EventBus::new(UNTRACKED_RUN_ID, node_id));
+
         // GRD-001: a guardrail run opens the origin and nothing else, so it takes its own four
         // steps rather than the two-sided ones. The two paths meet again at the plan, because the
         // ring is split the same way whatever is going to read it.
         if kind == JobKind::Guardrail {
-            let sessions = Sessions::open_origin(&config).await?;
+            let sessions = Arc::new(Sessions::open_origin(&config).await?);
             let origin = ResolvedOrigin::introspect(&sessions.origin, &config).await?;
             let job = build::guardrail(&sessions.origin, &origin, &config).await?;
             let plan = token_plan(&config, origin.partitioner())?;
-            let report = run(&config, plan, Arc::clone(&job.processor)).await?;
+            let report = run(
+                &config,
+                kind,
+                plan,
+                Arc::clone(&job.processor),
+                &bus,
+                presentation,
+                node_provider(&sessions),
+            )
+            .await?;
             return Ok(finish(kind, args, &config, &report, &job));
         }
 
-        let sessions = Sessions::open(&config).await?;
+        let sessions = Arc::new(Sessions::open(&config).await?);
         let tables = ResolvedTables::introspect(&sessions, &config).await?;
-        let job = build::job(kind, &sessions, &tables, &config, args).await?;
+        let job = build::job(
+            kind,
+            &sessions,
+            &tables,
+            &config,
+            args,
+            presentation.is_live().then(|| Arc::clone(&bus)),
+        )
+        .await?;
         let plan = token_plan(&config, tables.partitioner())?;
-        let report = run(&config, plan, Arc::clone(&job.processor)).await?;
+        let report = run(
+            &config,
+            kind,
+            plan,
+            Arc::clone(&job.processor),
+            &bus,
+            presentation,
+            node_provider(&sessions),
+        )
+        .await?;
         Ok(finish(kind, args, &config, &report, &job))
     })
+}
+
+/// Splits `ks.tbl` into its two halves for the `RunStarted` event (`MET-030`).
+///
+/// `schema.origin.keyspace_table` is one string in the configuration model because that is how
+/// Java spells the property (`CLI-002`), and the event carries the two parts separately. A value
+/// with no dot is taken as a keyspace, which is what an operator who typed half of it meant.
+fn split_keyspace_table(value: Option<&str>) -> (Option<String>, Option<String>) {
+    match value.map(|value| value.split_once('.')) {
+        Some(Some((keyspace, table))) => (Some(keyspace.to_owned()), Some(table.to_owned())),
+        Some(None) => (value.map(str::to_owned), None),
+        None => (None, None),
+    }
+}
+
+/// A callback the display polls for the driver's current view of the cluster (`MET-031`).
+///
+/// Polled rather than snapshotted once, because a node going away mid-run is exactly the thing an
+/// operator watching a display wants to see. The driver keeps this metadata refreshed from its own
+/// topology events, so reading it costs no query.
+fn node_provider(sessions: &Arc<Sessions>) -> NodeProvider {
+    let sessions = Arc::clone(sessions);
+    Arc::new(move || sessions.node_status())
 }
 
 /// Closes the run's artefacts and assembles both summaries (`MET-033`, `VAL-013`, `CFG-023`).
@@ -267,16 +339,63 @@ fn token_plan_with_planner(
     Ok((plan, planner))
 }
 
-/// Runs the plan through the scheduler.
+/// Runs the plan through the scheduler, with whatever is watching it (`ENG-001`, `MET-031`).
+///
+/// # The display is started and stopped around the run, never inside it
+///
+/// The terminal is taken before the first range and handed back after the last, on every path out
+/// including the failing one — the `?` is deliberately *after* `finish`. A run that returned early
+/// while the alternate screen was still up would print its error onto a screen that is about to be
+/// discarded, and leave the operator's shell in raw mode. See `crate::tui::terminal`.
 async fn run(
     config: &EffectiveConfig,
+    kind: JobKind,
     plan: TokenPlan,
     job: Arc<dyn cdm_engine::scheduler::RangeProcessor>,
+    bus: &Arc<EventBus>,
+    presentation: Presentation,
+    nodes: NodeProvider,
 ) -> Result<RunReport, CdmError> {
     let settings = SchedulerSettings::from_config(config);
-    Scheduler::new(settings)?
-        .run(&plan, job, Arc::new(NoopObserver))
-        .await
+    let scheduler = Scheduler::new(settings)?;
+
+    // A silent run keeps the observer it has always had. `LiveRun` is cheap — two calls per range,
+    // none per row — but "cheap" is not "free", and a run nobody is watching should pay nothing.
+    let Presentation::Silent = presentation else {
+        let live = Arc::new(LiveRun::new(
+            kind,
+            UNTRACKED_RUN_ID,
+            config.node_id(),
+            Arc::clone(bus),
+            &plan.token_ranges(),
+            std::time::Instant::now(),
+        ));
+        let display = LiveDisplay::start(
+            presentation,
+            live.dashboard(),
+            bus.subscribe(),
+            scheduler.control(),
+            Some(nodes),
+        );
+        // MET-030: the run is announced only once there is somebody to hear it.
+        let (keyspace, table) =
+            split_keyspace_table(config.config().schema.origin.keyspace_table.as_deref());
+        bus.run_started(
+            chrono::Utc::now(),
+            kind,
+            keyspace,
+            table,
+            u64::try_from(plan.len()).unwrap_or(u64::MAX),
+        );
+
+        let report = scheduler
+            .run(&plan, job, live as Arc<dyn RangeObserver>)
+            .await;
+        display.finish().await;
+        return report;
+    };
+
+    scheduler.run(&plan, job, Arc::new(NoopObserver)).await
 }
 
 // Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
@@ -301,6 +420,7 @@ mod tests {
             },
             dry_run: false,
             summary_out: None,
+            tui: false,
         }
     }
 

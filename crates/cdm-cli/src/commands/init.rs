@@ -112,6 +112,7 @@ pub fn init(
         config: overrides_from(args, &config),
         dry_run: false,
         summary_out: None,
+        tui: false,
     })?;
 
     let mut notes =

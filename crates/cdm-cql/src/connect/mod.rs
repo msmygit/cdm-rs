@@ -18,4 +18,4 @@ pub mod session;
 pub use mode::ConnectionMode;
 pub use policy::{Backoff, CdmRetryPolicy, SpeculativeSettings};
 pub use probe::{Capabilities, Flavour};
-pub use session::{connect, ClusterSession};
+pub use session::{connect, ClusterNode, ClusterSession};

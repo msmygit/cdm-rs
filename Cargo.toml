@@ -95,8 +95,23 @@ sha1 = "0.10"
 # --- CLI --------------------------------------------------------------------
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4"
-ratatui = "0.30"
-crossterm = "0.29"
+# The terminal UI of `MET-031`. Both are held to the smallest feature set that draws a frame and
+# reads a key, because everything else they can do is a dependency somebody has to audit:
+# `ratatui`'s default features pull in a calendar widget and a proc-macro crate we never call, and
+# its other backends (`termion`, `termwiz`, `termina`) are whole alternative terminal stacks.
+#
+# `crossterm_0_29` rather than `crossterm` so that `ratatui-crossterm` binds to the *same*
+# crossterm we depend on directly: the raw-mode guard and the event reader are ours, the drawing is
+# ratatui's, and two copies of crossterm would mean two independent notions of whether the terminal
+# is in raw mode — which is exactly the bug that leaves an operator's shell unusable after a crash.
+#
+# `NFR-005`: ratatui 0.30 declares `rust-version = "1.88"`, the workspace MSRV exactly. Raising
+# neither is possible without raising both.
+ratatui = { version = "0.30", default-features = false, features = [
+    "crossterm_0_29",
+    "layout-cache",
+] }
+crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
 indicatif = "0.17"
 owo-colors = "4"
 

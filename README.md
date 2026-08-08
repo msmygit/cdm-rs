@@ -95,6 +95,11 @@ cdm plan --config cdm.toml
 # Migrate, writing a machine-readable run summary at the end
 cdm migrate --config cdm.toml --summary-out run.json
 
+# Migrate while watching it: throughput, a weighted progress bar, the ETA, the nodes and the
+# errors. On a terminal this is an interactive display; piped, redirected or in CI it degrades
+# by itself to one progress line on stderr. `q`, Esc or Ctrl-C stops the run gracefully.
+cdm migrate --config cdm.toml --tui
+
 # A fast pre-flight: compare 5% of each token range, existence only
 cdm validate --config cdm.toml --sample 5 --keys-only
 

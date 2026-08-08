@@ -1536,6 +1536,16 @@ streamable over SSE at `GET /v1/runs/{id}/events`. Event schemas are part of the
 progress bar, ETA, per-node status in cluster mode, error tail, and latency sparklines. It MUST
 degrade automatically to line-based progress when stdout is not a TTY.
 
+`--tui` is accepted by `migrate`, `validate` and `guardrail`; `plan` MUST reject it, because it
+runs no ranges and would have nothing to show. Line-based progress MUST be written to standard
+error, never to standard output, and `--output json` MUST therefore take the line-based mode even
+on a TTY so that the single document `CLI-005` promises stays parseable. The ETA MUST be shown as
+withheld, not as zero, whenever `MET-011` withholds it; the error tail MUST NOT show a
+discrepancy's key or a diagnostic's quoted value (`SEC-002`); and events the bounded bus of
+`MET-030` dropped MUST be reported as a count rather than silently omitted. Keys that stop the run
+(`q`, `Esc`, `Ctrl-C`) MUST request the same graceful shutdown as a signal (`ENG-010`), and the
+terminal MUST be restored on every exit path, panics included.
+
 **MET-032 [N]** — All logs MUST be `tracing`-based, with `logging.format = json` producing
 structured records suitable for ingestion, and MUST never log secrets or, by default, row values
 (`SEC-002`).

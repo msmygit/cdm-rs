@@ -57,6 +57,36 @@ impl Sessions {
         })
     }
 
+    /// The cluster nodes both sides are connected to, as the live display shows them (`MET-031`).
+    ///
+    /// Origin first, then target, each already sorted by address, so a display redrawn twice a
+    /// second does not reorder its own rows. A guardrail run contributes only the origin, because
+    /// `GRD-001` means there is no target session to ask.
+    ///
+    /// These are the *database* nodes. The cdm-rs nodes of a distributed run are a different thing
+    /// entirely and belong to `cdm-cluster`, which is roadmap items #50–#52 and not started; see
+    /// [`cdm_metrics::NodeStatus`] for why this display does not pretend otherwise.
+    pub fn node_status(&self) -> Vec<cdm_metrics::NodeStatus> {
+        let sides = [Some(&self.origin), self.target.as_ref()];
+        sides
+            .into_iter()
+            .flatten()
+            .flat_map(|session| {
+                let side = session.side();
+                session
+                    .nodes()
+                    .into_iter()
+                    .map(move |node| cdm_metrics::NodeStatus {
+                        side,
+                        address: node.address,
+                        datacenter: node.datacenter,
+                        rack: node.rack,
+                        connected: node.connected,
+                    })
+            })
+            .collect()
+    }
+
     /// The target session.
     ///
     /// # Errors

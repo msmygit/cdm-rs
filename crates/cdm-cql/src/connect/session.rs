@@ -102,6 +102,51 @@ impl ClusterSession {
     pub fn execution_profile(&self) -> &ExecutionProfileHandle {
         &self.profile
     }
+
+    /// The cluster's nodes, as the driver's metadata currently sees them (`MET-031`).
+    ///
+    /// Read from the driver rather than from `system.peers`: the driver keeps this view refreshed
+    /// by its own topology events, so a live display gets a node going down without issuing a query
+    /// of its own on every frame.
+    ///
+    /// Sorted by address, so that a display redrawn twice a second does not reorder its own rows.
+    /// `connected` is the driver's `Node::is_connected`, which means "this process currently holds a
+    /// connection pool to it" — not "the node is up as far as its own gossip is concerned". The
+    /// two differ exactly when they are interesting: a node the host filter excluded, or one this
+    /// client alone cannot reach.
+    pub fn nodes(&self) -> Vec<ClusterNode> {
+        let mut nodes: Vec<ClusterNode> = self
+            .session
+            .get_cluster_state()
+            .get_nodes_info()
+            .iter()
+            .map(|node| ClusterNode {
+                address: node.address.to_string(),
+                datacenter: node.datacenter.clone(),
+                rack: node.rack.clone(),
+                connected: node.is_connected(),
+            })
+            .collect();
+        nodes.sort_by(|left, right| left.address.cmp(&right.address));
+        nodes
+    }
+}
+
+/// One node of a connected cluster (`MET-031`).
+///
+/// A plain value rather than the driver's `Node`, so that the live display of `MET-031` can be
+/// rendered by `cdm-cli` without `scylla` leaving this crate — `ARCHITECTURE.md` §3 allows the
+/// dependency here and nowhere else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterNode {
+    /// The address the driver connects to it on.
+    pub address: String,
+    /// Its datacenter, when the driver knows one.
+    pub datacenter: Option<String>,
+    /// Its rack, when the driver knows one.
+    pub rack: Option<String>,
+    /// Whether this process currently holds a connection pool to it.
+    pub connected: bool,
 }
 
 /// Connects one side (`CON-001`, `CON-002`).

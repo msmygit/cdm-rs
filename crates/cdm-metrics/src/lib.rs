@@ -74,11 +74,15 @@
 //!   payloads (`MET-020`, `MET-021`);
 //! * [`EventBus`] and [`NdjsonSink`] — the structured event stream and its NDJSON transcription
 //!   (`MET-030`);
+//! * [`Dashboard`] and [`DashboardState`] — the terminal-agnostic view model the live display of
+//!   `MET-031` draws, folded from the three above;
 //! * [`logging`] — the `tracing` subscriber behind `logging.format` (`MET-032`);
 //! * [`RunSummary`] — the one JSON document that says what a run did, which is the artefact a
 //!   user attaches to a ticket (`MET-033`).
 //!
-//! The terminal UI (`MET-031`, PR #39) is still to come.
+//! The renderer of `MET-031` itself lives in `cdm-cli`, where `--tui` is parsed and where
+//! `ratatui` is allowed to be a dependency; this crate supplies it with [`Dashboard`] and nothing
+//! terminal-shaped.
 //!
 //! # Two rules this crate is built around
 //!
@@ -109,6 +113,7 @@
 //! - `MET-020` — [`export::prometheus::render`], [`PrometheusExporter`], [`MetricLabels`]
 //! - `MET-021` — [`OtlpExporter`], [`OtlpTransport`], [`SpanRecord`]
 //! - `MET-030` — [`EventBus`], [`Event`], [`NdjsonSink`]
+//! - `MET-031` — [`Dashboard`], [`DashboardState`], [`RangeTimings`] (the renderer is in `cdm-cli`)
 //! - `MET-032` — [`logging::init`], [`logging::LogFormat`]
 //! - `MET-033` — [`RunSummary`], [`DiscrepancySummary`]
 
@@ -117,6 +122,7 @@ mod registry;
 mod report;
 mod summary;
 
+pub mod dashboard;
 pub mod event;
 pub mod export;
 pub mod instrument;
@@ -125,6 +131,7 @@ pub mod logging;
 pub mod progress;
 
 pub use counter::{registered_counters, CounterKind};
+pub use dashboard::{Dashboard, DashboardState, ErrorLine, NodeStatus, RangeTimings};
 pub use event::{
     DiscrepancyKind, Event, EventBus, EventPayload, EventRange, EventStreamError, EventSubscriber,
     KeyRef, NdjsonSink, Redaction,
@@ -141,7 +148,7 @@ pub use label::MetricLabels;
 pub use logging::{LogFormat, LoggingSetup};
 pub use progress::{Progress, ProgressTracker, RangeEstimate};
 pub use registry::{Counter, CounterView, JobCounters};
-pub use report::{FINAL_BLOCK_RULE, METRIC_SEPARATOR};
+pub use report::{parse_run_info, FINAL_BLOCK_RULE, METRIC_SEPARATOR};
 pub use summary::{
     DiscrepancyReportRef, DiscrepancySummary, NodeSummary, PlanSummary, RunSummary, Timings,
     SUMMARY_SCHEMA,
