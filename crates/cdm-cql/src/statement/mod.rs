@@ -46,7 +46,7 @@
 //! - `MIG-012`, `MIG-013`, `MIG-014` — [`Binder`], [`BoundValue`]
 //! - `ERR-005` — [`BindFailure`]
 
-mod bind;
+pub(crate) mod bind;
 mod mapping;
 mod projection;
 mod select;

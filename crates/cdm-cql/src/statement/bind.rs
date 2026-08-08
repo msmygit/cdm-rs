@@ -139,7 +139,11 @@ impl MissingKeyPolicy {
     /// is not configurable there and is not made configurable here. `timestamp` becomes the
     /// configured replacement. Every other type has no defensible substitute: silently inventing a
     /// UUID or a zero integer would merge distinct origin rows into one target row.
-    fn substitute(self, cql_type: &CqlTypeInfo) -> Option<Vec<u8>> {
+    ///
+    /// Visible to the crate because the write path is not the only caller: `TargetKeyPlan` applies
+    /// the same substitution when it derives the primary key a validate run looks the target row up
+    /// by, and the two must agree byte for byte or validate reports every substituted row missing.
+    pub(crate) fn substitute(self, cql_type: &CqlTypeInfo) -> Option<Vec<u8>> {
         match cql_type {
             CqlTypeInfo::Text | CqlTypeInfo::Ascii => Some(Vec::new()),
             CqlTypeInfo::Timestamp => self
@@ -893,7 +897,7 @@ fn owned<'a>(bytes: Vec<u8>) -> BoundValue<'a> {
     BoundValue::Value(Cow::Owned(bytes))
 }
 
-fn parse_type(column: &ColumnMeta, side: Side) -> Result<CqlTypeInfo, CdmError> {
+pub(crate) fn parse_type(column: &ColumnMeta, side: Side) -> Result<CqlTypeInfo, CdmError> {
     CqlTypeInfo::parse(&column.cql_type)
         .map_err(|e| e.with_context(|c| c.with_side(side).with_column(column.name.clone())))
 }

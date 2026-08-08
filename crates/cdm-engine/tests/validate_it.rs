@@ -193,6 +193,7 @@ async fn build_reporting(
         &mapping,
         &target_select,
         TokenKind::Murmur3,
+        MissingKeyPolicy::default(),
     )
     .await
     .unwrap();

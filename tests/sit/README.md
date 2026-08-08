@@ -41,9 +41,8 @@ the migration. The harness compares the sorted row set, the column list and the 
 
 ## Cases that cannot run yet
 
-Nine cases are `#[ignore]`d in `sit_it.rs` with a comment naming the exact missing wiring. All of
-them are blocked in `crates/cdm-cli/src/harness/build.rs`, which builds every job with
-`MappingOptions::default()`, `MigrateFeatures::default()`, `MissingKeyPolicy::default()` and
-`CodecRegistry::with_builtins(&enabled, None)` — so the features delivered by PRs #27–#31 exist and
-are tested at the library level but are not reachable from the command line. The cases are written
-in full and will pass unchanged once that wiring lands.
+Four cases carry a `blocked <reason>` line in their `case.txt`, which the runner prints instead of
+asserting. Three of them are the same gap: validate issues one target lookup per *record*, where an
+explode map produces one target row per map *entry*, so every entry reports missing. The fourth is
+`VAL-018` — the TTL and writetime an autocorrected row must carry. The cases are written in full
+and will pass unchanged once that work lands.

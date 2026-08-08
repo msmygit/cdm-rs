@@ -1,10 +1,6 @@
 # Java: SIT/regression/04_null_ts_in_pk. The origin's `ts` is an ordinary column; on the target
 # it is part of the primary key, and one origin row leaves it null. A null in a target primary
 # key cannot be written, so MIG-013 substitutes the configured replacement.
-blocked MissingKeyPolicy now reaches both jobs, but MIG-013's substitution does not take effect: migrate leaves the null-key row unwritten, so validate reports Missing 1 / Corrected Missing 1 where the case expects Valid 2
-
-# Not runnable yet — see docs/ROADMAP.md #21a. The case below is complete and is
-# expected to pass unchanged once the wiring lands.
 
 cql   setup.cql
 job   migrate  migrate.properties  migrate.assert

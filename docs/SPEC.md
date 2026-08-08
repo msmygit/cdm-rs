@@ -880,7 +880,12 @@ writetime.
 
 **MIG-013 [P]** — A `null` in a target primary-key column MUST be substituted: `String`-typed keys
 become `""`; `Instant`-typed keys become `transform.missing_key_ts_replace`; if that is unset the
-record MUST be counted as an error with an explanatory message.
+record MUST be counted as an error with an explanatory message. The substitution is a property of
+the *record*, not of the write: the substituted value is what the target row is keyed by, so every
+derivation of a record's target primary key — the write's bind, and the validate job's lookup —
+MUST apply it, and the record's origin row MUST carry the substituted value wherever it is
+unambiguous, so that `VAL-005` compares the substitute against the substitute rather than against a
+`null`. *(Java derives the key once, in `PKFactory`, and both jobs use that one key.)*
 
 **MIG-014 [P]** — `transform.map_remove_null_value = true` MUST strip map entries with null values
 before binding.
