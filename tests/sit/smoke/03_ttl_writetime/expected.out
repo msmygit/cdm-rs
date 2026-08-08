@@ -7,6 +7,6 @@
  record5 | A--- | B--- | CCCC | DDDD | 1087384200000000
  record6 | AAAA | BBBB | C--- | DDDD | 1087384200000000
  record7 | AAAA | B--- | CCCC | DDDD | 1087384200000000
- record8 | A--- | BBBB | CCCC | DDDD | 1087383720000000
+ record8 | ANEW | BBBB | CCCC | DDDD | 1087383720000000
 
 (8 rows)
