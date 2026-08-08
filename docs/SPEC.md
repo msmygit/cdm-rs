@@ -369,6 +369,7 @@ The following table is the **normative parity list**. It is generated from the J
 | — **[N]** | `perfops.retry.initial_backoff` | duration | `100ms` |
 | — **[N]** | `perfops.retry.max_backoff` | duration | `10s` |
 | — **[N]** | `perfops.adaptive_ratelimit` | bool | `false` |
+| — **[N]** | `perfops.adaptive_ratelimit_min_percent` | u8 | `10` |
 | — **[N]** | `perfops.shutdown_grace` | duration | `60s` |
 
 † `spark.cdm.perfops.errorLimit` appears only as a commented-out line in Java's
@@ -460,6 +461,8 @@ never had an effect. Constant-column types are resolved from the target schema (
 | `cluster.heartbeat_interval` | duration | `15s` | MUST be at most half of `cluster.lease_duration`, so a node may miss a renewal without losing its ranges (`DST-012`) |
 | `cluster.max_attempts` | int | `3` | how many times one range may be claimed before it is abandoned, `DST-013` |
 | `cluster.ratelimit_is_global` | bool | `false` | `ENG-004` |
+| `plan.strategy` | enum `fixed`\|`ring_aware`\|`adaptive` | `fixed` | how the ring is divided, `TOK-003`, `TOK-008`, `TOK-010` |
+| `plan.max_rows_per_range` | u64 | `1000000` | the estimated row count above which `adaptive` subdivides a range, `TOK-010` |
 | `logging.level` | string | `info` | |
 | `logging.format` | enum `pretty`\|`json`\|`compact` | `pretty` | |
 | `logging.diff_file` | path | `cdm_logs/cdm_diff.log` | parity with Java diff log |

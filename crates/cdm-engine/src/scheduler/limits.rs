@@ -9,6 +9,7 @@
 //! | Target rows written per second | [`RateLimiter`] | `perfops.ratelimit.target` | `ENG-004` |
 //! | Concurrent origin reads | [`Semaphore`] | `perfops.max_inflight_reads` | `ENG-007` |
 //! | Concurrent target writes | [`Semaphore`] | `perfops.max_inflight_writes` | `ENG-007` |
+//! | Target rate, when the target complains | [`AdaptiveRateController`] | `perfops.adaptive_ratelimit` | `ENG-006` |
 //!
 //! The rate limiters bound *throughput*; the semaphores bound *memory*. They are not
 //! interchangeable, which is why `ENG-007` exists separately from `ENG-005`: a rate limit says
@@ -27,6 +28,7 @@ use std::time::Duration;
 use cdm_core::{CdmError, ErrorKind, RequestObserver, Side};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+use crate::scheduler::adaptive::{AdaptiveRateController, LoadSignal};
 use crate::scheduler::ratelimit::RateLimiter;
 use crate::scheduler::settings::SchedulerSettings;
 
@@ -44,6 +46,7 @@ pub struct InflightPermit {
 pub struct RuntimeLimits {
     origin_rate: RateLimiter,
     target_rate: RateLimiter,
+    adaptive: Option<AdaptiveRateController>,
     reads: Arc<Semaphore>,
     writes: Arc<Semaphore>,
     /// Where a rate-limiter wait is reported (`MET-010`), or nowhere.
@@ -62,9 +65,35 @@ impl RuntimeLimits {
     /// [`ErrorKind::Config`] if either in-flight bound is zero, which would deadlock the run, or
     /// larger than [`Semaphore::MAX_PERMITS`].
     pub fn new(settings: &SchedulerSettings) -> Result<Self, CdmError> {
+        // ENG-006: the controller exists only when the operator asked for it, so a run without
+        // `perfops.adaptive_ratelimit` cannot have its rate moved by anything.
+        let adaptive = settings.adaptive_ratelimit().then(|| {
+            let controller = AdaptiveRateController::new(
+                settings.target_rows_per_second(),
+                settings.adaptive_ratelimit_min_percent(),
+            );
+            if controller.is_active() {
+                tracing::info!(
+                    target: "cdm::engine",
+                    ceiling = controller.ceiling(),
+                    floor = controller.floor(),
+                    step = controller.step(),
+                    "the target write rate is adaptive: it will be halved for each control \
+                     window in which the target reports overload (ENG-006)"
+                );
+            } else {
+                tracing::warn!(
+                    target: "cdm::engine",
+                    "perfops.adaptive_ratelimit is set but perfops.ratelimit.target is 0 \
+                     (unlimited), so there is no rate to reduce (ENG-006)"
+                );
+            }
+            controller
+        });
         Ok(Self {
             origin_rate: RateLimiter::new(settings.origin_rows_per_second()),
             target_rate: RateLimiter::new(settings.target_rows_per_second()),
+            adaptive,
             reads: semaphore("perfops.max_inflight_reads", settings.max_inflight_reads())?,
             writes: semaphore(
                 "perfops.max_inflight_writes",
@@ -83,6 +112,40 @@ impl RuntimeLimits {
     pub fn observing(mut self, requests: Option<Arc<dyn RequestObserver>>) -> Self {
         self.requests = requests;
         self
+    }
+
+    /// The adaptive controller, when `perfops.adaptive_ratelimit` is set (`ENG-006`).
+    #[must_use]
+    pub const fn adaptive(&self) -> Option<&AdaptiveRateController> {
+        self.adaptive.as_ref()
+    }
+
+    /// Feeds one target request's outcome to `ENG-006`'s controller.
+    ///
+    /// A no-op — not merely a cheap one, but one that touches no state at all — unless
+    /// `perfops.adaptive_ratelimit` is set. When the controller decides a new rate, it is applied
+    /// to the target limiter here and nowhere else, so there is exactly one place where the rate
+    /// a run is actually paced at can change.
+    ///
+    /// This is deliberately *not* an error path. A signal is not a failure: a write timeout that
+    /// the retry of `CON-011` absorbs never becomes a `CdmError` at all, and one that does is
+    /// accounted for by `ENG-008` exactly as it would be without this call. Nothing here
+    /// increments a counter, so backing off cannot move the run towards `perfops.error_limit`
+    /// (`ENG-009`) — and nothing here blocks, so it cannot delay a shutdown (`ENG-010`).
+    pub fn record_target_signal(&self, signal: LoadSignal) {
+        let Some(controller) = &self.adaptive else {
+            return;
+        };
+        if let Some(rate) = controller.observe(signal) {
+            self.target_rate.set_rows_per_second(rate);
+            tracing::info!(
+                target: "cdm::engine",
+                rows_per_second = rate,
+                ceiling = controller.ceiling(),
+                floor = controller.floor(),
+                "the adaptive controller changed the target write rate (ENG-006)"
+            );
+        }
     }
 
     /// The origin read limiter, in rows per second (`ENG-004`).
@@ -148,6 +211,21 @@ impl RuntimeLimits {
     #[must_use]
     pub fn available_write_slots(&self) -> usize {
         self.writes.available_permits()
+    }
+}
+
+/// `ENG-006`: the seam `cdm-cql`'s write path reports through.
+///
+/// The classification of "overload" lives in `cdm-cql`, which is the only crate allowed to read a
+/// CQL error frame; the control law lives in [`AdaptiveRateController`], which never sees one.
+/// This impl is the two-line join between them, and is why neither has to know about the other.
+impl cdm_cql::exec::TargetLoadObserver for RuntimeLimits {
+    fn on_target_ok(&self) {
+        self.record_target_signal(LoadSignal::Ok);
+    }
+
+    fn on_target_overload(&self) {
+        self.record_target_signal(LoadSignal::Overload);
     }
 }
 
@@ -349,6 +427,120 @@ mod tests {
         let before = tokio::time::Instant::now();
         limits.acquire_write_rows(20).await;
         assert_eq!(before.elapsed(), std::time::Duration::ZERO);
+    }
+
+    /// A limits object with an adaptive target rate, and no other limit in the way.
+    fn adaptive_limits() -> RuntimeLimits {
+        RuntimeLimits::new(
+            &settings()
+                .with_ratelimits(0, 10_000)
+                .with_adaptive_ratelimit(true, 10),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn eng_006_the_controller_exists_only_when_the_operator_asked_for_one() {
+        // The whole feature, off: no controller, nothing to observe through, and no way for a
+        // signal to reach the rate.
+        let off = RuntimeLimits::new(&settings().with_ratelimits(0, 10_000)).unwrap();
+        assert!(off.adaptive().is_none());
+
+        let on = adaptive_limits();
+        let controller = on.adaptive().unwrap();
+        assert_eq!(controller.ceiling(), 10_000);
+        assert_eq!(controller.floor(), 1_000);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eng_006_overload_signals_lower_the_rate_the_limiter_actually_paces_at() {
+        // The anti-#21c test: the flag is not merely accepted, the run is measurably slower.
+        let limits = adaptive_limits();
+        assert_eq!(limits.target_rate().rows_per_second(), 10_000);
+
+        for _ in 0..40 {
+            limits.record_target_signal(LoadSignal::Overload);
+            tokio::time::advance(std::time::Duration::from_millis(600)).await;
+        }
+
+        let reduced = limits.target_rate().rows_per_second();
+        assert!(
+            reduced < 10_000,
+            "the target rate never moved: {reduced} rows/s"
+        );
+        assert_eq!(
+            reduced,
+            limits.adaptive().unwrap().rate(),
+            "the limiter must be paced at exactly what the controller decided"
+        );
+        assert!(
+            reduced >= limits.adaptive().unwrap().floor(),
+            "the rate fell through the floor and the run would look hung"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eng_006_a_run_without_the_flag_ignores_every_signal() {
+        let limits = RuntimeLimits::new(&settings().with_ratelimits(0, 10_000)).unwrap();
+        for _ in 0..40 {
+            limits.record_target_signal(LoadSignal::Overload);
+            tokio::time::advance(std::time::Duration::from_millis(600)).await;
+        }
+        assert_eq!(
+            limits.target_rate().rows_per_second(),
+            10_000,
+            "`perfops.adaptive_ratelimit` is off, so nothing may move the rate"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eng_006_the_origin_read_rate_is_never_adaptive() {
+        // ENG-004 keeps the two sides independent, and it is the *target* that reports overload.
+        // A read side throttled by the target's problems could not recover on its own.
+        let limits = RuntimeLimits::new(
+            &settings()
+                .with_ratelimits(7_000, 10_000)
+                .with_adaptive_ratelimit(true, 10),
+        )
+        .unwrap();
+        for _ in 0..40 {
+            limits.record_target_signal(LoadSignal::Overload);
+            tokio::time::advance(std::time::Duration::from_millis(600)).await;
+        }
+        assert_eq!(limits.origin_rate().rows_per_second(), 7_000);
+        assert!(limits.target_rate().rows_per_second() < 10_000);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eng_006_and_eng_009_backing_off_costs_the_run_no_errors() {
+        // `ENG-009` counts rows lost, and a rate reduction loses none. If a signal incremented
+        // anything, a target having a bad afternoon would abort a run that was in no trouble.
+        let limits = adaptive_limits();
+        let counters = cdm_metrics::JobCounters::new(cdm_core::JobKind::Migrate);
+        for _ in 0..40 {
+            limits.record_target_signal(LoadSignal::Overload);
+            tokio::time::advance(std::time::Duration::from_millis(600)).await;
+        }
+        assert_eq!(
+            counters.count_of(
+                cdm_metrics::CounterKind::Error,
+                cdm_metrics::CounterView::Interim
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn eng_006_an_unlimited_target_rate_leaves_the_controller_with_nothing_to_do() {
+        let limits = RuntimeLimits::new(
+            &settings()
+                .with_ratelimits(0, 0)
+                .with_adaptive_ratelimit(true, 10),
+        )
+        .unwrap();
+        assert!(!limits.adaptive().unwrap().is_active());
+        limits.record_target_signal(LoadSignal::Overload);
+        assert_eq!(limits.target_rate().rows_per_second(), 0);
     }
 
     #[tokio::test]

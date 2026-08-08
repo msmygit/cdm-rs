@@ -227,6 +227,67 @@ config_enum! {
 }
 
 config_enum! {
+    /// How the token ring is divided into ranges (`TOK-003`, `TOK-008`, `TOK-010`).
+    ///
+    /// The strategy lives here rather than in `cdm-engine` because it is a *configuration* value:
+    /// the JSON Schema, `docs/generated/PROPERTIES.md` and the config-builder form are all
+    /// projections of this registry (`CFG-001`), and a second copy of the spellings in the
+    /// planner would be a second place for them to drift. `cdm-engine::planner` re-exports this
+    /// type and adds the planning behaviour.
+    pub enum PlanStrategy {
+        /// Java CDM's splitter, reproduced exactly. The default, and the only `[P]` strategy.
+        Fixed => "fixed",
+        /// Split along ring-ownership boundaries, so every range maps to a single replica set and
+        /// the reads for it can be routed with no coordinator hop (`TOK-008`).
+        RingAware => "ring_aware",
+        /// Start from `fixed` and subdivide any range whose estimated row count exceeds
+        /// `plan.max_rows_per_range`, so a hot range does not become the straggler that sets the
+        /// wall clock (`TOK-010`).
+        Adaptive => "adaptive",
+    }
+    default = Fixed;
+}
+
+impl PlanStrategy {
+    /// Every strategy, in declaration order.
+    ///
+    /// [`PlanStrategy::VARIANTS`] gives the same list as wire spellings; this one gives the
+    /// values, which is what a parser and an exhaustiveness test need.
+    pub const ALL: [Self; 3] = [Self::Fixed, Self::RingAware, Self::Adaptive];
+
+    /// Whether this strategy needs origin cluster metadata before it can plan.
+    ///
+    /// `fixed` is pure geometry and plans with nothing at all; the other two consult the ring
+    /// (`TOK-008`) or `system.size_estimates` (`TOK-010`).
+    #[must_use]
+    pub const fn needs_topology(self) -> bool {
+        !matches!(self, Self::Fixed)
+    }
+}
+
+impl std::str::FromStr for PlanStrategy {
+    type Err = cdm_core::CdmError;
+
+    /// Parses a strategy, accepting `-` for `_` and any case, as the CLI's `--set` does.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let normalised = value.trim().to_ascii_lowercase().replace('-', "_");
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == normalised)
+            .ok_or_else(|| {
+                cdm_core::CdmError::new(
+                    cdm_core::ErrorKind::Config,
+                    format!(
+                        "unknown plan strategy `{value}`; expected one of fixed, ring_aware, \
+                         adaptive"
+                    ),
+                )
+                .with_context(|ctx| ctx.with_config_key("plan.strategy"))
+            })
+    }
+}
+
+config_enum! {
     /// The shape of log records.
     pub enum LogFormat {
         /// Human-readable, multi-line, coloured when the terminal supports it.

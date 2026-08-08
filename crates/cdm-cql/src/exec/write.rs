@@ -21,6 +21,7 @@
 //! quietly replaying it. The one thing that must never happen is a retry that silently
 //! double-counts, and the only way to guarantee that is to never issue one.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use cdm_core::{CdmError, ErrorKind, Operation, Side};
@@ -31,6 +32,7 @@ use scylla::statement::prepared::PreparedStatement;
 
 use crate::connect::Backoff;
 use crate::errors::side_error_from;
+use crate::exec::overload::{is_overload, TargetLoadObserver};
 use crate::observe::RequestMetrics;
 use crate::statement::{BoundWrite, CounterWrite, IdempotentWrite};
 
@@ -107,6 +109,7 @@ pub struct TargetWriter<'a> {
     select_by_pk: &'a PreparedStatement,
     backoff: Backoff,
     metrics: &'a RequestMetrics,
+    load: Option<Arc<dyn TargetLoadObserver>>,
 }
 
 impl<'a> TargetWriter<'a> {
@@ -125,6 +128,30 @@ impl<'a> TargetWriter<'a> {
             select_by_pk,
             backoff,
             metrics,
+            load: None,
+        }
+    }
+
+    /// Reports every write attempt's outcome to `observer` (`ENG-006`).
+    ///
+    /// `None` — the default — means nothing is reported and nothing is measured, which is what a
+    /// run without `perfops.adaptive_ratelimit` gets.
+    #[must_use]
+    pub fn observing_load(mut self, observer: Option<Arc<dyn TargetLoadObserver>>) -> Self {
+        self.load = observer;
+        self
+    }
+
+    /// Reports one attempt's outcome to the adaptive controller, if one is listening.
+    ///
+    /// Called for *every* attempt, including the ones `CON-011` retries into success: a timeout
+    /// the retry absorbs is still the target saying it is behind, and it is the earliest warning
+    /// there is.
+    fn report(&self, outcome: Option<&ExecutionError>) {
+        let Some(observer) = &self.load else { return };
+        match outcome {
+            Some(error) if is_overload(error) => observer.on_target_overload(),
+            _ => observer.on_target_ok(),
         }
     }
 
@@ -188,6 +215,9 @@ impl<'a> TargetWriter<'a> {
             .execute_unpaged(self.upsert, write.values())
             .await;
         drop(guard);
+        // ENG-006: a counter write is never retried, but it is still a target write, and a
+        // timeout on one is still the target saying it is behind.
+        self.report(executed.as_ref().err());
         executed.map(|_| ()).map_err(|error| {
             write_error(
                 "a counter update failed and will not be retried: re-applying it could \
@@ -262,6 +292,11 @@ impl<'a> TargetWriter<'a> {
             let guard = self.metrics.begin(Side::Target, operation);
             let executed = attempt().await;
             drop(guard);
+            // ENG-006: reported per *attempt*, not per write. A write that times out twice and
+            // then succeeds tells the controller about two congestion events; if it were reported
+            // once, at the end, the controller would never hear about the target's problems until
+            // the retry budget ran out and the range failed.
+            self.report(executed.as_ref().err());
             match executed {
                 Ok(_) => return Ok(()),
                 Err(error) => {

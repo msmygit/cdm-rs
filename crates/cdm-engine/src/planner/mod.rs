@@ -26,20 +26,19 @@
 //! * [`topology`] — the cluster-metadata trait and its in-memory implementation;
 //! * [`report`] — what `cdm plan` prints (`TOK-009`, `NFR-003`).
 
+pub mod cluster;
 pub mod partitioner;
 pub mod report;
 pub mod shuffle;
 pub mod split;
 pub mod topology;
 
-use std::fmt;
-use std::str::FromStr;
-
 use cdm_config::types::TokenBound;
 use cdm_config::CdmConfig;
 use cdm_core::{CdmError, ErrorKind, RunId, TableRef, TokenRange};
 use serde::{Deserialize, Serialize};
 
+pub use cluster::CqlTopology;
 pub use partitioner::Partitioner;
 pub use report::{MemoryEnvelope, PlanReport, SpanBucket};
 pub use shuffle::shuffle_for_run;
@@ -47,68 +46,11 @@ pub use split::{split_ring, FALLBACK_PARTITION_SIZE, MAX_PLANNED_RANGES};
 pub use topology::{ClusterTopology, InMemoryTopology, RingSegment, SizeEstimate};
 
 /// How the ring is divided into ranges (`TOK-003`, `TOK-008`, `TOK-010`).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanStrategy {
-    /// Java CDM's splitter, reproduced exactly. The default, and the only `[P]` strategy.
-    #[default]
-    Fixed,
-    /// Split along ring-ownership boundaries, so every range maps to a single replica set and
-    /// the reads for it can be routed with no coordinator hop (`TOK-008`).
-    RingAware,
-    /// Start from [`Fixed`](PlanStrategy::Fixed) and subdivide any range whose estimated row
-    /// count exceeds `max_rows_per_range`, so a hot range does not become the straggler that
-    /// sets the wall clock (`TOK-010`).
-    Adaptive,
-}
-
-impl PlanStrategy {
-    /// Every strategy, in declaration order.
-    pub const ALL: [Self; 3] = [Self::Fixed, Self::RingAware, Self::Adaptive];
-
-    /// The stable configuration spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Fixed => "fixed",
-            Self::RingAware => "ring_aware",
-            Self::Adaptive => "adaptive",
-        }
-    }
-
-    /// Whether this strategy needs a [`ClusterTopology`] to plan.
-    pub const fn needs_topology(self) -> bool {
-        !matches!(self, Self::Fixed)
-    }
-}
-
-impl FromStr for PlanStrategy {
-    type Err = CdmError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let normalised = value.trim().to_ascii_lowercase().replace('-', "_");
-        Self::ALL
-            .into_iter()
-            .find(|candidate| candidate.as_str() == normalised)
-            .ok_or_else(|| {
-                CdmError::new(
-                    ErrorKind::Config,
-                    format!(
-                        "unknown plan strategy `{value}`; expected one of fixed, ring_aware, \
-                         adaptive"
-                    ),
-                )
-                .with_context(|ctx| ctx.with_config_key("plan.strategy"))
-            })
-    }
-}
-
-impl fmt::Display for PlanStrategy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+///
+/// Defined in `cdm-config` because it is the `plan.strategy` property, and every configuration
+/// value is declared exactly once, in the registry (`CFG-001`). Re-exported here because it is
+/// this module that gives each variant its meaning.
+pub use cdm_config::types::PlanStrategy;
 
 /// Everything the planner needs from configuration.
 ///
@@ -174,12 +116,6 @@ impl PlannerSettings {
     ///
     /// The duration estimate uses the *lower* of the two rate limits, because a run cannot go
     /// faster than its slower side.
-    ///
-    /// `plan.strategy` and `plan.max_rows_per_range` are not yet part of the configuration model:
-    /// `docs/TRACEABILITY.md` books `TOK-008` and `TOK-010` into PR #53, which adds the
-    /// `SPEC.md` §3.5 rows the property registry is checked against. Until then the strategy is
-    /// selected programmatically with [`PlannerSettings::with_strategy`] and this method always
-    /// returns [`PlanStrategy::Fixed`], which is the specified default.
     pub fn from_config(config: &CdmConfig, partitioner: Partitioner) -> Self {
         Self {
             partitioner,
@@ -187,8 +123,11 @@ impl PlannerSettings {
             coverage_percent: config.filter.token_coverage_percent,
             token_min: config.filter.token.min.map(TokenBound::get),
             token_max: config.filter.token.max.map(TokenBound::get),
-            strategy: PlanStrategy::Fixed,
-            max_rows_per_range: DEFAULT_MAX_ROWS_PER_RANGE,
+            // TOK-008, TOK-010: the operator's choice, applied. Until PR #53 this was pinned to
+            // `Fixed` and `plan.*` did not exist, which made `ring_aware` and `adaptive`
+            // reachable only from Rust.
+            strategy: config.plan.strategy,
+            max_rows_per_range: config.plan.max_rows_per_range,
             rate_limit_rows_per_second: config
                 .perfops
                 .ratelimit
@@ -712,6 +651,8 @@ pub fn subdivide_for_rerun(
     clippy::panic
 )]
 mod tests {
+    use std::str::FromStr;
+
     use proptest::prelude::*;
 
     use super::*;

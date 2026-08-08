@@ -41,9 +41,11 @@
 //! - `MIG-020` — [`TargetWriter::write_batch`]
 //! - `MIG-031` — [`TargetWriter::counter_row`]
 //! - `SCH-009` — [`SchemaWatch`]
+//! - `ENG-006` — [`overload`], which decides what "the target reports overload" means
 
 mod executor;
 mod origin;
+pub mod overload;
 mod scan;
 mod statements;
 mod watch;
@@ -51,6 +53,7 @@ mod write;
 
 pub use executor::RunExecutor;
 pub use origin::{OriginReadOptions, OriginReader};
+pub use overload::{is_overload, is_target_overload, TargetLoadObserver};
 pub use scan::{OwnedRangeScan, Page, PageRows, RangeScan, TokenWidth};
 pub use statements::{PreparedSet, PreparedSetOptions};
 pub use watch::SchemaWatch;

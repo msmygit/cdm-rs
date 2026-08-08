@@ -819,8 +819,16 @@
       "properties": {
         "adaptive_ratelimit": {
           "default": false,
-          "description": "Reduce the rate limit automatically when the target signals overload.",
+          "description": "Reduce the rate limit automatically when the target signals overload.\n\nAn AIMD controller (`ENG-006`) halves the *target* write rate for every control\nwindow in which the target reported overload — a write timeout, an `OVERLOADED`\nresponse, a write failure, or a request that exceeded `perfops.request_timeout` —\nand adds a fixed step back for every window in which it did not. The configured\n`perfops.ratelimit.target` becomes the ceiling rather than the rate;\n`perfops.adaptive_ratelimit_min_percent` is the floor.\n\nThe origin read limit is untouched: a slow target must not throttle the read side\ninto a state it cannot recover from (`ENG-004`).",
           "type": "boolean"
+        },
+        "adaptive_ratelimit_min_percent": {
+          "default": 10,
+          "description": "The floor the adaptive controller may reduce the target rate to, as a percentage\nof `perfops.ratelimit.target` (`ENG-006`).\n\nThe floor is what keeps a back-off from looking like a hung run: a controller that\ncould reach zero would stop the run without ever saying so. It is never less than\none row per second whatever the percentage works out to. Ignored unless\n`perfops.adaptive_ratelimit` is set.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
         },
         "batch_grouping": {
           "$ref": "#/$defs/BatchGrouping",
@@ -923,6 +931,45 @@
         }
       },
       "type": "object"
+    },
+    "Plan": {
+      "additionalProperties": false,
+      "description": "How the token ring is divided into ranges (`CFG-200`, `TOK-008`, `TOK-010`).\n\nA section of its own rather than three more `perfops` keys: `perfops.num_parts` says how\n*many* ranges there are, and these say how they are *shaped*. The distinction matters\noperationally, because only the shaping settings need cluster metadata.",
+      "properties": {
+        "max_rows_per_range": {
+          "default": 1000000,
+          "description": "The estimated row count above which `plan.strategy = adaptive` subdivides a range.\n\n`0` disables subdivision, leaving `adaptive` equivalent to `fixed`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "strategy": {
+          "$ref": "#/$defs/PlanStrategy",
+          "default": "fixed",
+          "description": "How the ring is divided into ranges.\n\n`fixed` reproduces Java CDM's splitter exactly and needs nothing from the cluster.\n`ring_aware` splits along ring-ownership boundaries so no range straddles a\nreplica set (`TOK-008`). `adaptive` starts from `fixed` and subdivides any range\nwhose estimated row count exceeds `plan.max_rows_per_range` (`TOK-010`). The last\ntwo read the origin's ring and `system.size_estimates`, so they need an origin\nconnection at planning time."
+        }
+      },
+      "type": "object"
+    },
+    "PlanStrategy": {
+      "description": "How the token ring is divided into ranges (`TOK-003`, `TOK-008`, `TOK-010`).\n\nThe strategy lives here rather than in `cdm-engine` because it is a *configuration* value:\nthe JSON Schema, `docs/generated/PROPERTIES.md` and the config-builder form are all\nprojections of this registry (`CFG-001`), and a second copy of the spellings in the\nplanner would be a second place for them to drift. `cdm-engine::planner` re-exports this\ntype and adds the planning behaviour.",
+      "oneOf": [
+        {
+          "const": "fixed",
+          "description": "Java CDM's splitter, reproduced exactly. The default, and the only `[P]` strategy.",
+          "type": "string"
+        },
+        {
+          "const": "ring_aware",
+          "description": "Split along ring-ownership boundaries, so every range maps to a single replica set and\nthe reads for it can be routed with no coordinator hop (`TOK-008`).",
+          "type": "string"
+        },
+        {
+          "const": "adaptive",
+          "description": "Start from `fixed` and subdivide any range whose estimated row count exceeds\n`plan.max_rows_per_range`, so a hot range does not become the straggler that sets the\nwall clock (`TOK-010`).",
+          "type": "string"
+        }
+      ]
     },
     "Prometheus": {
       "additionalProperties": false,
@@ -1749,6 +1796,7 @@
       "$ref": "#/$defs/PerfOps",
       "default": {
         "adaptive_ratelimit": false,
+        "adaptive_ratelimit_min_percent": 10,
         "batch_grouping": "strict",
         "batch_size": 5,
         "connection_pool_size": 4,
@@ -1775,6 +1823,14 @@
         "workers": null
       },
       "description": "Throughput, concurrency and reliability tuning (`CFG-160`)."
+    },
+    "plan": {
+      "$ref": "#/$defs/Plan",
+      "default": {
+        "max_rows_per_range": 1000000,
+        "strategy": "fixed"
+      },
+      "description": "How the token ring is divided into ranges (`CFG-200`)."
     },
     "schema": {
       "$ref": "#/$defs/SchemaSettings",

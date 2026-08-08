@@ -58,6 +58,7 @@ pub mod connect;
 pub mod exec;
 pub mod observe;
 pub mod raw;
+pub mod ring;
 pub mod rows;
 pub mod schema;
 pub mod statement;

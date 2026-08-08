@@ -57,7 +57,8 @@ requirement in [`docs/SPEC.md`](docs/SPEC.md), traced to code and tests in
 ## What it does
 
 - **Migrate** — token-range-parallel bulk copy preserving writetimes and TTLs, with counter-table
-  support, batching, rate limiting and resumable runs.
+  support, batching, resumable runs, and rate limiting that can adapt to what the target reports
+  rather than holding a number chosen in advance.
 - **Validate** — row-by-row comparison with optional autocorrection of missing and mismatched rows,
   and machine-readable discrepancy reports.
 - **Guardrail** — flag oversized columns before they become a production problem.
@@ -115,6 +116,22 @@ cdm validate --config cdm.toml \
              --set autocorrect.mismatch=true \
              --set validate.report.format=ndjson \
              --summary-out run.json
+
+# Both of the next two are marked `experimental` in docs/generated/PROPERTIES.md: they work and
+# are tested, but the defaults and the names may still move. The defaults — a fixed rate and a
+# fixed ring split — are unchanged, so neither is on unless you turn it on.
+#
+# Pace the run against what the target can actually take. The configured rate becomes a ceiling:
+# write timeouts and overload replies halve it, and it climbs back as they stop. A replica that is
+# down is not overload and does not back anything off — that would hide an outage rather than
+# relieve one.
+cdm migrate --config cdm.toml --set perfops.adaptive_ratelimit=true
+
+# Split the ring along real ownership boundaries instead of into equal arithmetic slices, and size
+# ranges from `system.size_estimates` so a hot partition range does not become one slow worker.
+cdm migrate --config cdm.toml \
+            --set plan.strategy=adaptive \
+            --set plan.max_rows_per_range=500000
 
 # What has run against this table, and what did not finish?
 cdm runs list --config cdm.toml

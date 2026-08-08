@@ -37,6 +37,12 @@ use cdm_config::EffectiveConfig;
 pub const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(60);
 
 /// Everything the scheduler is configured with, resolved once at startup.
+///
+/// `clippy::struct_excessive_bools` is allowed here for the same reason `cdm_properties!` allows
+/// it on every configuration struct: these are not a state machine, they are five independent
+/// operator switches, and folding them into two-variant enums would rename them without making
+/// any combination of them any less possible.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulerSettings {
     workers: u32,
@@ -48,6 +54,8 @@ pub struct SchedulerSettings {
     fetch_size: u32,
     error_limit: u64,
     shutdown_grace: Duration,
+    adaptive_ratelimit: bool,
+    adaptive_ratelimit_min_percent: u8,
     ratelimit_is_global: bool,
     java_thread_label: bool,
     handle_signals: bool,
@@ -71,6 +79,8 @@ impl Default for SchedulerSettings {
             fetch_size: 1_000,
             error_limit: 0,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            adaptive_ratelimit: false,
+            adaptive_ratelimit_min_percent: 10,
             ratelimit_is_global: false,
             java_thread_label: true,
             // ENG-010: off by default, because a `Default` that installs a process-wide signal
@@ -95,6 +105,8 @@ impl SchedulerSettings {
             fetch_size: perfops.fetch_size,
             error_limit: perfops.error_limit,
             shutdown_grace: perfops.shutdown_grace.get(),
+            adaptive_ratelimit: perfops.adaptive_ratelimit,
+            adaptive_ratelimit_min_percent: perfops.adaptive_ratelimit_min_percent,
             ratelimit_is_global: config.config().cluster.ratelimit_is_global,
             // ENG-012: the Java `min:max` label is a `pretty`-format affordance. In `compact`
             // and `json` the same facts are structured span fields, and repeating them as a
@@ -158,6 +170,23 @@ impl SchedulerSettings {
     #[must_use]
     pub const fn shutdown_grace(&self) -> Duration {
         self.shutdown_grace
+    }
+
+    /// Whether the target write rate is handed to `ENG-006`'s AIMD controller.
+    ///
+    /// When set, `perfops.ratelimit.target` becomes the controller's *ceiling* rather than the
+    /// rate. The origin read rate is never adaptive: `ENG-004` keeps the two sides independent,
+    /// and it is the target that reports overload.
+    #[must_use]
+    pub const fn adaptive_ratelimit(&self) -> bool {
+        self.adaptive_ratelimit
+    }
+
+    /// The adaptive controller's floor, as a percentage of the configured target rate
+    /// (`ENG-006`).
+    #[must_use]
+    pub const fn adaptive_ratelimit_min_percent(&self) -> u8 {
+        self.adaptive_ratelimit_min_percent
     }
 
     /// Whether the configured rate limits are a fleet-wide budget rather than per-node
@@ -238,6 +267,14 @@ impl SchedulerSettings {
     #[must_use]
     pub const fn with_shutdown_grace(mut self, grace: Duration) -> Self {
         self.shutdown_grace = grace;
+        self
+    }
+
+    /// Sets whether the target rate is adaptive, and the floor it may fall to (`ENG-006`).
+    #[must_use]
+    pub const fn with_adaptive_ratelimit(mut self, enabled: bool, min_percent: u8) -> Self {
+        self.adaptive_ratelimit = enabled;
+        self.adaptive_ratelimit_min_percent = min_percent;
         self
     }
 
@@ -410,6 +447,31 @@ mod tests {
     }
 
     #[test]
+    fn eng_006_the_adaptive_settings_are_read_from_the_configuration() {
+        // `perfops.adaptive_ratelimit` was parsed and then ignored before PR #53; the point of
+        // this test is that the flag now reaches the object that can act on it.
+        let mut config = CdmConfig::default();
+        config.perfops.adaptive_ratelimit = true;
+        config.perfops.adaptive_ratelimit_min_percent = 25;
+
+        let settings = SchedulerSettings::from_config(&EffectiveConfig::resolve(config));
+        assert!(settings.adaptive_ratelimit());
+        assert_eq!(settings.adaptive_ratelimit_min_percent(), 25);
+    }
+
+    #[test]
+    fn eng_006_the_rate_is_static_unless_the_operator_says_otherwise() {
+        let settings =
+            SchedulerSettings::from_config(&EffectiveConfig::resolve(CdmConfig::default()));
+        assert!(!settings.adaptive_ratelimit());
+        assert!(!SchedulerSettings::default().adaptive_ratelimit());
+        assert_eq!(
+            SchedulerSettings::default().adaptive_ratelimit_min_percent(),
+            10
+        );
+    }
+
+    #[test]
     fn eng_001_the_worker_count_is_never_zero() {
         assert_eq!(SchedulerSettings::default().with_workers(0).workers(), 1);
         assert_eq!(SchedulerSettings::default().with_workers(7).workers(), 7);
@@ -461,6 +523,7 @@ mod tests {
             .with_fetch_size(6)
             .with_error_limit(7)
             .with_shutdown_grace(Duration::from_millis(8))
+            .with_adaptive_ratelimit(true, 30)
             .with_signal_handling(true)
             .with_java_thread_label(false);
 
@@ -473,6 +536,8 @@ mod tests {
         assert_eq!(settings.fetch_size(), 6);
         assert_eq!(settings.error_limit(), 7);
         assert_eq!(settings.shutdown_grace(), Duration::from_millis(8));
+        assert!(settings.adaptive_ratelimit());
+        assert_eq!(settings.adaptive_ratelimit_min_percent(), 30);
         assert!(settings.handle_signals());
         assert!(!settings.java_thread_label());
     }

@@ -39,6 +39,7 @@
 //! error is below one part in `10^12` per row, and `u128` cannot overflow: a run would have to
 //! last `10^26` seconds.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -56,10 +57,20 @@ const PICOS_PER_NANO: u128 = 1_000;
 /// touched. This follows the convention `perfops.error_limit` already uses, where `0` disables
 /// the check; Java's Guava `RateLimiter` rejects a rate of zero outright, which leaves an
 /// operator who wants no limit with no way to say so.
+///
+/// # Why the rate is not a constant
+///
+/// `ENG-006` lets an operator hand the rate over to a controller that lowers it when the target
+/// says it is overloaded. The rate therefore lives in an atomic and is read once per reservation
+/// rather than being baked into a precomputed per-row cost. The cost of that is one integer
+/// division per `acquire`, which is nothing beside the mutex the reservation already takes; the
+/// benefit is that [`RateLimiter::set_rows_per_second`] cannot be forgotten by a caller that
+/// changes the rate. The theoretical arrival time is deliberately *not* rewound when the rate
+/// changes: work already reserved has already been promised a slot, and taking it back would let
+/// a rate cut overtake requests that were admitted under the old one.
 #[derive(Debug)]
 pub struct RateLimiter {
-    rows_per_second: u32,
-    picos_per_row: u128,
+    rows_per_second: AtomicU32,
     burst_picos: u128,
     origin: Instant,
     tat: Mutex<u128>,
@@ -69,36 +80,39 @@ impl RateLimiter {
     /// A limiter admitting `rows_per_second` rows per second, with one second of burst.
     #[must_use]
     pub fn new(rows_per_second: u32) -> Self {
-        let picos_per_row = if rows_per_second == 0 {
-            0
-        } else {
-            PICOS_PER_SECOND / u128::from(rows_per_second)
-        };
         Self {
-            rows_per_second,
-            picos_per_row,
+            rows_per_second: AtomicU32::new(rows_per_second),
             burst_picos: PICOS_PER_SECOND,
             origin: Instant::now(),
             tat: Mutex::new(0),
         }
     }
 
-    /// The configured rate, in rows per second. `0` means unlimited.
+    /// The rate in force, in rows per second. `0` means unlimited.
     #[must_use]
-    pub const fn rows_per_second(&self) -> u32 {
+    pub fn rows_per_second(&self) -> u32 {
+        self.rows_per_second.load(Ordering::Relaxed)
+    }
+
+    /// Sets the rate in force, in rows per second (`ENG-006`).
+    ///
+    /// Only `ENG-006`'s adaptive controller calls this; a run without
+    /// `perfops.adaptive_ratelimit` keeps the rate it was constructed with for its whole life.
+    pub fn set_rows_per_second(&self, rows_per_second: u32) {
         self.rows_per_second
+            .store(rows_per_second, Ordering::Relaxed);
     }
 
     /// Whether this limiter admits everything immediately.
     #[must_use]
-    pub const fn is_unlimited(&self) -> bool {
-        self.rows_per_second == 0
+    pub fn is_unlimited(&self) -> bool {
+        self.rows_per_second() == 0
     }
 
     /// The burst allowance, in rows — one second of budget (`ENG-005`).
     #[must_use]
-    pub const fn burst_rows(&self) -> u32 {
-        self.rows_per_second
+    pub fn burst_rows(&self) -> u32 {
+        self.rows_per_second()
     }
 
     /// Waits until `rows` rows may be processed, then returns how long that took (`ENG-005`).
@@ -133,10 +147,12 @@ impl RateLimiter {
     /// the caller has to wait — which is what makes the limiter first-come-first-served rather
     /// than a scramble.
     fn reserve(&self, rows: u32, now_picos: u128) -> u128 {
-        if self.is_unlimited() || rows == 0 {
+        let rate = self.rows_per_second();
+        if rate == 0 || rows == 0 {
             return 0;
         }
-        let cost = self.picos_per_row.saturating_mul(u128::from(rows));
+        let picos_per_row = PICOS_PER_SECOND / u128::from(rate);
+        let cost = picos_per_row.saturating_mul(u128::from(rows));
         let mut tat = self.tat.lock();
         let due = (*tat).max(now_picos).saturating_add(cost);
         *tat = due;
@@ -321,6 +337,68 @@ mod tests {
         // 300 rows: 100 of burst plus 200 paced at 100/s. The aggregate rate is the configured
         // rate no matter how many tasks contend.
         assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn eng_006_a_changed_rate_paces_the_work_that_comes_after_it() {
+        let limiter = RateLimiter::new(10);
+        // Burn the burst so the pacing is visible, then measure a row at the old rate.
+        assert_eq!(limiter.reserve(10, 0), 0);
+        assert_eq!(limiter.reserve(1, 0), SECOND / 10);
+
+        // ENG-006: the controller halves the rate, and a row immediately costs twice as much.
+        limiter.set_rows_per_second(5);
+        assert_eq!(limiter.rows_per_second(), 5);
+        assert_eq!(limiter.burst_rows(), 5);
+        assert_eq!(limiter.reserve(1, 0), SECOND / 10 + SECOND / 5);
+
+        // And raising it back makes the next row cheap again.
+        limiter.set_rows_per_second(20);
+        assert_eq!(
+            limiter.reserve(1, 0),
+            SECOND / 10 + SECOND / 5 + SECOND / 20
+        );
+    }
+
+    #[test]
+    fn eng_006_lowering_the_rate_does_not_rescind_a_reservation_already_made() {
+        let limiter = RateLimiter::new(10);
+        let promised = limiter.reserve(30, 0);
+        limiter.set_rows_per_second(1);
+        // The waiter that was told to sleep two seconds still comes due in two seconds: a rate
+        // cut may not retroactively lengthen a wait somebody is already in the middle of.
+        assert_eq!(promised, 2 * SECOND);
+        assert_eq!(limiter.reserve(0, 0), 0);
+    }
+
+    #[test]
+    fn eng_006_a_rate_may_be_set_to_unlimited_and_back() {
+        let limiter = RateLimiter::new(10);
+        limiter.set_rows_per_second(0);
+        assert!(limiter.is_unlimited());
+        assert_eq!(limiter.reserve(1_000_000, 0), 0);
+        limiter.set_rows_per_second(10);
+        assert!(!limiter.is_unlimited());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eng_006_a_reduced_rate_really_slows_the_run_down() {
+        // The anti-#21c test at the limiter level: not "the number changed" but "the work took
+        // longer". Virtual time, so the assertion is exact rather than a tolerance.
+        let limiter = RateLimiter::new(100);
+        let started = Instant::now();
+        for _ in 0..200 {
+            limiter.acquire(1).await;
+        }
+        // 100 of burst, 100 more at 100/s.
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
+
+        limiter.set_rows_per_second(10);
+        let after = Instant::now();
+        for _ in 0..20 {
+            limiter.acquire(1).await;
+        }
+        assert_eq!(after.elapsed(), Duration::from_secs(2));
     }
 
     #[tokio::test(start_paused = true)]

@@ -33,7 +33,10 @@ use std::sync::Arc;
 
 use cdm_config::EffectiveConfig;
 use cdm_core::{CdmError, ErrorKind, JobKind, RunId};
-use cdm_engine::planner::{Partitioner, Planner, PlannerSettings, TokenPlan};
+use cdm_cql::connect::ClusterSession;
+use cdm_engine::planner::{
+    ClusterTopology, CqlTopology, Partitioner, Planner, PlannerSettings, TokenPlan,
+};
 use cdm_engine::scheduler::{RangeObserver, RunReport, Scheduler, SchedulerSettings};
 use cdm_metrics::{EventBus, Instruments};
 
@@ -141,7 +144,7 @@ pub fn execute(
             // keyspace (`TRK-010`) and `GRD-001` gives this path no target session to reach them
             // through. There is also nothing to resume — it writes nothing.
             let tracking = Tracking::disabled();
-            let plan = token_plan(&config, origin.partitioner(), run_id)?;
+            let plan = token_plan(&config, origin.partitioner(), run_id, &sessions.origin).await?;
             let report = run(
                 &config,
                 &plan,
@@ -173,7 +176,7 @@ pub fn execute(
             instruments.clone(),
         )
         .await?;
-        let plan = token_plan(&config, tables.partitioner(), run_id)?;
+        let plan = token_plan(&config, tables.partitioner(), run_id, &sessions.origin).await?;
         // TRK-020: the run row and every range row exist before the first range is claimed. A
         // crash between the two would leave ranges no resume could know about.
         let tracking = Tracking::start(&config, &sessions, kind, &plan, None).await?;
@@ -273,8 +276,14 @@ pub fn plan(args: &JobArgs) -> Result<PlanSummary, CdmError> {
     runtime()?.block_on(async {
         let sessions = Sessions::open(&config).await?;
         let tables = ResolvedTables::introspect(&sessions, &config).await?;
-        let (plan, planner) = token_plan_with_planner(&config, tables.partitioner(), RunId::UNSET)?;
-        let report = planner.report(&plan, None)?;
+        let (plan, planner, topology) = token_plan_with_planner(
+            &config,
+            tables.partitioner(),
+            RunId::UNSET,
+            &sessions.origin,
+        )
+        .await?;
+        let report = planner.report(&plan, topology.as_ref().map(|t| t as &dyn ClusterTopology))?;
         Ok(PlanSummary::new(&report, &tables, &config))
     })
 }
@@ -374,24 +383,62 @@ fn runtime() -> Result<tokio::runtime::Runtime, CdmError> {
 /// Reading the partitioner from `system.local` rather than assuming Murmur3 is what makes a
 /// RandomPartitioner cluster work at all: its tokens do not fit in an `i64`, and a plan built for
 /// the wrong partitioner covers the wrong ring.
-fn token_plan(
+async fn token_plan(
     config: &EffectiveConfig,
     partitioner: Partitioner,
     run_id: RunId,
+    origin: &ClusterSession,
 ) -> Result<TokenPlan, CdmError> {
-    token_plan_with_planner(config, partitioner, run_id).map(|(plan, _)| plan)
+    token_plan_with_planner(config, partitioner, run_id, origin)
+        .await
+        .map(|(plan, _, _)| plan)
 }
 
-/// The plan and the planner that produced it, which `cdm plan` needs in order to report on it.
-fn token_plan_with_planner(
+/// The plan, the planner that produced it, and the ring it was planned against.
+///
+/// `cdm plan` needs all three: the planner to build the `TOK-009` report, and the topology so
+/// that report can state estimated rows rather than "unknown".
+///
+/// `TOK-008` and `TOK-010` are the reason this is `async`. `plan.strategy = ring_aware` splits
+/// along ownership boundaries and `adaptive` sizes by `system.size_estimates`; neither can be
+/// answered without asking the origin, and the answer is read once, here, so that the planner
+/// itself stays pure. `plan.strategy = fixed` — the default — asks nothing and reads nothing.
+async fn token_plan_with_planner(
     config: &EffectiveConfig,
     partitioner: Partitioner,
     run_id: RunId,
-) -> Result<(TokenPlan, Planner), CdmError> {
-    let settings = PlannerSettings::from_config(config.config(), partitioner);
+    origin: &ClusterSession,
+) -> Result<(TokenPlan, Planner, Option<CqlTopology>), CdmError> {
+    let mut settings = PlannerSettings::from_config(config.config(), partitioner);
+    if let Some(table) = config.origin_table() {
+        settings = settings.with_table(table.clone());
+    }
+
+    let topology = if settings.strategy.needs_topology() {
+        // CFG-022 makes the origin table mandatory, so this is unreachable from a validated
+        // configuration; saying which setting is missing beats an index into `None`.
+        let table = config.origin_table().cloned().ok_or_else(|| {
+            CdmError::new(
+                ErrorKind::Config,
+                format!(
+                    "`plan.strategy = {}` needs the origin table in order to read the ring and                      its size estimates",
+                    settings.strategy
+                ),
+            )
+            .with_context(|ctx| ctx.with_config_key("schema.origin.keyspace_table"))
+        })?;
+        let bounds = partitioner.resolve_bounds(settings.token_min, settings.token_max)?;
+        Some(CqlTopology::load(origin, partitioner, bounds, &table).await?)
+    } else {
+        None
+    };
+
     let planner = Planner::new(settings);
-    let plan = planner.plan(run_id, None)?;
-    Ok((plan, planner))
+    // `run_id` seeds the `TOK-007` shuffle, so it must be the run's real identifier rather than a
+    // placeholder: the plan, the tracking rows and the event stream all have to describe the same
+    // run (`TRK-020`, `MET-030`).
+    let plan = planner.plan(run_id, topology.as_ref().map(|t| t as &dyn ClusterTopology))?;
+    Ok((plan, planner, topology))
 }
 
 /// Everything that watches one run (`MET-031`, `TRK-021`).
