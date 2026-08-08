@@ -41,8 +41,7 @@ the migration. The harness compares the sorted row set, the column list and the 
 
 ## Cases that cannot run yet
 
-Four cases carry a `blocked <reason>` line in their `case.txt`, which the runner prints instead of
-asserting. Three of them are the same gap: validate issues one target lookup per *record*, where an
-explode map produces one target row per map *entry*, so every entry reports missing. The fourth is
-`VAL-018` — the TTL and writetime an autocorrected row must carry. The cases are written in full
-and will pass unchanged once that work lands.
+Three cases carry a `blocked <reason>` line in their `case.txt`, which the runner prints instead of
+asserting. All three are the same gap: validate issues one target lookup per *record*, where an
+explode map produces one target row per map *entry*, so every entry reports missing. The cases are
+written in full and will pass unchanged once that work lands.

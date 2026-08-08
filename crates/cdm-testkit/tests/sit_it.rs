@@ -41,17 +41,16 @@
 //!
 //! Per `TST-102` these skip — they do not fail — when no container runtime is available.
 //!
-//! # Four cases cannot run yet, and it is not the suite's fault
+//! # Three cases cannot run yet, and it is not the suite's fault
 //!
 //! Each carries a `blocked <reason>` line in its `case.txt`, and the runner prints it as
 //! `BLOCKED <case>: <reason>` and returns rather than asserting. `#[ignore]` could not carry this
 //! distinction: `--ignored` runs *only* ignored tests, and every case here is ignored because
 //! every case needs a container, so the attribute says nothing about whether a case can pass.
 //!
-//! Three of the four are the same gap: validate issues one target lookup per *record* where an
-//! explode map produces one target row per map *entry*, so `ComparisonPlan` marks the exploded
-//! columns unobtainable and every entry reports missing. The fourth is `VAL-018`, the TTL and
-//! writetime an autocorrected row must carry. The cases are written out in full and are expected
+//! All three are the same gap: validate issues one target lookup per *record* where an explode map
+//! produces one target row per map *entry*, so `ComparisonPlan` marks the exploded columns
+//! unobtainable and every entry reports missing. The cases are written out in full and are expected
 //! to pass unchanged when that work lands; nothing in `tests/sit/` needs to change.
 
 // Tests may panic freely: a failed assertion is the reporting mechanism (see AGENTS.md).
@@ -268,11 +267,9 @@ fn tst_003_autocorrect_repairs_a_missing_row_and_a_mismatched_one() {
     case("smoke", "02_autocorrect_kvp");
 }
 
-/// Blocked: `crates/cdm-cli/src/harness/build.rs::migrate` builds the job with
-/// `MigrateFeatures::default()`, so `schema.origin.column.ttl.names` and
-/// `schema.origin.column.writetime.names` are parsed, validated and then never used. The target
-/// rows arrive with the write's own timestamp and no TTL. `FEA-040`..`FEA-046` are implemented in
-/// `cdm-feature` and covered by that crate's own tests; what is missing is four lines of wiring.
+/// Covers both halves of `FEA-040`..`FEA-046`: the migrate write, and — since `VAL-018` — the
+/// autocorrected one, whose `fix` step asserts the origin writetime `1087384200000000` on exactly
+/// the rows the correction repaired rather than the coordinator's wall clock.
 #[test]
 #[ignore = "needs a container runtime; run with `cargo xtask sit`"]
 fn tst_003_ttl_and_writetime_are_carried_across_as_the_per_row_maximum() {

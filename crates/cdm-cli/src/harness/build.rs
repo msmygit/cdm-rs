@@ -25,10 +25,10 @@ use cdm_codec::{
     CodecRegistry, Codecset, Planner as CodecPlanner, PlannerOptions, TimestampFormat,
 };
 use cdm_config::EffectiveConfig;
-use cdm_core::{CdmError, ErrorKind, JobKind, RunId, Side, TableRef};
+use cdm_core::{CdmError, ErrorKind, JobKind, Row, RunId, Side, TableRef};
 use cdm_cql::connect::ClusterSession;
 use cdm_cql::exec::{OriginReadOptions, OriginReader, PreparedSetOptions, RunExecutor, TokenWidth};
-use cdm_cql::rows::{CqlRowSink, CqlRowSource};
+use cdm_cql::rows::{CqlRowSink, CqlRowSource, RowTimestamps};
 use cdm_cql::schema::introspect::fetch_table;
 use cdm_cql::schema::table::{ColumnMeta, TableSchema};
 use cdm_cql::statement::{
@@ -139,10 +139,10 @@ impl ResolvedTables {
 
     /// The four statements a job draws from, over the projection that job reads (`SCH-004`..`SCH-007`).
     ///
-    /// The projection is a parameter rather than [`ResolvedTables::projection`] because migrate
-    /// appends `TTL(…)` and `WRITETIME(…)` to it and validate does not, and a run whose statements
-    /// and whose plan disagreed about the width of a row would mis-read every cell after the first
-    /// virtual one.
+    /// The projection is a parameter rather than [`ResolvedTables::projection`] because migrate and
+    /// validate each append their own `TTL(…)` and `WRITETIME(…)` expressions to it
+    /// (`FEA-040`, `VAL-018`), and a run whose statements and whose plan disagreed about the width
+    /// of a row would mis-read every cell after the first virtual one.
     fn statements(
         &self,
         projection: &OriginProjection,
@@ -478,14 +478,7 @@ fn migrate_features(
     let core = config.to_core();
     let origin = &tables.features.origin;
 
-    // FEA-045: a counter column on *either* side disables TTL and writetime, because neither side
-    // can accept a timestamp or a TTL on a counter write. `WritetimeTtlPlan::resolve` only knows
-    // about the origin, so the target's half of the rule is applied here.
-    let writetime = if counter_target || origin.is_counter_table() {
-        WritetimeTtlPlan::disabled()
-    } else {
-        WritetimeTtl::load(&core)?.resolve(origin)?
-    };
+    let writetime = writetime_ttl(config, origin, counter_target)?;
 
     let column_filter = ColumnValueFilter::load(&core, origin);
     let row_writetime = WritetimeFilter::load(&core, writetime.clone())?;
@@ -513,6 +506,52 @@ fn migrate_features(
     })
 }
 
+/// The TTL and writetime plan a run resolves, whichever job is running (`FEA-040`..`FEA-046`).
+///
+/// Shared by [`migrate_features`] and [`validate`] rather than written out twice, because
+/// `VAL-018` is precisely the requirement that the two jobs resolve *the same* plan: a validate
+/// run's autocorrect writes through the same `USING` clause a migrate run's insert does, over the
+/// same `TTL(…)`/`WRITETIME(…)` projection. Two copies of this could disagree, and the disagreement
+/// would be invisible — a corrected row is written either way.
+///
+/// # Errors
+///
+/// [`ErrorKind::Config`] when `feature.writetime_ttl.*` names a column this origin does not have,
+/// or names one whose type cannot carry a TTL.
+fn writetime_ttl(
+    config: &EffectiveConfig,
+    origin: &TableFacts,
+    counter_target: bool,
+) -> Result<WritetimeTtlPlan, CdmError> {
+    // FEA-045: a counter column on *either* side disables TTL and writetime, because neither side
+    // can accept a timestamp or a TTL on a counter write. `WritetimeTtlPlan::resolve` only knows
+    // about the origin, so the target's half of the rule is applied here.
+    if counter_target || origin.is_counter_table() {
+        return Ok(WritetimeTtlPlan::disabled());
+    }
+    WritetimeTtl::load(&config.to_core())?.resolve(origin)
+}
+
+/// A resolved [`WritetimeTtlPlan`] as the row sink's per-row stamp (`VAL-018`).
+///
+/// The plan lives in `cdm-feature`, which depends on `cdm-cql` and not the other way round
+/// (`ARCHITECTURE.md` §3), so the sink is written against `cdm-cql`'s [`RowTimestamps`] and the two
+/// are joined here — the same seam, and for the same reason, as [`using_clause`] below. There is no
+/// computation in this type: both methods delegate, so a corrected row and a migrated row are
+/// stamped by the identical code.
+#[derive(Debug)]
+struct PlanTimestamps(WritetimeTtlPlan);
+
+impl RowTimestamps for PlanTimestamps {
+    fn ttl(&self, row: &Row) -> Result<Option<i32>, CdmError> {
+        self.0.ttl(row)
+    }
+
+    fn writetime(&self, row: &Row) -> Result<Option<i64>, CdmError> {
+        self.0.writetime(row)
+    }
+}
+
 /// The `USING` clause a resolved TTL/writetime plan implies (`FEA-046`).
 ///
 /// `cdm-feature` and `cdm-cql` each own a `UsingClause` on opposite sides of the dependency edge,
@@ -538,10 +577,23 @@ async fn validate(
     tables: &ResolvedTables,
     config: &EffectiveConfig,
 ) -> Result<BuiltJob, CdmError> {
+    let counter_target = tables.target.is_counter_table();
+
+    // VAL-018: a corrected row carries the origin's TTL and writetime, resolved exactly as a
+    // migrate write resolves them. That is three things and they only work together — the
+    // projection must select the `TTL(…)`/`WRITETIME(…)` cells, the upsert must carry the `USING`
+    // clause they imply, and the sink must bind them — so all three are driven off this one plan.
+    // `FEA-045` disables it for a counter table on either side, which is `writetime_ttl`'s job.
+    let writetime = writetime_ttl(config, &tables.features.origin, counter_target)?;
+
     let target_select = TargetSelectByPk::new(&tables.mapping)?;
+    // SCH-007: the projected `TTL(…)`/`WRITETIME(…)` expressions occupy row positions after every
+    // mapped column, so the comparison, the key plan and the column filter — all of which index by
+    // mapped-column position — are unaffected by their presence.
+    let projection = OriginProjection::new(tables.mapping.origin_columns(), writetime.projection());
     let range_select = OriginRangeSelect::new(
         &tables.origin,
-        &tables.projection,
+        &projection,
         config.config().filter.cql_where.as_deref(),
         false,
     );
@@ -559,9 +611,12 @@ async fn validate(
     .await?;
 
     let codecs = codec_planner(config)?;
+    let using = StatementOptions {
+        using: using_clause(&writetime),
+    };
     let binder = Binder::new(
         &tables.mapping,
-        TargetUpsert::new(&tables.mapping, StatementOptions::default())?,
+        TargetUpsert::new(&tables.mapping, using)?,
         &codecs,
         missing_key_policy(config),
         config.config().transform.map_remove_null_value,
@@ -571,6 +626,9 @@ async fn validate(
         &target_select,
         binder,
         &tables.mapping,
+        // The same plan the `USING` clause above was generated from and the projection above
+        // selects for: a clause with no values bound into it writes `UNSET` (`VAL-018`).
+        Some(Arc::new(PlanTimestamps(writetime))),
     )
     .await?;
 
@@ -597,7 +655,7 @@ async fn validate(
     .with_keys_only(config.config().validate.keys_only);
     let mut settings = ValidateSettings::read_only();
     settings.autocorrect = config.config().autocorrect.clone();
-    settings.target_is_counter = tables.target.is_counter_table();
+    settings.target_is_counter = counter_target;
 
     let diff_log = DiffLog::open(&config.config().logging.diff_file)?;
 
@@ -613,9 +671,12 @@ async fn validate(
     )?);
 
     // FEA-052: the column-value filter reads a cell of the origin row by position, which validate's
-    // projection supplies. `filter.writetime.*` is deliberately not installed here: its filter is
-    // defined over a `WRITETIME(…)` cell, and validate does not select one — a chain that read past
-    // the end of every row would decide what to compare on the strength of a missing value.
+    // projection supplies. `filter.writetime.*` is deliberately not installed here, and no longer
+    // because the cell is missing — `VAL-018` now selects `WRITETIME(…)` on this side too. It is
+    // not installed because skipping a row is not the same act on the two sides: a migrate run that
+    // skips one leaves the target alone, while a validate run that skipped one would report a
+    // target it never looked at as `VALID`. Making that a filter on validate is a change to what
+    // `VAL-016`'s verdict means and needs a requirement of its own.
     let column_filter = ColumnValueFilter::load(&core, &tables.features.origin);
     let filters =
         FilterChain::new().with_enabled(column_filter.is_enabled(), Arc::new(column_filter));
@@ -828,6 +889,89 @@ mod tests {
             missing_key_policy(&config(&[TABLE])).missing_key_ts_replace,
             None
         );
+    }
+
+    /// The origin of SIT `smoke/03_ttl_writetime`, as `cdm-feature` sees it.
+    fn ttl_origin_facts() -> TableFacts {
+        TableFacts::from_view(
+            &table_view(
+                TableRef::new("origin", "smoke_ttl_writetime"),
+                &[
+                    ("key", "text"),
+                    ("t_col1", "text"),
+                    ("tw_col2", "text"),
+                    ("w_col3", "text"),
+                    ("col4", "text"),
+                ],
+            ),
+            &["key"],
+        )
+        .unwrap()
+    }
+
+    /// That case's `fix.properties`, which is also its `migrate.properties`.
+    const TTL_CONFIG: &[&str] = &[
+        TABLE,
+        "schema.origin.ttl.names=t_col1,tw_col2",
+        "schema.origin.writetime.names=tw_col2,w_col3",
+    ];
+
+    #[test]
+    fn val_018_the_validate_builder_resolves_the_same_writetime_plan_as_migrate() {
+        // The root cause: `validate` resolved no plan at all, so its projection selected no
+        // `TTL(…)`/`WRITETIME(…)`, there was nothing for a `USING` clause to bind, and every
+        // corrected row went out at the coordinator's wall clock. Both jobs now call this one
+        // function, so the two cannot resolve differently.
+        let plan = writetime_ttl(&config(TTL_CONFIG), &ttl_origin_facts(), false).unwrap();
+        assert!(plan.has_ttl(), "the projection must select TTL(…)");
+        assert!(
+            plan.has_writetime(),
+            "the projection must select WRITETIME(…)"
+        );
+        assert_eq!(
+            plan.projection(),
+            [
+                "TTL(t_col1)".to_owned(),
+                "TTL(tw_col2)".to_owned(),
+                "WRITETIME(tw_col2)".to_owned(),
+                "WRITETIME(w_col3)".to_owned(),
+            ],
+            "the virtual columns follow the mapped ones, so no mapped position moves (SCH-007)"
+        );
+
+        // FEA-046: the clause the target upsert is generated with, from that same plan.
+        let clause = using_clause(&plan);
+        assert!(clause.ttl && clause.timestamp);
+    }
+
+    #[test]
+    fn val_018_a_counter_target_still_resolves_no_ttl_or_writetime() {
+        // FEA-045: neither side can accept a timestamp or a TTL on a counter write, so a counter
+        // correction is stamped by the server — and `FEA-046` omits the clause rather than binding
+        // a synthetic value.
+        let plan = writetime_ttl(&config(TTL_CONFIG), &ttl_origin_facts(), true).unwrap();
+        assert!(plan.projection().is_empty());
+        let clause = using_clause(&plan);
+        assert!(!clause.ttl && !clause.timestamp);
+    }
+
+    #[test]
+    fn val_018_the_validate_builder_does_not_build_its_upsert_from_the_default_options() {
+        // Asserted against the source for the reason `grd_001_*` below is: the defect was a
+        // `StatementOptions::default()` at exactly one call site, it is invisible to every test on
+        // either side of the seam, and restoring it would leave the run green.
+        let source = include_str!("build.rs");
+        let body = source
+            .split("async fn validate(")
+            .nth(1)
+            .and_then(|rest| rest.split("\n/// ").next())
+            .expect("the function is defined in this file");
+        assert!(
+            !body.contains("StatementOptions::default()"),
+            "validate's upsert must carry the USING clause its writetime plan implies (VAL-018)"
+        );
+        assert!(body.contains("using: using_clause(&writetime)"), "{body}");
+        assert!(body.contains("PlanTimestamps(writetime)"), "{body}");
     }
 
     #[test]
