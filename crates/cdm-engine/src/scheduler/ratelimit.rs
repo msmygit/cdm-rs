@@ -101,15 +101,24 @@ impl RateLimiter {
         self.rows_per_second
     }
 
-    /// Waits until `rows` rows may be processed, then returns (`ENG-005`).
+    /// Waits until `rows` rows may be processed, then returns how long that took (`ENG-005`).
     ///
     /// Backpressure is applied by awaiting. Nothing is ever dropped, and the caller is never
     /// asked to retry.
-    pub async fn acquire(&self, rows: u32) {
+    ///
+    /// The returned [`Duration`] is `MET-010`'s rate-limiter wait time, and it costs nothing to
+    /// produce: the limiter has already computed the delay in order to sleep for it, so the
+    /// caller is handed the number rather than timing the call and reading the clock twice more.
+    /// [`Duration::ZERO`] means the reservation came due immediately, which is every call on an
+    /// unlimited limiter.
+    pub async fn acquire(&self, rows: u32) -> Duration {
         let delay = self.reserve(rows, self.now_picos());
-        if delay > 0 {
-            tokio::time::sleep(picos_to_duration(delay)).await;
+        if delay == 0 {
+            return Duration::ZERO;
         }
+        let waited = picos_to_duration(delay);
+        tokio::time::sleep(waited).await;
+        waited
     }
 
     /// Picoseconds since this limiter was created, on the runtime clock.

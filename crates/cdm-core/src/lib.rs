@@ -41,11 +41,14 @@
 //! - `PLG-005` — [`RowSource`], [`RowStream`], [`RowSink`]
 //! - `PLG-006` — [`MetricsExporter`]
 //! - `PLG-007` — [`TrackingStore`]
+//! - `MET-010` — [`RequestObserver`], [`Operation`], [`RetryCause`] (the seam; the instruments
+//!   they feed live in `cdm-metrics`)
 //! - `PLG-010` — [`Registry`], [`RegistryBuilder`]
 //! - `PLG-013` — [`Plugin::config_schema`]
 
 pub mod domain;
 pub mod error;
+pub mod observe;
 pub mod registry;
 
 pub use domain::{
@@ -53,6 +56,7 @@ pub use domain::{
     RunIdGenerator, RunStatus, Side, TableRef, TokenRange,
 };
 pub use error::{CdmError, Diagnostic, ErrorContext, ErrorKind, Severity};
+pub use observe::{Operation, RequestObserver, RetryCause};
 pub use registry::{
     BindingBuilder, CodecPlugin, CompareHook, EffectiveConfig, FeaturePlugin, FilterPlugin,
     GuardrailPlugin, JobPlugin, JobRunner, LeaseOutcome, LeaseRecord, LeaseStore, MetricsExporter,

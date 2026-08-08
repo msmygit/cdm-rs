@@ -71,6 +71,9 @@ pub const ERROR_TAIL_CAPACITY: usize = 64;
 /// any terminal and therefore always enough to fill one.
 pub const SPARKLINE_CAPACITY: usize = 120;
 
+/// Nanoseconds in a millisecond: the histograms record the former, the sparkline plots the latter.
+const NANOS_PER_MILLI: u64 = 1_000_000;
+
 /// How many recent range durations [`RangeTimings`] keeps between samples.
 const RECENT_TIMINGS_CAPACITY: usize = 4_096;
 
@@ -129,21 +132,22 @@ pub struct NodeStatus {
     pub connected: bool,
 }
 
-/// Where per-range wall-clock durations are collected for the latency panel (`MET-031`).
+/// Where per-range wall-clock durations are collected, alongside the request latencies
+/// (`MET-031`).
 ///
-/// # Why a range duration and not a request latency
+/// # A range duration is not a request latency, and both are worth having
 ///
 /// `MET-010` defines request-latency percentiles per side and per operation, and
-/// [`Instruments::latency`] is ready to hold them — but nothing feeds it yet: neither the jobs in
-/// `cdm-engine` nor the executors in `cdm-cql` record a request duration today, so those
-/// histograms are empty in a real run. Drawing an empty histogram as a latency sparkline would be
-/// a display that always reads zero.
+/// [`Instruments::latency`] holds them: `cdm-cql` brackets every driver request it issues and
+/// records it through [`cdm_core::RequestObserver`], so those histograms are populated in a real
+/// run and the display draws them. They answer "how fast is the *cluster* answering?".
 ///
-/// What the scheduler *can* observe without touching a hot path is how long each range took, which
-/// it already brackets with `on_range_started` and `on_range_finished` (`ENG-002`). That is a real
-/// measurement of a real unit of work, and it is labelled as what it is — range duration, not
-/// request latency. When the jobs are instrumented, the panel gains the per-operation percentiles
-/// alongside it; until then it does not claim to have them.
+/// A range duration answers a different question — "how long is a unit of work taking end to
+/// end?" — and includes the conversion, the batching and the waiting that no request sees. The
+/// scheduler already brackets it with `on_range_started` and `on_range_finished` (`ENG-002`), it
+/// costs nothing per row, and a run whose requests are fast but whose ranges are slow is exactly
+/// the situation the two numbers together diagnose. So both are kept, and each is labelled as
+/// what it is.
 ///
 /// Every method takes `&self`: the recorder is written by scheduler workers and read by the
 /// display, on different threads.
@@ -247,6 +251,11 @@ pub struct DashboardState {
     dropped_events: u64,
     rows_history: VecDeque<u64>,
     latency_history: VecDeque<u64>,
+    request_latency_history: VecDeque<u64>,
+    /// The `(count, nanoseconds)` totals of every request histogram at the previous sample, so
+    /// that the sparkline plots the mean over the *interval* rather than a cumulative average
+    /// that flattens out an hour into a run.
+    last_request_totals: (u64, u64),
     nodes: Vec<NodeStatus>,
     status: Option<RunStatus>,
     stopping: bool,
@@ -279,6 +288,8 @@ impl DashboardState {
             dropped_events: 0,
             rows_history: VecDeque::with_capacity(SPARKLINE_CAPACITY),
             latency_history: VecDeque::with_capacity(SPARKLINE_CAPACITY),
+            request_latency_history: VecDeque::with_capacity(SPARKLINE_CAPACITY),
+            last_request_totals: (0, 0),
             nodes: Vec::new(),
             status: None,
             stopping: false,
@@ -382,6 +393,21 @@ impl DashboardState {
             .or_else(|| self.latency_history.back().copied())
             .unwrap_or(0);
         push_bounded(&mut self.latency_history, latency, SPARKLINE_CAPACITY);
+
+        // MET-010's request latency, as a rate rather than a running average: the difference of
+        // two cumulative totals is the mean of the requests that happened *between* the samples,
+        // and it costs one snapshot per frame rather than any per-request state. Idle means "no
+        // requests came back", which is not a zero-millisecond request, so the last value holds.
+        let (count, nanos) = request_totals(&self.instruments.snapshot_at(now));
+        let requests = count.saturating_sub(self.last_request_totals.0);
+        let elapsed = nanos.saturating_sub(self.last_request_totals.1);
+        self.last_request_totals = (count, nanos);
+        let mean = elapsed
+            .checked_div(requests)
+            .map(|nanos| nanos / NANOS_PER_MILLI)
+            .or_else(|| self.request_latency_history.back().copied())
+            .unwrap_or(0);
+        push_bounded(&mut self.request_latency_history, mean, SPARKLINE_CAPACITY);
     }
 
     /// Everything a renderer needs, at the current instant.
@@ -404,6 +430,7 @@ impl DashboardState {
             range_latency: self.timings.snapshot(),
             rows_history: self.rows_history.iter().copied().collect(),
             latency_history: self.latency_history.iter().copied().collect(),
+            request_latency_history: self.request_latency_history.iter().copied().collect(),
             errors: self.errors.iter().cloned().collect(),
             errors_total: self.errors_total,
             warnings_total: self.warnings_total,
@@ -421,6 +448,22 @@ impl DashboardState {
         }
         self.errors.push_back(line);
     }
+}
+
+/// The `(requests, nanoseconds)` totals of every request-latency histogram in one snapshot.
+///
+/// Summed across both sides and all four operations: a sparkline plots one series, and the
+/// breakdown is available separately for the panel that prints percentiles.
+fn request_totals(snapshot: &InstrumentSnapshot) -> (u64, u64) {
+    [Side::Origin, Side::Target]
+        .into_iter()
+        .flat_map(|side| snapshot.side(side).latency)
+        .fold((0, 0), |(count, nanos), histogram| {
+            (
+                count.saturating_add(histogram.count),
+                nanos.saturating_add(histogram.sum),
+            )
+        })
 }
 
 /// One instant of a run, as a display draws it (`MET-031`).
@@ -451,6 +494,13 @@ pub struct Dashboard {
     pub rows_history: Vec<u64>,
     /// Mean range duration in milliseconds, oldest sample first.
     pub latency_history: Vec<u64>,
+    /// Mean request latency in milliseconds over each sample interval, oldest sample first
+    /// (`MET-010`).
+    ///
+    /// Across both sides and every operation, because a sparkline is one series. The per-side,
+    /// per-operation percentiles the requirement also names are in
+    /// [`instruments`](Dashboard::instruments), which is what the stats panel prints.
+    pub request_latency_history: Vec<u64>,
     /// The most recent errors and warnings, oldest first (`SEC-002`).
     pub errors: Vec<ErrorLine>,
     /// How many errors the run has published, including any no longer in the tail.

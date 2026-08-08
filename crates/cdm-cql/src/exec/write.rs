@@ -23,7 +23,7 @@
 
 use std::time::Duration;
 
-use cdm_core::{CdmError, ErrorKind, Side};
+use cdm_core::{CdmError, ErrorKind, Operation, Side};
 use scylla::errors::ExecutionError;
 use scylla::response::query_result::QueryRowsResult;
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
@@ -31,6 +31,7 @@ use scylla::statement::prepared::PreparedStatement;
 
 use crate::connect::Backoff;
 use crate::errors::side_error_from;
+use crate::observe::RequestMetrics;
 use crate::statement::{BoundWrite, CounterWrite, IdempotentWrite};
 
 use super::DriverSession;
@@ -105,6 +106,7 @@ pub struct TargetWriter<'a> {
     upsert: &'a PreparedStatement,
     select_by_pk: &'a PreparedStatement,
     backoff: Backoff,
+    metrics: &'a RequestMetrics,
 }
 
 impl<'a> TargetWriter<'a> {
@@ -115,12 +117,14 @@ impl<'a> TargetWriter<'a> {
         upsert: &'a PreparedStatement,
         select_by_pk: &'a PreparedStatement,
         backoff: Backoff,
+        metrics: &'a RequestMetrics,
     ) -> Self {
         Self {
             session,
             upsert,
             select_by_pk,
             backoff,
+            metrics,
         }
     }
 
@@ -131,8 +135,10 @@ impl<'a> TargetWriter<'a> {
     /// [`ErrorKind::Write`] once the attempts allowed by `perfops.retry.max_attempts` are used up.
     pub async fn write(&self, write: &IdempotentWrite<'_>) -> Result<(), CdmError> {
         let values = write.values();
-        self.retrying(|| self.session.execute_unpaged(self.upsert, values))
-            .await
+        self.retrying(Operation::Write, || {
+            self.session.execute_unpaged(self.upsert, values)
+        })
+        .await
     }
 
     /// Executes one `UNLOGGED` batch of idempotent writes (`MIG-020`).
@@ -157,7 +163,10 @@ impl<'a> TargetWriter<'a> {
             )
         })?;
         let values: Vec<&BoundWrite<'_>> = writes.iter().map(IdempotentWrite::values).collect();
-        self.retrying(|| self.session.batch(&batch, &values[..]))
+        // MET-010: the size actually sent, not the configured `perfops.batch_size`. A distribution
+        // pinned at 1 against a configured 5 is how the coercion of `MIG-021` announces itself.
+        self.metrics.batch(writes.len());
+        self.retrying(Operation::Batch, || self.session.batch(&batch, &values[..]))
             .await
     }
 
@@ -173,17 +182,19 @@ impl<'a> TargetWriter<'a> {
     ///
     /// [`ErrorKind::Write`] on the first failure, which fails the range (`ENG-008`).
     pub async fn write_counter(&self, write: &CounterWrite<'_>) -> Result<(), CdmError> {
-        self.session
+        let guard = self.metrics.begin(Side::Target, Operation::Write);
+        let executed = self
+            .session
             .execute_unpaged(self.upsert, write.values())
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                write_error(
-                    "a counter update failed and will not be retried: re-applying it could \
+            .await;
+        drop(guard);
+        executed.map(|_| ()).map_err(|error| {
+            write_error(
+                "a counter update failed and will not be retried: re-applying it could \
                      double-count (CON-012, MIG-032)",
-                    error,
-                )
-            })
+                error,
+            )
+        })
     }
 
     /// Reads the target row for one primary key, for the counter delta (`MIG-031`).
@@ -199,18 +210,17 @@ impl<'a> TargetWriter<'a> {
         let mut attempts = 0u32;
         loop {
             attempts = attempts.saturating_add(1);
-            let attempt = self
-                .session
-                .execute_unpaged(self.select_by_pk, key)
-                .await
-                .map_err(|error: ExecutionError| {
-                    side_error_from(
-                        ErrorKind::Read,
-                        Side::Target,
-                        "the target lookup for a counter delta failed (MIG-031)".to_owned(),
-                        error,
-                    )
-                });
+            let guard = self.metrics.begin(Side::Target, Operation::KeyRead);
+            let executed = self.session.execute_unpaged(self.select_by_pk, key).await;
+            drop(guard);
+            let attempt = executed.map_err(|error: ExecutionError| {
+                side_error_from(
+                    ErrorKind::Read,
+                    Side::Target,
+                    "the target lookup for a counter delta failed (MIG-031)".to_owned(),
+                    error,
+                )
+            });
             match attempt {
                 Ok(result) => {
                     let rows = result.into_rows_result().map_err(|error| {
@@ -227,6 +237,7 @@ impl<'a> TargetWriter<'a> {
                     if !self.backoff.should_retry(&error, attempts) {
                         return Err(error);
                     }
+                    self.metrics.retried(&error);
                     tokio::time::sleep(self.backoff.delay_for(attempts)).await;
                 }
             }
@@ -234,7 +245,11 @@ impl<'a> TargetWriter<'a> {
     }
 
     /// The retry loop of `CON-011`, shared by every idempotent target request.
-    async fn retrying<F, Fut>(&self, mut attempt: F) -> Result<(), CdmError>
+    ///
+    /// `operation` is the latency dimension each attempt is recorded under (`MET-010`): a single
+    /// upsert and an unlogged batch are different requests with very different distributions, and
+    /// averaging them would hide the one an operator is tuning.
+    async fn retrying<F, Fut>(&self, operation: Operation, mut attempt: F) -> Result<(), CdmError>
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<
@@ -244,13 +259,17 @@ impl<'a> TargetWriter<'a> {
         let mut attempts = 0u32;
         loop {
             attempts = attempts.saturating_add(1);
-            match attempt().await {
+            let guard = self.metrics.begin(Side::Target, operation);
+            let executed = attempt().await;
+            drop(guard);
+            match executed {
                 Ok(_) => return Ok(()),
                 Err(error) => {
                     let error = write_error("the target write failed", error);
                     if !self.backoff.should_retry(&error, attempts) {
                         return Err(error);
                     }
+                    self.metrics.retried(&error);
                     let delay = self.backoff.delay_for(attempts);
                     tracing::warn!(
                         target: "cdm::cql::exec",

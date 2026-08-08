@@ -16,6 +16,13 @@
 //! cardinality by construction — `MET-020` forbids a token range or a primary key from ever
 //! becoming a label, and no such value can reach an instrument in the first place.
 //!
+//! [`Operation`] and [`RetryCause`] are declared in
+//! [`cdm_core::observe`] and re-exported here. They have to be nameable by the
+//! crates that *issue* the requests — `cdm-cql` for a driver request, `cdm-engine` for a
+//! rate-limiter wait — and neither of those may depend on `cdm-metrics` (`ARCHITECTURE.md` §3).
+//! [`Instruments`] implements [`RequestObserver`], which is the whole of the wiring: a caller
+//! holds `Arc<dyn RequestObserver>` and never names a metrics type.
+//!
 //! # Which accounting these reflect
 //!
 //! Instruments measure work as it happens — the **interim** level of `MET-004`. See [`RateMeter`]
@@ -27,117 +34,13 @@ pub mod rate;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use cdm_core::Side;
+use cdm_core::{RequestObserver, Side};
 use serde::{Deserialize, Serialize};
+
+pub use cdm_core::observe::{Operation, RetryCause};
 
 pub use histogram::{Histogram, HistogramSnapshot, PERCENTILES, PERCENTILE_LABELS};
 pub use rate::{RateMeter, RateSnapshot};
-
-/// A request cdm-rs issues, as a latency dimension (`MET-010`).
-///
-/// The four kinds are the four statements the jobs execute. A job that never issues one — a
-/// guardrail run opens no target connection at all (`GRD-001`) — leaves its histogram empty, and
-/// an empty histogram is not exported.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Operation {
-    /// The origin token-range select of `FEA-060`, timed per page (`ENG-003`).
-    RangeRead,
-    /// A select by primary key: validate's comparison read (`VAL-001`) and the counter
-    /// pre-read of `MIG-031`.
-    KeyRead,
-    /// A single-statement write to the target (`MIG-010`, `MIG-030`).
-    Write,
-    /// An unlogged batch (`MIG-020`).
-    Batch,
-}
-
-impl Operation {
-    /// Every operation, in declaration order.
-    pub const ALL: [Self; 4] = [Self::RangeRead, Self::KeyRead, Self::Write, Self::Batch];
-
-    /// The stable label value.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RangeRead => "range_read",
-            Self::KeyRead => "key_read",
-            Self::Write => "write",
-            Self::Batch => "batch",
-        }
-    }
-
-    /// This operation's slot in [`Operation::ALL`].
-    #[must_use]
-    pub const fn index(self) -> usize {
-        match self {
-            Self::RangeRead => 0,
-            Self::KeyRead => 1,
-            Self::Write => 2,
-            Self::Batch => 3,
-        }
-    }
-}
-
-/// Why a request was retried (`MET-010`, `CON-011`).
-///
-/// Closed, and deliberately coarser than the driver's error taxonomy: an operator reading a retry
-/// breakdown wants to know whether the target is overloaded, unavailable or simply slow, not which
-/// of a dozen driver error codes was returned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetryCause {
-    /// The coordinator timed out waiting for replicas on a read.
-    ReadTimeout,
-    /// The coordinator timed out waiting for replicas on a write.
-    WriteTimeout,
-    /// Not enough replicas were up to satisfy the consistency level.
-    Unavailable,
-    /// The replica reported `OVERLOADED` — the signal `ENG-006` reacts to.
-    Overloaded,
-    /// The connection failed, or the node went away mid-request.
-    ConnectionError,
-    /// Anything else the retry policy decided to retry.
-    Other,
-}
-
-impl RetryCause {
-    /// Every cause, in declaration order.
-    pub const ALL: [Self; 6] = [
-        Self::ReadTimeout,
-        Self::WriteTimeout,
-        Self::Unavailable,
-        Self::Overloaded,
-        Self::ConnectionError,
-        Self::Other,
-    ];
-
-    /// The stable label value.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReadTimeout => "read_timeout",
-            Self::WriteTimeout => "write_timeout",
-            Self::Unavailable => "unavailable",
-            Self::Overloaded => "overloaded",
-            Self::ConnectionError => "connection_error",
-            Self::Other => "other",
-        }
-    }
-
-    /// This cause's slot in [`RetryCause::ALL`].
-    #[must_use]
-    pub const fn index(self) -> usize {
-        match self {
-            Self::ReadTimeout => 0,
-            Self::WriteTimeout => 1,
-            Self::Unavailable => 2,
-            Self::Overloaded => 3,
-            Self::ConnectionError => 4,
-            Self::Other => 5,
-        }
-    }
-}
 
 /// A signed gauge: in-flight requests, which go up and down (`MET-010`, `ENG-007`).
 ///
@@ -353,6 +256,48 @@ impl Instruments {
     }
 }
 
+/// The one implementation that matters: the instruments *are* where a request is recorded
+/// (`MET-010`).
+///
+/// This is what lets `cdm-cql` time a driver request and `cdm-engine` time a rate-limiter wait
+/// without either of them depending on this crate — they hold
+/// [`Arc<dyn RequestObserver>`](cdm_core::RequestObserver), which
+/// [`cdm_core::observe`] declares and this type satisfies.
+///
+/// # Cost
+///
+/// Every method is a fixed number of relaxed atomic read-modify-writes on preallocated state:
+/// four for a histogram record, one for a gauge, one for a counter. Nothing allocates, nothing
+/// locks and nothing awaits, so a request pays for its own measurement and for nothing else. The
+/// one exception is the byte meter, whose once-a-second tick takes a lock that
+/// [`RateMeter::mark`] already documents.
+impl RequestObserver for Instruments {
+    fn request_started(&self, side: Side) {
+        self.inflight(side).increment();
+    }
+
+    fn request_finished(&self, side: Side, operation: Operation, elapsed: Duration) {
+        self.inflight(side).decrement();
+        self.latency(side, operation).record_duration(elapsed);
+    }
+
+    fn request_retried(&self, cause: RetryCause) {
+        self.retry(cause);
+    }
+
+    fn batch_executed(&self, statements: u64) {
+        self.batch_size().record(statements);
+    }
+
+    fn bytes_transferred(&self, side: Side, bytes: u64) {
+        self.bytes(side).mark(bytes);
+    }
+
+    fn ratelimit_waited(&self, side: Side, waited: Duration) {
+        self.ratelimit_wait(side).record_duration(waited);
+    }
+}
+
 /// Everything the instruments read at one instant (`MET-010`).
 ///
 /// Serialisable, because this is what `GET /v1/runs/{id}/metrics` returns (`API-003`), what the
@@ -560,6 +505,48 @@ mod tests {
         for (slot, cause) in RetryCause::ALL.into_iter().enumerate() {
             assert_eq!(cause.index(), slot);
         }
+    }
+
+    #[test]
+    fn met_010_the_instruments_are_the_observer_the_request_paths_record_through() {
+        // The seam `cdm-cql` and `cdm-engine` see. They hold `dyn RequestObserver` and cannot name
+        // this type, so if this impl ever stopped landing in the right instrument, every one of
+        // their tests would still pass and every percentile would still be zero.
+        let start = Instant::now();
+        let instruments = Instruments::new(start);
+        let observer: &dyn RequestObserver = &instruments;
+
+        observer.request_started(Side::Origin);
+        observer.request_started(Side::Origin);
+        assert_eq!(instruments.inflight(Side::Origin).get(), 2);
+        observer.request_finished(
+            Side::Origin,
+            Operation::RangeRead,
+            Duration::from_millis(12),
+        );
+        observer.request_finished(Side::Origin, Operation::RangeRead, Duration::from_millis(8));
+        observer.request_started(Side::Target);
+        observer.request_finished(Side::Target, Operation::Batch, Duration::from_millis(30));
+        observer.request_retried(RetryCause::Overloaded);
+        observer.batch_executed(5);
+        observer.bytes_transferred(Side::Origin, 4_096);
+        observer.ratelimit_waited(Side::Target, Duration::from_micros(750));
+
+        let snapshot = instruments.snapshot_at(start + Duration::from_secs(1));
+        assert_eq!(snapshot.origin.inflight, 0, "a finish must balance a start");
+        assert_eq!(snapshot.target.inflight, 0);
+        let range_read = snapshot.origin.latency_for(Operation::RangeRead);
+        assert_eq!(range_read.count, 2);
+        // Recorded in nanoseconds, and the reported percentile never understates.
+        assert!(range_read.percentile(0.5) >= 8_000_000, "{range_read:?}");
+        assert_eq!(snapshot.target.latency_for(Operation::Batch).count, 1);
+        // The operation was recorded against the side it was issued to and no other.
+        assert!(snapshot.target.latency_for(Operation::RangeRead).is_empty());
+        assert_eq!(snapshot.retries_for(RetryCause::Overloaded), 1);
+        assert_eq!(snapshot.batch_size.count, 1);
+        assert_eq!(snapshot.origin.bytes.total, 4_096);
+        assert_eq!(snapshot.target.ratelimit_wait.count, 1);
+        assert!(snapshot.origin.ratelimit_wait.is_empty());
     }
 
     #[test]

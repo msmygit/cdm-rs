@@ -75,14 +75,16 @@
 //! - `MIG-030`, `MIG-031` — the counter delta
 //! - `VAL-001` — the target lookup by primary key
 //! - `VAL-018` — [`RowTimestamps`], bound by [`CqlRowSink::write`]
+//! - `MET-010` — every request either side issues is timed through
+//!   [`RequestMetrics`]
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use cdm_core::{
-    CdmError, ErrorKind, Plugin, PrimaryKey, RawCell, Record, Row, RowSink, RowSource, RowStream,
-    Side, TokenRange,
+    CdmError, ErrorKind, Operation, Plugin, PrimaryKey, RawCell, Record, Row, RowSink, RowSource,
+    RowStream, Side, TokenRange,
 };
 use scylla::client::session::Session;
 use scylla::response::PagingState;
@@ -91,6 +93,7 @@ use scylla::serialize::writers::RowWriter;
 use scylla::serialize::SerializationError;
 use scylla::statement::prepared::PreparedStatement;
 
+use crate::observe::RequestMetrics;
 use crate::raw::RawRow;
 use crate::statement::bind::parse_type;
 use crate::statement::{
@@ -414,6 +417,7 @@ pub struct CqlRowSource {
     statement: PreparedStatement,
     token_kind: TokenKind,
     key_plan: TargetKeyPlan,
+    metrics: RequestMetrics,
 }
 
 impl CqlRowSource {
@@ -446,7 +450,16 @@ impl CqlRowSource {
             statement,
             token_kind,
             key_plan: TargetKeyPlan::resolve(mapping, target_select, missing_key)?,
+            // MET-010: unobserved until a caller asks for the numbers.
+            metrics: RequestMetrics::unobserved(),
         })
+    }
+
+    /// Records every page request this source issues against `metrics` (`MET-010`).
+    #[must_use]
+    pub fn observing(mut self, metrics: RequestMetrics) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// How this source derives a record's target primary key (`SCH-006`).
@@ -485,6 +498,7 @@ impl RowSource for CqlRowSource {
             paging: Some(PagingState::start()),
             buffer: VecDeque::new(),
             key_plan: self.key_plan.clone(),
+            metrics: self.metrics.clone(),
         }))
     }
 }
@@ -501,6 +515,7 @@ struct RangePager {
     paging: Option<PagingState>,
     buffer: VecDeque<Record>,
     key_plan: TargetKeyPlan,
+    metrics: RequestMetrics,
 }
 
 #[async_trait]
@@ -513,16 +528,19 @@ impl RowStream for RangePager {
             let Some(paging) = self.paging.take() else {
                 return Ok(None);
             };
-            let (result, response) = self
+            let guard = self.metrics.begin(Side::Origin, Operation::RangeRead);
+            let executed = self
                 .session
                 .execute_single_page(&self.statement, &self.bounds, paging)
-                .await
-                .map_err(|error| {
-                    read_error(Side::Origin, self.statement.get_statement(), &error)
-                })?;
+                .await;
+            drop(guard);
+            let (result, response) = executed.map_err(|error| {
+                read_error(Side::Origin, self.statement.get_statement(), &error)
+            })?;
             let rows = result.into_rows_result().map_err(|error| {
                 read_error(Side::Origin, self.statement.get_statement(), &error)
             })?;
+            self.metrics.bytes(Side::Origin, rows.rows_bytes_size());
             for row in rows
                 .rows::<RawRow<'_, '_>>()
                 .map_err(|error| read_error(Side::Origin, self.statement.get_statement(), &error))?
@@ -583,6 +601,7 @@ pub struct CqlRowSink {
     binder: Binder,
     counters: Vec<CounterColumn>,
     timestamps: Option<Arc<dyn RowTimestamps>>,
+    metrics: RequestMetrics,
 }
 
 /// A counter column, and where its two operands live (`MIG-031`).
@@ -652,7 +671,16 @@ impl CqlRowSink {
             binder,
             counters,
             timestamps,
+            // MET-010: unobserved until a caller asks for the numbers.
+            metrics: RequestMetrics::unobserved(),
         })
+    }
+
+    /// Records every request this sink issues against `metrics` (`MET-010`).
+    #[must_use]
+    pub fn observing(mut self, metrics: RequestMetrics) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// The origin row a counter write should bind, with each counter turned into a delta
@@ -731,19 +759,19 @@ impl RowSink for CqlRowSink {
             Bound::Idempotent(write) => write.values(),
             Bound::Counter(write) => write.values(),
         };
-        self.session
-            .execute_unpaged(&self.upsert, values)
-            .await
-            .map_err(|error| {
-                CdmError::new(
-                    ErrorKind::Write,
-                    format!("the target upsert failed: {error}"),
-                )
-                .with_context(|c| {
-                    c.with_side(Side::Target)
-                        .with_primary_key(record.key().clone())
-                })
-            })?;
+        let guard = self.metrics.begin(Side::Target, Operation::Write);
+        let executed = self.session.execute_unpaged(&self.upsert, values).await;
+        drop(guard);
+        executed.map_err(|error| {
+            CdmError::new(
+                ErrorKind::Write,
+                format!("the target upsert failed: {error}"),
+            )
+            .with_context(|c| {
+                c.with_side(Side::Target)
+                    .with_primary_key(record.key().clone())
+            })
+        })?;
         Ok(())
     }
 
@@ -766,10 +794,10 @@ impl RowSink for CqlRowSink {
             binds.push(bytes.to_vec());
         }
         let binds = RawBinds::of(binds);
-        let result = self
-            .session
-            .execute_unpaged(&self.select, &binds)
-            .await
+        let guard = self.metrics.begin(Side::Target, Operation::KeyRead);
+        let executed = self.session.execute_unpaged(&self.select, &binds).await;
+        drop(guard);
+        let result = executed
             .map_err(|error| read_error(Side::Target, self.select.get_statement(), &error))?;
         let rows = result
             .into_rows_result()

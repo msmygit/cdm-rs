@@ -25,6 +25,7 @@ use cdm_core::{CdmError, TokenRange};
 use scylla::client::session::Session;
 
 use crate::connect::{Backoff, ClusterSession};
+use crate::observe::RequestMetrics;
 use crate::statement::StatementSet;
 
 use super::scan::TokenWidth;
@@ -43,6 +44,7 @@ pub struct RunExecutor {
     token_width: TokenWidth,
     watch: SchemaWatch,
     statements: StatementSet,
+    metrics: RequestMetrics,
 }
 
 impl RunExecutor {
@@ -88,7 +90,27 @@ impl RunExecutor {
             token_width,
             watch,
             statements: statements.clone(),
+            // MET-010: nothing, until a caller says otherwise. A run nobody is watching must not
+            // read a clock per request.
+            metrics: RequestMetrics::unobserved(),
         })
+    }
+
+    /// Records every request this executor issues against `metrics` (`MET-010`).
+    ///
+    /// A builder rather than a constructor argument because the observer belongs to the run and
+    /// the executor belongs to the job: the harness prepares one, then hands it the other. An
+    /// executor left unobserved records nothing and reads no clock.
+    #[must_use]
+    pub fn observing(mut self, metrics: RequestMetrics) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
+    /// Where this executor reports its requests (`MET-010`).
+    #[must_use]
+    pub const fn metrics(&self) -> &RequestMetrics {
+        &self.metrics
     }
 
     /// The statements this run executes, for the startup log and `GET /v1/runs/{id}/statements`
@@ -131,6 +153,7 @@ impl RunExecutor {
             range,
             self.token_width,
             self.backoff,
+            self.metrics.clone(),
         )
     }
 
@@ -142,6 +165,7 @@ impl RunExecutor {
             self.prepared.target_upsert(),
             self.prepared.target_select_by_pk(),
             self.backoff,
+            &self.metrics,
         )
     }
 
