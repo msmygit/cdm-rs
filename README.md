@@ -16,12 +16,18 @@ HCD, Astra DB, ScyllaDB and Azure Cosmos DB Cassandra API — as a single static
 > columns, the explode map, extract-JSON, TTL and writetime preservation, and the row filters —
 > resolved from the configuration the run was validated against. So do
 > `cdm config init|validate|explain|diff|convert`, `cdm connect test`, `cdm schema show|diff`,
-> `cdm codecs`, `cdm runs list|show|cancel`, `cdm completions` and `cdm version`.
+> `cdm codecs`, `cdm runs list|show|cancel|resume`, `cdm completions` and `cdm version`. A run is
+> recorded as it goes, so an interrupted one resumes the ranges it did not finish rather than
+> re-planning the ring. `--tui` draws live throughput, progress, ETA and a latency sparkline, and
+> falls back to line-based progress when stdout is not a terminal.
 >
 > Three commands still answer "not yet", and each says which crate it is waiting on rather than
-> quoting a roadmap number: `cdm runs resume` needs the scheduler to accept a pre-computed range
-> set; `cdm cluster` needs `cdm-cluster`; and `cdm serve` and `cdm mcp` need the Phase 6 crates
-> `cdm-service`, `cdm-api`, `cdm-ui` and `cdm-mcp`. The terminal UI (`--tui`) is not built either.
+> quoting a roadmap number: `cdm cluster` needs the membership and per-node counter rows that go
+> with the lease coordinator; and `cdm serve` and `cdm mcp` need the Phase 6 crates
+> `cdm-service`, `cdm-api`, `cdm-ui` and `cdm-mcp`.
+>
+> A distributed run is **not** available yet. The lease coordinator exists, but it is not wired into
+> the scheduler, so a run is still single-process.
 >
 > In practical terms: you can run a migration or a validation from a terminal today, and you cannot
 > yet drive one over HTTP. The complete design is in [`docs/SPEC.md`](docs/SPEC.md) and
@@ -113,10 +119,12 @@ cdm validate --config cdm.toml \
 # What has run against this table, and what did not finish?
 cdm runs list --config cdm.toml
 
-# --- not yet wired; see the status note above ---
-
-# Resume whatever did not finish
+# Resume whatever did not finish — the outstanding ranges only, not a fresh plan of the ring.
+# A counter table's in-flight ranges are withheld rather than replayed, because re-applying a
+# delta double-counts; the resume lists them and exits non-zero so they are never silently lost.
 cdm runs resume --config cdm.toml --auto
+
+# --- not yet wired; see the status note above ---
 
 # Serve the control plane, web config builder, metrics and MCP endpoint
 cdm serve --config cdm.toml --bind 0.0.0.0:8080
