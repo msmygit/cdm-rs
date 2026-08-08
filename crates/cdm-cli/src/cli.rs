@@ -144,6 +144,20 @@ pub struct JobArgs {
     /// Write a machine-readable run summary here when the run ends (`MET-033`).
     #[arg(long, value_name = "PATH")]
     pub summary_out: Option<PathBuf>,
+
+    /// Show live progress: an interactive display on a terminal, progress lines otherwise
+    /// (`MET-031`).
+    ///
+    /// The interactive display shows throughput, a weighted progress bar, the ETA, the cluster
+    /// nodes the driver is connected to, an error tail and sparklines, and `q`, `Esc` or `Ctrl-C`
+    /// stops the run gracefully. When standard output is not a terminal — a pipe, a redirect, a CI
+    /// job — or when `--output json` has claimed standard output for its document, it degrades to
+    /// one progress line on standard error every few seconds. It never writes to standard output.
+    ///
+    /// Accepted by `migrate`, `validate` and `guardrail`. `cdm plan` rejects it: it computes a plan
+    /// and runs no ranges, so there would be nothing to show.
+    #[arg(long)]
+    pub tui: bool,
 }
 
 /// Arguments for `cdm validate`, which is the only job with comparison flags of its own.
@@ -422,6 +436,41 @@ mod tests {
         // A migration that quietly moved a twentieth of the data is the failure this prevents.
         assert!(Cli::try_parse_from(["cdm", "migrate", "--sample", "5"]).is_err());
         assert!(Cli::try_parse_from(["cdm", "migrate", "--keys-only"]).is_err());
+    }
+
+    #[test]
+    fn met_031_tui_is_accepted_by_every_command_that_runs_ranges() {
+        // The plumbing is shared, so all three jobs get it. A validate run is as long as a
+        // migration and wants a progress bar just as much.
+        for (command, has_tui) in [
+            ("migrate", true),
+            ("validate", true),
+            ("guardrail", true),
+            ("plan", true),
+        ] {
+            let cli = Cli::try_parse_from(["cdm", command, "--tui"])
+                .unwrap_or_else(|error| panic!("`cdm {command} --tui` must parse: {error}"));
+            let args = match &cli.command {
+                Command::Migrate(args) | Command::Guardrail(args) | Command::Plan(args) => args,
+                Command::Validate(args) => &args.job,
+                other => panic!("unexpected command {other:?}"),
+            };
+            assert_eq!(args.tui, has_tui);
+        }
+
+        // And nothing gets it by accident.
+        assert!(!Cli::try_parse_from(["cdm", "migrate"]).unwrap().tui_flag());
+    }
+
+    impl Cli {
+        /// The `--tui` flag of whichever job command this is, for the test above.
+        fn tui_flag(&self) -> bool {
+            match &self.command {
+                Command::Migrate(args) | Command::Guardrail(args) | Command::Plan(args) => args.tui,
+                Command::Validate(args) => args.job.tui,
+                _ => false,
+            }
+        }
     }
 
     #[test]

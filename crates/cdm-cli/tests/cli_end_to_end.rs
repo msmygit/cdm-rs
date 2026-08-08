@@ -313,6 +313,31 @@ fn cli_003_conversion_produces_canonical_toml() {
 }
 
 #[test]
+fn met_031_plan_refuses_the_tui_flag_rather_than_ignoring_it() {
+    // `cdm plan` splits the ring and reports on it: no range is claimed, no row moves, and a live
+    // display would have nothing to display. Accepting the flag and doing nothing is the failure
+    // mode this repository has shipped before, so the flag is refused, with a diagnostic that says
+    // where it does belong.
+    let error = run_err(&["cdm", "plan", "--tui"]);
+    assert_eq!(error.kind(), cdm_core::ErrorKind::Config);
+    let message = error.message();
+    assert!(message.contains("--tui"), "{message}");
+    assert!(message.contains("cdm migrate"), "{message}");
+}
+
+#[test]
+fn met_031_the_tui_flag_is_documented_in_the_help_of_every_job_command() {
+    // A flag nobody can discover is a flag nobody uses, and `--tui` is the one thing in `MET-031`
+    // an operator has to type.
+    for command in ["migrate", "validate", "guardrail"] {
+        let help = Cli::try_parse_from(["cdm", command, "--help"])
+            .expect_err("--help exits through clap")
+            .to_string();
+        assert!(help.contains("--tui"), "{command}: {help}");
+    }
+}
+
+#[test]
 fn sec_001_explain_never_prints_a_secret() {
     let (_, text) = run(&[
         "cdm",

@@ -26,6 +26,7 @@ pub mod exit;
 pub mod harness;
 pub mod loader;
 pub mod output;
+pub mod tui;
 
 use std::io::Write;
 
@@ -37,6 +38,7 @@ use crate::cli::{Cli, Command, ConfigCommand, RunsCommand};
 use crate::exit::Exit;
 use crate::harness::JobOptions;
 use crate::output::{emit, Report};
+use crate::tui::Presentation;
 
 /// Parses arguments and runs the requested command.
 pub fn main() -> std::process::ExitCode {
@@ -90,6 +92,17 @@ pub fn run(cli: &Cli, out: &mut dyn Write) -> Result<Exit, CdmError> {
             run_job(cli, args, JobKind::Guardrail, JobOptions::default(), out)
         }
         Command::Plan(args) => {
+            // MET-031: `--tui` is refused here rather than accepted and ignored. `cdm plan` splits
+            // the ring and reports on it; it claims no range, moves no row and finishes in
+            // milliseconds, so a live display would have nothing to display. A flag that parses
+            // and does nothing is the failure mode this codebase has shipped before.
+            if args.tui {
+                return Err(CdmError::new(
+                    cdm_core::ErrorKind::Config,
+                    "`cdm plan` computes a token plan without running it, so `--tui` has nothing \
+                     to show; pass it to `cdm migrate`, `cdm validate` or `cdm guardrail`",
+                ));
+            }
             let report = harness::plan(args)?;
             finish(&report, cli, out)
         }
@@ -143,7 +156,10 @@ fn run_job(
     options: JobOptions,
     out: &mut dyn Write,
 ) -> Result<Exit, CdmError> {
-    let outcome = harness::execute(args, kind, options)?;
+    // MET-031: `--tui` is a request, and what it resolves to depends on where stdout is going.
+    // Resolved once, here, so that the run and the report agree about who owns the terminal.
+    let presentation = Presentation::detect(args.tui, cli.output);
+    let outcome = harness::execute(args, kind, options, presentation)?;
 
     // A summary is written before the exit code is decided, so a run that ends badly still
     // reports what it did. Java prints its counter block and then throws; the numbers an operator

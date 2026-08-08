@@ -135,6 +135,50 @@ impl JobCounters {
     }
 }
 
+/// Reads a metrics string back into counts (`MET-005`).
+///
+/// The inverse of [`JobCounters::metrics`], for the one caller that has a `run_info` string and no
+/// `JobCounters`: `ENG-002`'s range observer, which is handed a finished range's `run_info` and
+/// nothing else. The live display of `MET-031` turns those counts into a throughput, and `TRK-030`
+/// already reads the same string back for `Partitions Failed`, so parsing it is an established move
+/// rather than a new one.
+///
+/// Tolerant by construction. An entry whose name is not a [`CounterKind`], or whose value is not a
+/// number, is skipped rather than reported: the string may have been written by Java, by an older
+/// cdm-rs, or by a job whose registered counters differ (`MET-002`), and none of those is a reason
+/// to fail a caller who only wants a number to draw.
+///
+/// ```
+/// use cdm_metrics::{parse_run_info, CounterKind};
+///
+/// let counts = parse_run_info("Read: 10; Write: 9; Skipped: 1; Partitions Passed: 1");
+/// assert_eq!(counts[CounterKind::Read.index()], 10);
+/// assert_eq!(counts[CounterKind::Write.index()], 9);
+/// assert_eq!(counts[CounterKind::Mismatch.index()], 0);
+/// ```
+#[must_use]
+pub fn parse_run_info(text: &str) -> [u64; CounterKind::COUNT] {
+    let mut counts = [0_u64; CounterKind::COUNT];
+    for entry in text.split(';') {
+        let Some((name, value)) = entry.rsplit_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        let Ok(value) = value.trim().parse::<u64>() else {
+            continue;
+        };
+        if let Some(kind) = CounterKind::ALL
+            .into_iter()
+            .find(|kind| kind.title_case() == name)
+        {
+            if let Some(slot) = counts.get_mut(kind.index()) {
+                *slot = value;
+            }
+        }
+    }
+    counts
+}
+
 // Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
 // (ERR-004) exists to protect production paths, not test bodies.
 #[cfg(test)]
@@ -536,6 +580,48 @@ Partitions Failed: 0
         insta::assert_snapshot!(
             range.run_info(),
             @"Read: 10; Write: 6; Skipped: 1; Error: 3; Partitions Passed: 0; Partitions Failed: 1"
+        );
+    }
+
+    #[test]
+    fn met_031_a_run_info_string_round_trips_back_into_counts() {
+        // The observer of `MET-031` has a range's `run_info` and nothing else, so the parse has to
+        // agree with the renderer exactly — including `Corrected Mismatch`, whose title case is
+        // two words and whose value would land in the wrong counter if the match were prefix-based.
+        let counters = JobCounters::new(JobKind::Validate);
+        counters.increment_by(counters.counter(CounterKind::Read).unwrap(), 10);
+        counters.increment_by(counters.counter(CounterKind::Mismatch).unwrap(), 2);
+        counters.increment_by(counters.counter(CounterKind::CorrectedMismatch).unwrap(), 1);
+        counters.increment_by(counters.counter(CounterKind::Valid).unwrap(), 7);
+        counters.flush();
+
+        let counts = crate::parse_run_info(&counters.run_info());
+        for kind in CounterKind::ALL {
+            if !kind.is_registered_for(JobKind::Validate) || kind == CounterKind::Unflushed {
+                continue;
+            }
+            assert_eq!(
+                counts[kind.index()],
+                counters.count_of(kind, CounterView::Committed),
+                "{}",
+                kind.title_case()
+            );
+        }
+    }
+
+    #[test]
+    fn met_031_an_unparseable_run_info_yields_zeroes_rather_than_an_error() {
+        // Java wrote some of these strings, and a job's registered counters differ (`MET-002`).
+        // A display asking for a number must not be able to fail because of either.
+        assert_eq!(crate::parse_run_info(""), [0; CounterKind::COUNT]);
+        assert_eq!(crate::parse_run_info("nonsense"), [0; CounterKind::COUNT]);
+        assert_eq!(
+            crate::parse_run_info("Read: not-a-number; Write: 4")[CounterKind::Write.index()],
+            4
+        );
+        assert_eq!(
+            crate::parse_run_info("Unknown Counter: 9"),
+            [0; CounterKind::COUNT]
         );
     }
 
