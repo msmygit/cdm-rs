@@ -173,6 +173,18 @@ impl RangeContext {
         self.limits.acquire_write_rows(rows).await;
     }
 
+    /// The seam a job's target writes report their outcome through (`ENG-006`).
+    ///
+    /// `None` unless `perfops.adaptive_ratelimit` is set, so a run that did not ask for adaptive
+    /// pacing pays nothing — not a virtual call, not an atomic — on the write hot path.
+    #[must_use]
+    pub fn target_load_observer(&self) -> Option<Arc<dyn cdm_cql::exec::TargetLoadObserver>> {
+        self.limits
+            .adaptive()
+            .is_some()
+            .then(|| Arc::clone(&self.limits) as Arc<dyn cdm_cql::exec::TargetLoadObserver>)
+    }
+
     /// Claims one in-flight origin read slot, held until dropped (`ENG-007`).
     ///
     /// # Errors
@@ -389,6 +401,29 @@ mod tests {
             ctx.limits().available_read_slots(),
             usize::try_from(SchedulerSettings::default().max_inflight_reads()).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn eng_006_the_load_observer_is_handed_out_only_when_the_rate_is_adaptive() {
+        // A job asks the context for the observer once per range and passes it to the writer, so
+        // this `Option` is the single switch that decides whether the write path measures
+        // anything at all.
+        let ctx = context(CancellationToken::new());
+        assert!(ctx.target_load_observer().is_none());
+
+        let adaptive = SchedulerSettings::default()
+            .with_ratelimits(0, 10_000)
+            .with_adaptive_ratelimit(true, 10);
+        let ctx = RangeContext::new(
+            RunId::from_raw(7),
+            Arc::from("node-1"),
+            TokenRange::new(-10, 10).unwrap(),
+            250,
+            Arc::new(JobCounters::new(JobKind::Migrate)),
+            Arc::new(RuntimeLimits::new(&adaptive).unwrap()),
+            CancellationToken::new(),
+        );
+        assert!(ctx.target_load_observer().is_some());
     }
 
     #[test]

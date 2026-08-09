@@ -113,7 +113,13 @@ impl RangeProcessor for MigrateJob {
 
         let counters = MigrateCounters::resolve(ctx.counters())?;
         let cql_sink = CqlSink::new(
-            self.plan.executor().writer(),
+            // ENG-006: every target write attempt reports to the adaptive controller, when the
+            // operator asked for one. `None` otherwise, which is the whole cost of the feature
+            // for a run that does not use it.
+            self.plan
+                .executor()
+                .writer()
+                .observing_load(ctx.target_load_observer()),
             self.plan.executor().batch_template(),
         );
         let dry_sink = DryRunSink;

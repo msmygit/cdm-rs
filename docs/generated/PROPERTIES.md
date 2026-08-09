@@ -4,7 +4,7 @@
 
 Generated from `cdm_config::CdmConfig` (`CFG-001`, `CFG-002`). `legacy` is the Java `spark.cdm.*` name that cdm-rs still accepts (`CFG-011`); `canonical` is the cdm-rs name used by TOML, YAML, JSON, `CDM__*` environment variables and `--set`.
 
-130 properties.
+133 properties.
 
 
 ## `connect`
@@ -135,6 +135,7 @@ should not use it.
 | `perfops.request_timeout` | — | duration | `30s` | duration | stable | Per-request timeout. |
 | `perfops.connection_pool_size` | — | integer | `4` | connections | stable | Connections per host, per side. |
 | `perfops.adaptive_ratelimit` | — | bool | `false` | — | experimental | Reduce the rate limit automatically when the target signals overload. |
+| `perfops.adaptive_ratelimit_min_percent` | — | integer | `10` | percent | experimental | The floor the adaptive controller may reduce the target rate to, as a percentage of `perfops.ratelimit.target` (`ENG-006`). |
 | `perfops.shutdown_grace` | — | duration | `1m` | duration | stable | How long a graceful shutdown lets in-flight ranges finish (`ENG-010`). |
 | `perfops.ratelimit.origin` | `spark.cdm.perfops.ratelimit.origin` | integer | `20000` | rows/s | stable | Rows read per second, per cdm-rs process. |
 | `perfops.ratelimit.target` | `spark.cdm.perfops.ratelimit.target` | integer | `20000` | rows/s | stable | Rows written per second, per cdm-rs process. |
@@ -214,6 +215,13 @@ should not use it.
 | `cluster.heartbeat_interval` | — | duration | `15s` | duration | stable | How often a node renews its leases and refreshes its membership row. |
 | `cluster.max_attempts` | — | integer | `3` | attempts | experimental | How many times one token range may be claimed before it is abandoned (`DST-013`). |
 | `cluster.ratelimit_is_global` | — | bool | `false` | — | experimental | Treat `perfops.ratelimit.*` as a budget for the whole cluster (`ENG-004`). |
+
+## `plan`
+
+| canonical | legacy | type | default | unit | stability | description |
+|---|---|---|---|---|---|---|
+| `plan.strategy` | — | `fixed` \| `ring_aware` \| `adaptive` | `fixed` | — | experimental | How the ring is divided into ranges. |
+| `plan.max_rows_per_range` | — | integer | `1000000` | rows | stable | The estimated row count above which `plan.strategy = adaptive` subdivides a range. |
 
 ## `logging`
 

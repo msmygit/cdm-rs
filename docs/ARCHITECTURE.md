@@ -545,7 +545,7 @@ sequenceDiagram
         par heartbeat every 15s
             N1->>T: renew lease
         end
-        N1->>T: mark range PASS + metrics; DELETE lease
+        N1->>T: mark range PASS + metrics, then DELETE the lease
     end
 
     Note over N1: Node 1 dies mid-range
@@ -665,11 +665,11 @@ stateDiagram-v2
     [*] --> pending : POST /v1/runs (202)
     pending --> planning
     planning --> running
-    running --> paused : :pause
-    paused --> running : :resume
+    running --> paused : POST :pause
+    paused --> running : POST :resume
     running --> succeeded
     running --> failed
-    running --> cancelled : :cancel
+    running --> cancelled : POST :cancel
     running --> interrupted : SIGTERM
     succeeded --> [*]
     failed --> [*]

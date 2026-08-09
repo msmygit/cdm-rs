@@ -130,7 +130,7 @@ test, fails CI.
 | `CFG-170` | Property registry: transformation properties (custom writetime/TTL, codecs, map null removal) | `cdm-config` | `cfg_170_*` | #4, #5, #6 |
 | `CFG-180` | Property registry: Cassandra-side and Java-side filter properties | `cdm-config` | `cfg_180_*` | #4, #5, #6 |
 | `CFG-190` | Property registry: feature properties (constant columns, explode map, extract JSON, guardrail) | `cdm-config` | `cfg_190_*` | #4, #5, #6 |
-| `CFG-200` | Property registry: new cdm-rs sections (server, metrics, cluster, logging) | `cdm-config` | `cfg_200_*` | #4, #5, #6 |
+| `CFG-200` | Property registry: new cdm-rs sections (server, metrics, cluster, logging, plan) | `cdm-config` | `cfg_200_*` | #4, #5, #6, #53 |
 
 ### CON
 
@@ -187,9 +187,9 @@ test, fails CI.
 | `TOK-005` <sup>P</sup> | `filter.token_coverage_percent` < 100 MUST shrink each emitted range from its lower bound, producing a deterministic random… | `cdm-engine::planner` | `tok_005_*` | #17 |
 | `TOK-006` <sup>P</sup> | The emitted range list MUST be shuffled (Java shuffles twice) before scheduling, to spread load across replicas | `cdm-engine::planner` | `tok_006_*` | #17 |
 | `TOK-007` <sup>N</sup> | . **TOK-008 [N]** — An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership… | `cdm-engine::planner` | `tok_007_*` | #17 |
-| `TOK-008` <sup>N</sup> | An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership boundaries so every… | `cdm-engine::planner` | `tok_008_*` | #17, #53 |
+| `TOK-008` <sup>N</sup> | An alternative planner `plan.strategy = ring_aware` MUST be available: split along actual ring ownership boundaries so every… | `cdm-engine::planner`, `cdm-cql::ring` | `tok_008_*` | #17, #53 |
 | `TOK-009` <sup>N</sup> | `cdm plan` MUST emit the computed plan (range count, span histogram, estimated rows from `system.size_estimates`, estimated… | `cdm-engine::planner` | `tok_009_*` | #17 |
-| `TOK-010` <sup>N</sup> | Ranges SHOULD be sized adaptively when `plan.strategy = adaptive`: begin at `num_parts`, and dynamically subdivide any range… | `cdm-engine::planner` | `tok_010_*` | #17, #53 |
+| `TOK-010` <sup>N</sup> | Ranges SHOULD be sized adaptively when `plan.strategy = adaptive`: begin at `num_parts`, and dynamically subdivide any range… | `cdm-engine::planner`, `cdm-cql::ring` | `tok_010_*` | #17, #53 |
 | `TOK-011` <sup>N</sup> | A token plan MUST be constructible from a pre-computed work list rather than by splitting the ring, and MUST record the run it continues; an empty, over-large or overlapping list is refused — this is the seam `TRK-031`'s outstanding ranges reach the scheduler through | `cdm-engine::planner`, `cdm-track::resume` | `tok_011_*` | #17, #21g |
 
 ### ENG
@@ -201,7 +201,7 @@ test, fails CI.
 | `ENG-003` <sup>P</sup> | Origin reads MUST be paged with page size `perfops.fetch_size` and streamed — never fully materialised | `cdm-engine`, `cdm-cql::exec::scan`, `cdm-cql::exec::origin`, `cdm-engine::jobs::guardrail::origin` | `eng_003_*` | #21 |
 | `ENG-004` <sup>P</sup> | Two independent per-node rate limiters (origin rows read/s, target rows written/s), with an opt-in globally-divided mode | `cdm-engine` | `eng_004_*` | #20 |
 | `ENG-005` <sup>N</sup> | Rate limiting MUST use a token-bucket with burst = 1 second of budget, and MUST apply backpressure (await) rather than… | `cdm-engine` | `eng_005_*` | #20 |
-| `ENG-006` <sup>N</sup> | `perfops.adaptive_ratelimit = true` MUST reduce the effective rate when the target reports overload (write timeouts,… | `cdm-engine` | `eng_006_*` | #53 |
+| `ENG-006` <sup>N</sup> | `perfops.adaptive_ratelimit = true` MUST reduce the effective rate when the target reports overload (write timeouts,… | `cdm-engine::scheduler::adaptive`, `cdm-cql::exec::overload` | `eng_006_*` | #53 |
 | `ENG-007` <sup>N</sup> | In-flight requests MUST be bounded by `perfops.max_inflight_reads` / `max_inflight_writes` semaphores so memory is bounded… | `cdm-engine` | `eng_007_*` | #20 |
 | `ENG-008` <sup>P</sup> | Per-range failure handling: an error MUST NOT abort the run | `cdm-engine` | `eng_008_*` | #20 |
 | `ENG-009` <sup>N</sup> | `perfops.error_limit > 0` aborts the run once the run's committed `ERROR` total exceeds it — row-level errors included — draining in-flight work cleanly | `cdm-engine::scheduler` | `eng_009_*` | #26 |

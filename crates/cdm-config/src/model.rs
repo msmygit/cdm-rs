@@ -15,7 +15,8 @@ use std::path::PathBuf;
 use crate::secret::Secret;
 use crate::types::{
     AstraDatabaseId, AstraMode, AuthMode, BatchGrouping, ConsistencyLevel, DurationSetting,
-    EventSink, GuardrailMode, LogFormat, ReportFormat, ScbType, TokenBound, TrustStoreType,
+    EventSink, GuardrailMode, LogFormat, PlanStrategy, ReportFormat, ScbType, TokenBound,
+    TrustStoreType,
 };
 
 cdm_properties! {
@@ -73,6 +74,10 @@ cdm_properties! {
             /// Distributed mode (`CFG-200`).
             #[cdm()]
             pub cluster: Cluster,
+
+            /// How the token ring is divided into ranges (`CFG-200`).
+            #[cdm()]
+            pub plan: Plan,
 
             /// Logging (`CFG-200`).
             #[cdm()]
@@ -639,8 +644,28 @@ cdm_properties! {
             pub connection_pool_size: u32 = 4,
 
             /// Reduce the rate limit automatically when the target signals overload.
+            ///
+            /// An AIMD controller (`ENG-006`) halves the *target* write rate for every control
+            /// window in which the target reported overload — a write timeout, an `OVERLOADED`
+            /// response, a write failure, or a request that exceeded `perfops.request_timeout` —
+            /// and adds a fixed step back for every window in which it did not. The configured
+            /// `perfops.ratelimit.target` becomes the ceiling rather than the rate;
+            /// `perfops.adaptive_ratelimit_min_percent` is the floor.
+            ///
+            /// The origin read limit is untouched: a slow target must not throttle the read side
+            /// into a state it cannot recover from (`ENG-004`).
             #[cdm(stability = experimental,)]
             pub adaptive_ratelimit: bool = false,
+
+            /// The floor the adaptive controller may reduce the target rate to, as a percentage
+            /// of `perfops.ratelimit.target` (`ENG-006`).
+            ///
+            /// The floor is what keeps a back-off from looking like a hung run: a controller that
+            /// could reach zero would stop the run without ever saying so. It is never less than
+            /// one row per second whatever the percentage works out to. Ignored unless
+            /// `perfops.adaptive_ratelimit` is set.
+            #[cdm(unit = "percent", stability = experimental,)]
+            pub adaptive_ratelimit_min_percent: u8 = 10,
 
             /// How long a graceful shutdown lets in-flight ranges finish (`ENG-010`).
             ///
@@ -1119,6 +1144,34 @@ cdm_properties! {
             /// the whole limit.
             #[cdm(stability = experimental,)]
             pub ratelimit_is_global: bool = false,
+        }
+    }
+}
+
+cdm_properties! {
+    /// How the token ring is divided into ranges (`CFG-200`, `TOK-008`, `TOK-010`).
+    ///
+    /// A section of its own rather than three more `perfops` keys: `perfops.num_parts` says how
+    /// *many* ranges there are, and these say how they are *shaped*. The distinction matters
+    /// operationally, because only the shaping settings need cluster metadata.
+    pub struct Plan {
+        fields {
+            /// How the ring is divided into ranges.
+            ///
+            /// `fixed` reproduces Java CDM's splitter exactly and needs nothing from the cluster.
+            /// `ring_aware` splits along ring-ownership boundaries so no range straddles a
+            /// replica set (`TOK-008`). `adaptive` starts from `fixed` and subdivides any range
+            /// whose estimated row count exceeds `plan.max_rows_per_range` (`TOK-010`). The last
+            /// two read the origin's ring and `system.size_estimates`, so they need an origin
+            /// connection at planning time.
+            #[cdm(stability = experimental,)]
+            pub strategy: PlanStrategy = PlanStrategy::Fixed,
+
+            /// The estimated row count above which `plan.strategy = adaptive` subdivides a range.
+            ///
+            /// `0` disables subdivision, leaving `adaptive` equivalent to `fixed`.
+            #[cdm(unit = "rows",)]
+            pub max_rows_per_range: u64 = 1_000_000,
         }
     }
 }

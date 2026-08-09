@@ -140,6 +140,7 @@
 //! # }
 //! ```
 
+pub mod adaptive;
 pub mod control;
 pub mod failure;
 pub mod limits;
@@ -159,6 +160,7 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use tracing::Instrument;
 
+pub use adaptive::{AdaptiveRateController, LoadSignal};
 pub use control::{RunControl, StopReason};
 pub use limits::{InflightPermit, RuntimeLimits};
 pub use processor::{
