@@ -140,7 +140,7 @@ zip = "2"
 # constraint and the first sign of trouble is a hard compile error in CI's MSRV job.
 #
 # Raise this only together with `rust-version` in this file, and only in a minor release.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # --- utilities --------------------------------------------------------------
 governor = "0.7"
