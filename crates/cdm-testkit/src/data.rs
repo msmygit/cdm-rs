@@ -26,7 +26,7 @@ use std::fmt::Write as _;
 use cdm_codec::{CqlTypeInfo, UdtField};
 use cdm_core::{CdmError, ErrorKind};
 use rand::rngs::StdRng;
-use rand::Rng;
+use rand::RngExt;
 
 use crate::schema::{ColumnKind, ColumnSpec, TableSpec};
 use crate::seed::{choose, Seed};
@@ -257,24 +257,24 @@ impl DataGen {
         match cql_type {
             CqlTypeInfo::Ascii => Ok(quote(&self.ascii_text())),
             CqlTypeInfo::Text => Ok(quote(&self.unicode_text())),
-            CqlTypeInfo::Boolean => Ok(self.rng.gen::<bool>().to_string()),
-            CqlTypeInfo::TinyInt => Ok(self.rng.gen::<i8>().to_string()),
-            CqlTypeInfo::SmallInt => Ok(self.rng.gen::<i16>().to_string()),
-            CqlTypeInfo::Int => Ok(self.rng.gen::<i32>().to_string()),
+            CqlTypeInfo::Boolean => Ok(self.rng.random::<bool>().to_string()),
+            CqlTypeInfo::TinyInt => Ok(self.rng.random::<i8>().to_string()),
+            CqlTypeInfo::SmallInt => Ok(self.rng.random::<i16>().to_string()),
+            CqlTypeInfo::Int => Ok(self.rng.random::<i32>().to_string()),
             // A counter literal is the *delta* an UPDATE adds, never an absolute value.
-            CqlTypeInfo::BigInt | CqlTypeInfo::Counter => Ok(self.rng.gen::<i64>().to_string()),
-            CqlTypeInfo::VarInt => Ok(self.rng.gen::<i128>().to_string()),
+            CqlTypeInfo::BigInt | CqlTypeInfo::Counter => Ok(self.rng.random::<i64>().to_string()),
+            CqlTypeInfo::VarInt => Ok(self.rng.random::<i128>().to_string()),
             CqlTypeInfo::Float => {
-                let value: f32 = self.rng.gen_range(-1.0e6..1.0e6);
+                let value: f32 = self.rng.random_range(-1.0e6..1.0e6);
                 Ok(format!("{value:?}"))
             }
             CqlTypeInfo::Double => {
-                let value: f64 = self.rng.gen_range(-1.0e9..1.0e9);
+                let value: f64 = self.rng.random_range(-1.0e9..1.0e9);
                 Ok(format!("{value:?}"))
             }
             CqlTypeInfo::Decimal => {
-                let units: i64 = self.rng.gen_range(-1_000_000_000..1_000_000_000);
-                let fraction: u32 = self.rng.gen_range(0..1_000_000);
+                let units: i64 = self.rng.random_range(-1_000_000_000..1_000_000_000);
+                let fraction: u32 = self.rng.random_range(0..1_000_000);
                 Ok(format!("{units}.{fraction:06}"))
             }
             CqlTypeInfo::Blob => Ok(self.blob()),
@@ -309,7 +309,7 @@ impl DataGen {
                 )))
             }
             CqlTypeInfo::DateRange => {
-                let year: i32 = self.rng.gen_range(1900..2100);
+                let year: i32 = self.rng.random_range(1900..2100);
                 Ok(quote(&format!("[{year}-01-01 TO {year}-12-31]")))
             }
             CqlTypeInfo::List { element, .. } => {
@@ -423,7 +423,7 @@ impl DataGen {
         let nullable = column.kind() == ColumnKind::Regular || column.kind() == ColumnKind::Static;
         if nullable
             && self.options.null_probability > 0.0
-            && self.rng.gen::<f64>() < self.options.null_probability
+            && self.rng.random::<f64>() < self.options.null_probability
         {
             return Ok("null".to_owned());
         }
@@ -443,7 +443,7 @@ impl DataGen {
         if min >= max {
             min
         } else {
-            self.rng.gen_range(min..=max)
+            self.rng.random_range(min..=max)
         }
     }
 
@@ -482,7 +482,7 @@ impl DataGen {
     }
 
     fn text_from(&mut self, alphabet: &[char]) -> String {
-        let len = self.rng.gen_range(1..=self.options.max_text_len);
+        let len = self.rng.random_range(1..=self.options.max_text_len);
         (0..len)
             .filter_map(|_| choose(&mut self.rng, alphabet.len()).and_then(|i| alphabet.get(i)))
             .collect()
@@ -490,10 +490,10 @@ impl DataGen {
 
     /// `0x…`, sometimes empty — an empty blob is a value, and is not a null (`MIG-012`).
     fn blob(&mut self) -> String {
-        let len = self.rng.gen_range(0..8);
+        let len = self.rng.random_range(0..8);
         let mut hex = String::from("0x");
         for _ in 0..len {
-            let byte: u8 = self.rng.gen();
+            let byte: u8 = self.rng.random();
             // Writing into a String cannot fail.
             let _ = write!(hex, "{byte:02x}");
         }
@@ -501,7 +501,7 @@ impl DataGen {
     }
 
     fn ipv4(&mut self) -> String {
-        let octets: [u8; 4] = self.rng.gen();
+        let octets: [u8; 4] = self.rng.random();
         octets
             .iter()
             .map(u8::to_string)
@@ -515,7 +515,7 @@ impl DataGen {
     /// `timeuuid` column rejects anything that is not version 1, so a generator that emitted
     /// random bytes would fail on a schema rather than on a bug.
     fn uuid(&mut self, version: u8) -> String {
-        let mut bytes: [u8; 16] = self.rng.gen();
+        let mut bytes: [u8; 16] = self.rng.random();
         if let Some(byte) = bytes.get_mut(6) {
             *byte = (*byte & 0x0f) | (version << 4);
         }
@@ -527,7 +527,7 @@ impl DataGen {
 
     /// `'yyyy-mm-dd'`.
     fn date(&mut self) -> Result<String, CdmError> {
-        let days: i64 = self.rng.gen_range(-25_000..25_000);
+        let days: i64 = self.rng.random_range(-25_000..25_000);
         let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
             .ok_or_else(|| CdmError::new(ErrorKind::Internal, "1970-01-01 is not a valid date"))?;
         let date = epoch
@@ -544,7 +544,7 @@ impl DataGen {
     /// `'hh:mm:ss.fffffffff'` — nanosecond precision, because `time` has it and a generator that
     /// stopped at milliseconds would never exercise the truncation path.
     fn time(&mut self) -> String {
-        let nanos: u64 = self.rng.gen_range(0..86_400_000_000_000);
+        let nanos: u64 = self.rng.random_range(0..86_400_000_000_000);
         let seconds = nanos / 1_000_000_000;
         let remainder = nanos % 1_000_000_000;
         quote(&format!(
@@ -557,7 +557,7 @@ impl DataGen {
 
     /// `'yyyy-mm-ddThh:mm:ss.sssZ'` — millisecond precision, which is all `timestamp` has.
     fn timestamp(&mut self) -> Result<String, CdmError> {
-        let millis: i64 = self.rng.gen_range(0..4_102_444_800_000);
+        let millis: i64 = self.rng.random_range(0..4_102_444_800_000);
         let moment = chrono::DateTime::from_timestamp_millis(millis).ok_or_else(|| {
             CdmError::new(
                 ErrorKind::Internal,
@@ -570,15 +570,15 @@ impl DataGen {
     /// `12mo3d456ns` — months, days and nanoseconds, the three independent components a CQL
     /// `duration` actually has.
     fn duration(&mut self) -> String {
-        let months: u32 = self.rng.gen_range(0..24);
-        let days: u32 = self.rng.gen_range(0..31);
-        let nanos: u64 = self.rng.gen_range(0..1_000_000_000);
+        let months: u32 = self.rng.random_range(0..24);
+        let days: u32 = self.rng.random_range(0..31);
+        let nanos: u64 = self.rng.random_range(0..1_000_000_000);
         format!("{months}mo{days}d{nanos}ns")
     }
 
     /// A well-known-text coordinate, rendered so it always has a decimal point.
     fn coordinate(&mut self) -> String {
-        let value: f64 = self.rng.gen_range(-180.0..180.0);
+        let value: f64 = self.rng.random_range(-180.0..180.0);
         format!("{value:.4}")
     }
 }

@@ -37,7 +37,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rand::Rng;
+use rand::RngExt;
 use scylla::errors::RequestAttemptError;
 use scylla::policies::load_balancing::{
     DefaultPolicy, LatencyAwarenessBuilder, LoadBalancingPolicy,
@@ -144,7 +144,7 @@ impl Backoff {
         if millis == 0 {
             return Duration::ZERO;
         }
-        Duration::from_millis(rand::thread_rng().gen_range(0..=millis))
+        Duration::from_millis(rand::rng().random_range(0..=millis))
     }
 
     /// The un-jittered ceiling for `attempt`, which is what a test can assert on.
