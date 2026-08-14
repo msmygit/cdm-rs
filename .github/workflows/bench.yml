@@ -2,11 +2,15 @@ name: Benchmarks
 
 # TST-060 / NFR-004. See docs/BENCHMARKS.md for what these numbers do and do not prove.
 #
-# Nightly on `main` establishes the baseline series. Pull requests opt in with the `bench` label,
-# because a full workspace bench build is far too slow to run on every push.
+# Two independent jobs, because the two tiers answer different questions on different cadences.
+# Tier 1 (micro) runs nightly on `main` to establish the baseline series, and pull requests opt in
+# with the `bench` label, because a full workspace bench build is far too slow to run on every
+# push. Tier 2 (macro) runs weekly, because it stands up Cassandra containers and migrates a
+# hundred thousand rows: minutes, not seconds.
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "0 4 * * *"       # nightly, tier 1
+    - cron: "0 5 * * 0"       # Sunday, tier 2
   pull_request:
     types: [labeled]
   workflow_dispatch:
@@ -18,7 +22,10 @@ permissions:
 jobs:
   bench:
     name: Criterion micro-benchmarks
-    if: github.event_name != 'pull_request' || github.event.label.name == 'bench'
+    # The weekly cron belongs to the macro job alone; without this it would run both.
+    if: >-
+      (github.event_name != 'pull_request' || github.event.label.name == 'bench') &&
+      github.event.schedule != '0 5 * * 0'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,6 +39,29 @@ jobs:
         shell: bash
         run: cargo bench --workspace -- --output-format bencher | tee bench.txt
 
+      # github-action-benchmark fetches gh-pages before it will create it, so on a repository that
+      # has never had the branch — a fork, a fresh clone — it fails with "couldn't find remote ref
+      # gh-pages" *after* the full bench run has completed. Twenty wasted minutes for a missing
+      # empty branch. Creating it up front costs a second and removes the chicken-and-egg entirely.
+      #
+      # This is not the documentation site: docs.yml publishes that through actions/deploy-pages
+      # from a build artefact and never touches this branch, so the two cannot collide.
+      - name: Ensure the baseline branch exists
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          # An existing branch is left exactly as it is. The stored series is the bar every future
+          # run is measured against; recreating it would silently reset that history to nothing.
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages already exists; leaving the baseline series untouched."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          empty=$(git hash-object -t tree /dev/null)
+          commit=$(git commit-tree "$empty" -m "chore(bench): initialise the benchmark baseline branch")
+          git push origin "$commit:refs/heads/gh-pages"
+
       # On `main`, record the result as the new baseline. On a pull request, compare against the
       # stored series but never write to it — a PR must not be able to move the bar it is measured
       # against.
@@ -40,6 +70,10 @@ jobs:
           tool: cargo
           output-file-path: bench.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Tier 1 keeps the default location. Tier 2's containerised wall-clock numbers live
+          # somewhere else entirely: one series holding both would trend nanoseconds against rows
+          # per second and mean nothing in either unit.
+          benchmark-data-dir-path: dev/bench
           # 200% = a 2x slowdown. This is deliberately far looser than the 10% TST-060 asks for.
           # `ubuntu-latest` is a shared, noisy runner: run-to-run variance on wall-clock
           # microbenchmarks is routinely 10-30%, so a 110% threshold does not detect a 10%
@@ -54,3 +88,76 @@ jobs:
           comment-on-alert: true
           auto-push: ${{ github.event_name != 'pull_request' }}
           save-data-file: ${{ github.event_name != 'pull_request' }}
+
+  macro:
+    name: Macro-benchmark (end-to-end throughput)
+    # Weekly and on demand only. Never on a pull request: this job takes minutes and answers a
+    # question — "how many rows per second" — that a single PR cannot meaningfully move.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 5 * * 0'
+    runs-on: ubuntu-latest
+    # A stuck container pull must not hold a runner for six hours. The default job timeout is far
+    # longer than any legitimate run of this benchmark.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # `cargo xtask bench` puts the result line on stdout and everything else on stderr, so this
+      # redirection captures exactly the machine-readable output and nothing else. `pipefail` is
+      # not needed here for that reason, but `shell: bash` stays for consistency with the sibling
+      # job and because a non-zero exit from the harness must still fail the step.
+      - name: Run the macro-benchmark
+        shell: bash
+        run: cargo xtask bench --bencher > macro-bench.txt
+
+      # TST-102: with no container runtime the task reports why and exits zero, leaving an empty
+      # file. Recording that as a data point would enter a gap in the series that reads as a
+      # result. `ubuntu-latest` does have Docker, so this is a guard, not an expectation.
+      - name: Check that a result was produced
+        id: result
+        shell: bash
+        run: |
+          if [ -s macro-bench.txt ]; then
+            echo "measured=true" >> "$GITHUB_OUTPUT"
+            cat macro-bench.txt
+          else
+            echo "measured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No container runtime; the macro-benchmark was skipped, not failed."
+          fi
+
+      # Same chicken-and-egg as the micro job, and the same refusal to touch an existing branch.
+      # Both jobs need it because either may be the first to run on a fresh repository.
+      - name: Ensure the baseline branch exists
+        if: steps.result.outputs.measured == 'true'
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages already exists; leaving the baseline series untouched."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          empty=$(git hash-object -t tree /dev/null)
+          commit=$(git commit-tree "$empty" -m "chore(bench): initialise the benchmark baseline branch")
+          git push origin "$commit:refs/heads/gh-pages"
+
+      # This job records and reports. It is *not* a gate, and docs/BENCHMARKS.md §1 says so:
+      # end-to-end throughput on a shared runner moves with the disk it was allocated, the
+      # co-tenants it shares a host with and the container image's own startup behaviour, none of
+      # which is a property of this commit. `fail-on-alert: false` is therefore not a temporary
+      # looseness to tighten later — a red build here would carry no information about the change
+      # that triggered it. The trend line is the deliverable; a human reads it.
+      - uses: benchmark-action/github-action-benchmark@v1
+        if: steps.result.outputs.measured == 'true'
+        with:
+          tool: cargo
+          output-file-path: macro-bench.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Deliberately disjoint from the micro series. See the note on the sibling job.
+          benchmark-data-dir-path: dev/bench-macro
+          alert-threshold: "200%"
+          fail-on-alert: false
+          comment-on-alert: false
+          auto-push: true
+          save-data-file: true

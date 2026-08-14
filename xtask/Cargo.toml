@@ -28,3 +28,6 @@ cdm-testkit.workspace = true
 clap.workspace = true
 regex.workspace = true
 serde_yaml.workspace = true
+# `cargo xtask bench` drives the async macro-benchmark harness, so xtask owns the runtime it runs
+# on: the harness is a library function, not a test, and has no runtime of its own (TST-060).
+tokio.workspace = true

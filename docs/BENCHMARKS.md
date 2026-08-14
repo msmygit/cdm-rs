@@ -15,10 +15,18 @@ one of them is shaped like a CI job.
 | Tier | Question | Needs | Where it runs |
 |---|---|---|---|
 | **1. Micro** | Did this commit make the hot path slower? | nothing | `bench.yml`, nightly + `bench` label |
-| **2. Macro** | How many rows per second, end to end? | Cassandra containers | nightly, not a gate |
+| **2. Macro** | How many rows per second, end to end? | Cassandra containers | `bench.yml`, weekly, **not a gate** |
 | **3. Java comparison** | Is it really ≥ 2× Java CDM? (`NFR-004`) | Spark + Java CDM + fixed hardware | by hand, written up here |
 
-Only tier 1 exists today. Tiers 2 and 3 are roadmap #55's remaining work.
+Tiers 1 and 2 exist. Tier 3 is roadmap #55's remaining work, and it is the one that actually
+settles `NFR-004`.
+
+Tier 2 records and reports; it never fails a build. End-to-end throughput on a shared runner is
+dominated by the disk that runner was allocated, the tenants it shares a host with and how long
+two Cassandra containers took to come up — none of which is a property of the commit under test.
+A threshold on that signal would fire on the weather, and the response to a red build nobody can
+act on is to stop reading it. §3 makes the same argument about tier 1, where the noise is smaller
+and the gate is therefore merely loose rather than absent.
 
 ---
 
@@ -62,7 +70,7 @@ change over time.
 
 Machine load matters enormously, which is itself worth recording: the same binaries measured while
 three other builds were running gave figures **5–7× higher** (`explode_map/1` at 2,720 ns against
-332 ns here). See §3.
+332 ns here). See §4.
 
 ```
                                           ns
@@ -155,7 +163,69 @@ than suspected.
 
 ---
 
-## 3. The 10% gate
+## 3. Tier 2 — the macro-benchmark
+
+```bash
+cargo xtask bench                                  # the reference workload
+just bench-macro                                   # the same thing
+cargo xtask bench --rows 1000000 --columns 32      # a bigger one
+cargo xtask bench --image cassandra:4.1            # a different engine
+cargo xtask bench --bencher                        # one machine-readable line
+```
+
+Tier 1 measures functions. This measures a **migration**: two containers are started, an origin
+table is populated with seeded data, `cdm` migrates it to the target, and the elapsed time is
+divided into the row count. Everything tier 1 deliberately excludes — the driver, the network, the
+two clusters, connection setup, paging, concurrency — is included here, which is exactly why the
+two numbers cannot be derived from each other. A hot path that got 20% faster can leave end-to-end
+throughput unchanged, because the run was never CPU-bound in that function.
+
+The harness lives in `crates/cdm-testkit/src/macrobench.rs`; `cargo xtask bench` is a thin driver
+over it. Every flag is optional and unset flags fall through to `MacroBenchSpec::default()` — a
+fixed seed, so two runs migrate identical data — rather than to a second copy of the defaults in
+the CLI.
+
+### It needs a container runtime, and says so rather than failing
+
+With no Docker or Podman the task prints why and exits **zero** (`TST-102`), as `cargo xtask it`
+and `cargo xtask sit` do. A red result that only means "no container runtime on this laptop" trains
+people to ignore the command.
+
+### Reading the output
+
+The human summary reports:
+
+| Figure | What it tells you |
+|---|---|
+| `rows_migrated` vs `spec_rows` | whether the run actually completed. A throughput figure from a partial migration is not a throughput figure |
+| `wall_clock` | total elapsed time, container startup included |
+| `rows_per_second` | the headline, and the only figure `NFR-004` is about |
+| `cold_start` | time to the first row read, against `NFR-002`'s 2-second budget |
+| `peak_rss_bytes` | resident memory, against `NFR-003`. `None` where the platform does not report it |
+
+`--bencher` emits the same run as a single `cargo bench --output-format bencher` line named
+`nfr_004_macro_migrate`, which is what the workflow feeds to the trend store.
+
+### Why it is weekly, and why it is not a gate
+
+Weekly because it stands up containers and moves a hundred thousand rows: minutes per run, against
+seconds for tier 1. Nightly would spend a lot of runner time to resolve a number that does not move
+nightly.
+
+Not a gate for the reason given in §1: the measurement is dominated by the machine, not the commit.
+The `macro` job in `bench.yml` therefore sets `fail-on-alert: false` and writes to its own
+`dev/bench-macro` series, disjoint from tier 1's — one series holding both would be trending
+nanoseconds against rows per second and would mean nothing in either unit. What the job produces is
+a trend line a human reads, and the honest way to investigate a step in it is to run
+`cargo xtask bench` locally on hardware you control.
+
+**These numbers do not satisfy `NFR-004`.** They establish cdm-rs's own throughput, on a runner, in
+a shape that can be compared with itself over time. The ≥ 2× claim is a comparison against Java CDM
+on identical hardware, which is §5.
+
+---
+
+## 4. The 10% gate
 
 `TST-060` says: *"Regressions > 10% MUST fail CI."* **That requirement is not currently met, and
 `bench.yml` does not pretend otherwise.**
@@ -188,7 +258,7 @@ detected and trended, but the threshold is 200%, not 10%.
 
 ---
 
-## 4. Tier 3 — the `NFR-004` claim (not yet run)
+## 5. Tier 3 — the `NFR-004` claim (not yet run)
 
 `NFR-004` asserts throughput ≥ 2× Java CDM on the same hardware for the reference workload. **This
 has never been measured.** The number is currently an aspiration, and this document is the place it

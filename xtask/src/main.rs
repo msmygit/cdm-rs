@@ -48,6 +48,25 @@ enum Task {
     },
     /// Run the ported SIT parity suite (`TST-003`).
     Sit,
+    /// Run the tier-2 macro-benchmark: rows per second, end to end (`TST-060`, `NFR-004`).
+    Bench {
+        /// Rows to migrate. Defaults to the spec's reference workload.
+        ///
+        /// Every flag here is optional so that the defaults live in exactly one place —
+        /// `MacroBenchSpec::default()`. A duplicated default in the CLI is a default that
+        /// silently stops matching the one the harness documents.
+        #[arg(long)]
+        rows: Option<u64>,
+        /// Non-key columns per row.
+        #[arg(long)]
+        columns: Option<usize>,
+        /// Container image for both clusters, as `repository:tag`.
+        #[arg(long)]
+        image: Option<String>,
+        /// Emit one machine-readable `bencher` line instead of the human summary.
+        #[arg(long)]
+        bencher: bool,
+    },
     /// Run the differential suite against Java CDM (`TST-020`).
     Differential,
 }
@@ -70,6 +89,12 @@ fn run(task: &Task) -> anyhow::Result<()> {
         Task::Docs { check } => docs(*check),
         Task::It { engines } => integration(engines.as_deref()),
         Task::Sit => sit(),
+        Task::Bench {
+            rows,
+            columns,
+            image,
+            bencher,
+        } => bench(*rows, *columns, image.as_deref(), *bencher),
         Task::InstallHooks | Task::Differential => {
             anyhow::bail!(not_yet(task))
         }
@@ -102,7 +127,8 @@ fn not_yet(task: &Task) -> String {
         | Task::Openapi { .. }
         | Task::Docs { .. }
         | Task::It { .. }
-        | Task::Sit => "this build",
+        | Task::Sit
+        | Task::Bench { .. } => "this build",
     };
     format!("`{task:?}` is delivered by PR {pr}; see docs/ROADMAP.md")
 }
@@ -332,6 +358,76 @@ fn sit() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("cannot run the SIT parity suite: {e}"))?;
     remove_sit_node();
     anyhow::ensure!(status.success(), "the SIT parity suite failed: {status}");
+    Ok(())
+}
+
+/// `TST-060` tier 2, and the only measurement that speaks to `NFR-004`: rows per second for a
+/// whole migration, origin container to target container.
+///
+/// The micro-benchmarks in `crates/*/benches` answer "did this commit make the hot path slower".
+/// They cannot answer "how fast is a migration", because the answer is dominated by the driver,
+/// the network and the two clusters — none of which a criterion harness contains. This does, at
+/// the cost of needing a container runtime and minutes rather than seconds.
+///
+/// # Not a gate
+///
+/// This reports a number; it never decides whether a change is acceptable. Throughput here moves
+/// with the runner's disk, its co-tenants and the container image's own tuning, so a threshold on
+/// it would fire on the weather. See `docs/BENCHMARKS.md` §1. The workflow that runs this weekly
+/// records the figure and stops there.
+///
+/// # Skipping is not failing
+///
+/// As [`integration`] and [`sit`], under `TST-102`. Informational output goes to stderr so that
+/// stdout carries only the result line: `--bencher` output is piped into a parser, and a
+/// "skipped, no runtime" sentence arriving on the same channel would either be parsed as a
+/// benchmark or abort the parse.
+fn bench(
+    rows: Option<u64>,
+    columns: Option<usize>,
+    image: Option<&str>,
+    bencher: bool,
+) -> anyhow::Result<()> {
+    match cdm_testkit::ContainerRuntime::detect() {
+        Ok(runtime) => eprintln!("bench: using container runtime at {runtime}"),
+        Err(reason) => {
+            eprintln!("{reason}");
+            eprintln!(
+                "bench: skipped, not failed (TST-102). Nothing ran, and that is not an error."
+            );
+            return Ok(());
+        }
+    }
+
+    let mut spec = cdm_testkit::macrobench::MacroBenchSpec::default();
+    if let Some(rows) = rows {
+        spec.rows = rows;
+    }
+    if let Some(columns) = columns {
+        spec.columns = columns;
+    }
+    if let Some(image) = image {
+        image.clone_into(&mut spec.image);
+    }
+    eprintln!(
+        "bench: {} rows x {} columns on {}, seed {}",
+        spec.rows, spec.columns, spec.image, spec.seed
+    );
+
+    // A current-thread runtime would serialise the concurrent writes the engine issues, and so
+    // measure the harness rather than the migration.
+    let runtime = tokio::runtime::Runtime::new().map_err(|e| {
+        anyhow::anyhow!("cannot start a tokio runtime for the macro-benchmark: {e}")
+    })?;
+    let result = runtime
+        .block_on(cdm_testkit::macrobench::run_macro_bench(&spec))
+        .map_err(|e| anyhow::anyhow!("the macro-benchmark failed: {e}"))?;
+
+    if bencher {
+        println!("{}", result.to_bencher_line());
+    } else {
+        println!("{}", result.summary());
+    }
     Ok(())
 }
 
