@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # ARCHITECTURE §3 puts `cdm-feature` above `cdm-codec`, `cdm-core` and `cdm-cql`. Nothing here
 # needs a session: every feature is expressed against the driver-independent `CqlTypeInfo`,
 # `RawCell` and `Record`, which is what makes the "independently unit-testable without a cluster"

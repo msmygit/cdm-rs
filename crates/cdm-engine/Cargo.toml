@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # ARCHITECTURE §3: the planner and the scheduler need only `cdm-config`, `cdm-core` and
 # `cdm-metrics` — the cluster facts the planner uses arrive through the `planner::ClusterTopology`
 # trait, exactly as `cdm-config` takes a `SchemaProvider`, and everything the scheduler asks of a

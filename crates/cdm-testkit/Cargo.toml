@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 [dependencies]
 # Deliberately no `scylla` and no `cdm-cql`: only `cdm-cql` may depend on the driver
 # (AGENTS.md, ARCHITECTURE.md §3), so the container fixture speaks to a node over a

@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # Deliberately transport-free, and now also deliberately terminal-free: the Prometheus text and the
 # OTLP payloads are *rendered*, and putting them on a socket is the job of a crate that is allowed
 # to depend on an HTTP client (`ARCHITECTURE.md` §3). `MET-031`'s view model (`dashboard`) follows

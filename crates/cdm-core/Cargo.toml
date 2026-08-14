@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # Zero I/O (ARCHITECTURE §3.2): no driver, no HTTP client/server, no async runtime, no
 # filesystem access. `async-trait` only shapes trait signatures; it pulls in no executor.
 [dependencies]
