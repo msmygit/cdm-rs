@@ -21,6 +21,7 @@
 //! | [`session`] | [`TestSession`], [`MockSession`], [`TestRow`] | `TST-100` |
 //! | [`faults`] | [`FaultKind`], [`Fault`], [`FaultPlan`], [`FaultySession`] | `TST-040` |
 //! | [`sit`] | [`SitCase`], [`SitStep`], [`compare_counter_block`], [`compare_cqlsh`] | `TST-003` |
+//! | [`differential`] | [`Corpus`], [`CorpusTable`], [`CoverageEntry`] | `TST-020` |
 //! | `macrobench` | `MacroBenchSpec`, `MacroBenchResult`, `run_macro_bench` | `TST-060`, `NFR-004` |
 //!
 //! The last row is behind the off-by-default `macrobench` feature, because it is the one thing
@@ -71,11 +72,13 @@
 //! - `TST-102` — [`ContainerRuntime`], [`skip_without_container_runtime!`], `cargo xtask it`
 //! - `TST-040` — [`FaultySession`], [`FaultPlan`], [`Fault`]
 //! - `TST-003` — [`sit`], and the ported cases in `tests/sit/`
+//! - `TST-020` — [`differential`], and the checked-in corpus rendering in `tests/differential/`
 //! - `TST-060`, `NFR-004` — `macrobench` (feature-gated), and `tests/macrobench.rs`
 
 pub mod containers;
 pub mod counters;
 pub mod data;
+pub mod differential;
 pub mod faults;
 #[cfg(feature = "macrobench")]
 pub mod macrobench;
@@ -91,6 +94,9 @@ pub use containers::{
 };
 pub use counters::{counts, parse_final_block, parse_metrics_string, CounterExpectation};
 pub use data::{quote, DataGen, DataGenOptions, GeneratedRow};
+pub use differential::{
+    corpus_root, Corpus, CorpusColumn, CorpusScale, CorpusTable, CoverageEntry, CoverageStatus,
+};
 pub use faults::{Fault, FaultKind, FaultPlan, FaultySession, InjectedFault};
 #[cfg(feature = "macrobench")]
 pub use macrobench::{

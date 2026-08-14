@@ -1,0 +1,41 @@
+status	type	detail
+covered	ascii	column cdm_diff.all_types.c_ascii
+covered	bigint	column cdm_diff.all_types.c_bigint
+covered	blob	column cdm_diff.all_types.c_blob
+covered	boolean	column cdm_diff.all_types.c_boolean
+covered	counter	column cdm_diff.counters.c_hits
+covered	date	column cdm_diff.all_types.c_date
+covered	decimal	column cdm_diff.all_types.c_decimal
+covered	double	column cdm_diff.all_types.c_double
+covered	duration	column cdm_diff.all_types.c_duration
+covered	float	column cdm_diff.all_types.c_float
+covered	inet	column cdm_diff.all_types.c_inet
+covered	int	column cdm_diff.all_types.ck
+covered	smallint	column cdm_diff.all_types.c_smallint
+covered	text	column cdm_diff.all_types.pk
+covered	time	column cdm_diff.all_types.c_time
+covered	timestamp	column cdm_diff.all_types.c_timestamp
+covered	timeuuid	column cdm_diff.all_types.c_timeuuid
+covered	tinyint	column cdm_diff.all_types.c_tinyint
+covered	uuid	column cdm_diff.all_types.c_uuid
+covered	varint	column cdm_diff.all_types.c_varint
+gap	PointType	DSE only: no open-source Cassandra or ScyllaDB image implements it, so a schema containing it does not apply. Build with Capabilities::dse_geometry / date_range.
+gap	LineStringType	DSE only: no open-source Cassandra or ScyllaDB image implements it, so a schema containing it does not apply. Build with Capabilities::dse_geometry / date_range.
+gap	PolygonType	DSE only: no open-source Cassandra or ScyllaDB image implements it, so a schema containing it does not apply. Build with Capabilities::dse_geometry / date_range.
+gap	DateRangeType	DSE only: no open-source Cassandra or ScyllaDB image implements it, so a schema containing it does not apply. Build with Capabilities::dse_geometry / date_range.
+covered	list<int>	column cdm_diff.all_types.c_list_int
+covered	set<text>	column cdm_diff.all_types.c_set_text
+covered	map<text, int>	column cdm_diff.all_types.c_map_text_int
+covered	tuple<int, text>	column cdm_diff.all_types.c_tuple_int_text
+covered	frozen<list<int>>	column cdm_diff.all_types.c_frozen_list_int
+covered	frozen<map<text, int>>	column cdm_diff.all_types.c_frozen_map_text_int
+covered	list<frozen<set<int>>>	column cdm_diff.all_types.c_list_frozen_set_int
+covered	set<tuple<int, text>>	column cdm_diff.all_types.c_set_tuple_int_text
+covered	map<text, frozen<list<frozen<set<int>>>>>	column cdm_diff.all_types.c_map_text_frozen_list_frozen_set_int
+covered	tuple<int, frozen<list<frozen<map<text, int>>>>>	column cdm_diff.all_types.c_tuple_int_frozen_list_frozen_map_text_int
+covered	frozen<diff_address>	column cdm_diff.all_types.c_frozen_diff_address
+covered	list<frozen<diff_address>>	column cdm_diff.all_types.c_list_frozen_diff_address
+covered	frozen<diff_person>	column cdm_diff.all_types.c_frozen_diff_person
+gap	vector<float, 3>	vector<T, N> is open-source Cassandra 5.0 and later only (CDC-004). Build with Capabilities::vectors.
+gap	text (lone surrogate)	not expressible: a text column is UTF8Type, an unpaired surrogate is not valid UTF-8, and Cassandra rejects it. Covered instead by an astral character, a combining mark and a regional-indicator pair.
+gap	counter (delta i64::MIN)	not expressible in one statement: a negative counter delta is written `c = c - 9223372036854775808`, and Cassandra rejects that magnitude with `Unable to make long from '9223372036854775808'`. The corpus stops at i64::MIN + 1; see COUNTER_DELTAS.
