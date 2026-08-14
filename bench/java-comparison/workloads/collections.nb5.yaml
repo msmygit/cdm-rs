@@ -31,6 +31,13 @@ description: |
   rows. Take the migrated row count from `SELECT COUNT(*)` on the origin, never from the cycle
   count.
 
+  `load-cycles` is a parameter, not a constant. Its default of 1,000,000 is upstream's own figure
+  and is sized for the OPTIMISTIC case — roughly twice the rate we expect Java to reach on a
+  four-vCPU runner — because a measured run is trimmed downward with
+  `spark.cdm.filter.java.token.percent`, which cannot trim upward. Raise it once a calibration run
+  has real numbers; see ../METHODOLOGY.md §2.4. Changing it requires overriding
+  `spark.cdm.perfops.numParts` to `load-cycles / 2000` on both commands.
+
 scenarios:
   default:
     schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF

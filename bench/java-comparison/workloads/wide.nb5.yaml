@@ -11,15 +11,24 @@ description: |
   No collections, so the TTL/writetime eligibility rules apply cleanly to every non-key column and
   neither implementation has to fall back to `ttlwritetime.calc.useCollections`.
 
+  OPT-IN. `narrow` and `collections` are the two shapes the suite runs by default; this one is
+  enabled only when a calibration run shows the budget has room. ../METHODOLOGY.md §2.4.
+
+  `load-cycles` is a parameter, not a constant. Its default of 600,000 is sized for the OPTIMISTIC
+  case — roughly twice the rate we expect Java to reach on a four-vCPU runner — because a measured
+  run is trimmed downward with `spark.cdm.filter.java.token.percent`, which cannot trim upward.
+  Changing it requires overriding `spark.cdm.perfops.numParts` to `load-cycles / 2000` on both
+  commands.
+
     nb5 wide.nb5 default.schema keyspace=origin host=<origin>
     nb5 wide.nb5 default.schema keyspace=target host=<target>
-    nb5 wide.nb5 default.load   keyspace=origin host=<origin> load-cycles=500000
+    nb5 wide.nb5 default.load   keyspace=origin host=<origin> load-cycles=600000
 
 scenarios:
   default:
     schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
     truncate: run driver=cql tags==block:truncate threads==1 cycles==UNDEF
-    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,500000) threads=auto
+    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,600000) threads=auto
 
 bindings:
   row_id: ToHashedUUID() -> java.util.UUID

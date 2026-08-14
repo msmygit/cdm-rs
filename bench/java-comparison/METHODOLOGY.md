@@ -38,11 +38,15 @@ value distributions) and one `spark.cdm.*` properties file given to **both** imp
 unchanged. `workloads/cdm-rs-pins.properties` holds everything cdm-rs has and Java does not, and is
 given to cdm-rs alone — see §5.
 
-| Workload | Shape | What dominates | Rows |
-|---|---|---|---|
-| `narrow` | 1 key + 3 scalar columns, no clustering key | per-row fixed cost: paging, key extraction, bind, one round trip | 3,000,000 |
-| `wide` | 1 key + 24 scalar columns | per-column cost: 24 cells, and 48 more `TTL()`/`WRITETIME()` result columns | 500,000 |
-| `collections` | Java CDM's own `PERF/perf-iot.yaml` | per-element collection framing: ~8 collection elements per row | 1,000,000 |
+| Workload | Shape | What dominates | Default rows | In the default suite? |
+|---|---|---|---|---|
+| `narrow` | 1 key + 3 scalar columns, no clustering key | per-row fixed cost: paging, key extraction, bind, one round trip | 1,800,000 | yes |
+| `collections` | Java CDM's own `PERF/perf-iot.yaml` | per-element collection framing: ~8 collection elements per row | 1,000,000 | yes |
+| `wide` | 1 key + 24 scalar columns | per-column cost: 24 cells, and 48 more `TTL()`/`WRITETIME()` result columns | 600,000 | **opt-in** |
+
+Row counts are **parameters with documented defaults**, not constants: `load-cycles` in each nb5
+file, with `numParts` following the rule `rows / 2000` (§2.4). The defaults are a first guess to be
+corrected by the first calibration run, not a measurement.
 
 `collections` is a faithful mirror of upstream's `PERF/perf-iot.yaml`, which `docs/SPEC.md` S3
 names by path as the reference workload. The schema, the bindings and the distributions are
@@ -50,6 +54,14 @@ upstream's; the three changes are listed in the file's header (keyspace templati
 macro, and an unbalanced parenthesis in upstream's `alerts` recipe). `narrow` and `wide` are ours,
 because upstream has no equivalent shape and `NFR-004` would be uninterpretable measured on one
 point.
+
+**`wide` is opt-in, and that is a budget decision rather than a judgement about the shape.** §2.4
+sizes the suite; two shapes at three repetitions fit comfortably inside three hours and three
+shapes do not. Three repetitions is the floor, not the flexible part: `ubuntu-latest` variance
+makes a two-run median meaningless, so the number of *shapes* is what gives way. `narrow` and
+`collections` are kept because one is the throughput ceiling and the other is upstream's own
+reference workload; `wide` is enabled whenever a calibration run shows the room, and any result
+published without it must say that `NFR-004` was substantiated on two shapes.
 
 ### 2.1 The workload that will mislead
 
@@ -107,68 +119,124 @@ On-disk estimates are per side, post-LZ4, and include SSTable and per-cell-times
 They are estimates: the harness must record the actual `nodetool tablestats` figures and this
 table must be corrected from them after the first run.
 
-| Workload | Rows | ~bytes/row on disk | Origin | Target | Both |
+| Workload | Default rows | ~bytes/row on disk | Origin | Target | Both |
 |---|---|---|---|---|---|
-| `narrow` | 3,000,000 | ~100 | 300 MB | 300 MB | 600 MB |
-| `wide` | 500,000 | ~280 | 140 MB | 140 MB | 280 MB |
+| `narrow` | 1,800,000 | ~100 | 180 MB | 180 MB | 360 MB |
 | `collections` | ~999,996 | ~250 | 250 MB | 250 MB | 500 MB |
-| | | | | | **1.38 GB** |
+| `wide` (opt-in) | 600,000 | ~280 | 170 MB | 170 MB | 340 MB |
+| | | | | | **1.2 GB** |
 
 Everything else on the disk:
 
 | Item | Size | Note |
 |---|---|---|
-| live data, both sides | 1.4 GB | above |
-| origin snapshot tarball | ~0.7 GB | restored before every run, §8.1 |
+| live data, both sides | 1.2 GB | above |
+| origin snapshot tarball | ~0.6 GB | restored before every run, §8.1 |
 | compaction headroom | ~0.3 GB | worst case, a full compaction of the largest table |
 | commitlogs, 2 nodes | 1.0 GB | **only if capped.** Cassandra's default `commitlog_total_space` is min(8 GB, ¼ of the volume), which on a 14 GB disk is ~3.5 GB *per node*. Uncapped, this alone is 7 GB. The environment must set 512 MB per node. |
 | images and binaries | ~1.5 GB | Cassandra image (layers shared by both containers), a JDK+Spark+CDM-jar image, nb5, the cdm-rs binary |
 | logs, digests, artefacts | ~0.2 GB | |
-| | **~5.1 GB** | of ~14 GB |
+| | **~4.8 GB** | of ~14 GB |
 
 Roughly 9 GB of headroom. That is deliberate: the two things that consume disk without warning are
 uncapped commitlogs and a compaction that transiently doubles a table, and both happen at the worst
 possible moment.
 
-### 2.4 Sizing: runtime
+### 2.4 Sizing: runtime, and how the suite survives being wrong about it
 
-The anchor is Java CDM's own published run. `PERF/testing.txt` in the upstream repository records
-**999,996 `perf-iot` rows migrated in ~200 s** by CDM v4 on an AWS `t2.2xlarge` — 8 vCPU, 16 GB,
-with both Cassandra clusters on the same instance. That is ~5,000 rows/s, in almost exactly our
-topology at twice our core count.
+Two things are being balanced. Each Java run must last long enough that Spark's startup stays a
+small fraction of it, and the whole suite must finish inside **~3 h** with margin, on a 6 h job
+limit. The estimate that connects them is the throughput of a machine we have never measured, and
+the design below assumes that estimate is wrong.
 
-Halving the cores, and allowing that neither Cassandra nor Spark scales linearly, gives a working
-assumption of **~2,500 rows/s for Java on `collections`**. Treat it as ±50%; it exists to size the
-run, not to predict the result.
+**The estimate.** Two independent data points, and they agree:
 
-| Workload | Rows | assumed Java rows/s | Java steady-state | cdm-rs at the claimed 2× |
-|---|---|---|---|---|
-| `narrow` | 3,000,000 | ~6,000 (fewer cells, fewer bytes) | ~500 s | ~250 s |
-| `wide` | 500,000 | ~1,000 (24 cells + 48 TTL/WRITETIME columns) | ~500 s | ~250 s |
-| `collections` | 1,000,000 | ~2,500 (the measured anchor, halved for cores) | ~400 s | ~200 s |
+- Java CDM's own published run. `PERF/testing.txt` upstream records **999,996 `perf-iot` rows in
+  ~200 s** by CDM v4 on an AWS `t2.2xlarge` — 8 vCPU, 16 GB, both Cassandra clusters on the same
+  instance. That is ~5,000 rows/s in almost exactly our topology at twice our core count.
+- cdm-rs's own tier-2 macro-benchmark measured **9,509 rows/s** for 100,000 rows of a 16-column
+  table with both Cassandra containers *and* the tool on one Apple M-series laptop — a
+  substantially faster machine than a free four-vCPU runner.
 
-Each workload is sized to **~400–500 s of Java steady state**, and that number is chosen for three
-reasons:
+Halving upstream's figure for cores gives a working assumption of **~2,500 rows/s for Java on
+`collections`**, and tier 2 is consistent with it: if a fast laptop gets cdm-rs to 9,509 rows/s on a
+16-column table, a shared four-vCPU runner will get Java to a small fraction of that. Both numbers
+also sit well below the 20,000 rows/s default rate limit, which is why §4.1 is written the way it
+is.
 
-1. **Spark's startup amortises.** `spark-submit` on a cold 4-vCPU runner takes 30–60 s to reach the
-   first row: JVM start, jar load, `SparkContext` init. Against 400–500 s that is 6–13% of Java's
-   cold wall clock. cdm-rs's `NFR-002` budget is under 2 s, i.e. under 1%. Folding startup into one
-   figure would hand cdm-rs a 1.07–1.15× advantage before a single row moved. Hence §8.2.
-2. **The JVM reaches C2.** A 60-second run measures an interpreter and C1. A 400-second run spends
-   its first tens of seconds warming up and the rest in optimised code, which is what a real
-   migration looks like. Sizing shorter would be a way of manufacturing a result.
-3. **It fits.** Config A is 3 workloads × 2 implementations × 3 repetitions = 18 runs. At an
-   average of ~350 s of run plus ~90 s of container reset and origin restore, that is ~2.2 h.
-   Config B (§4.2), the `numParts` sensitivity run (§4.3), the nb5 load (~15 min) and per-run
-   verification (§8.3) bring the total to roughly **4 h** against a 6 h GitHub Actions job limit.
-   If it overruns, split by workload into three jobs rather than shortening the runs.
+Treat ±50% as the honest band, and note the asymmetry: a free `ubuntu-latest` runner is *slower*
+than the 8 vCPU instance upstream used, so the risk is one-sided — the real rate is more likely to
+be 1,200 rows/s than 5,000.
 
-If a pilot shows a workload will overrun badly, the only sanctioned way to shrink it is
-`spark.cdm.filter.java.token.percent`, applied with the **same value to both implementations** and
-recorded in the result. Both implementations shrink each range identically (`TOK-005` reproduces
-Java's `SplitPartitions` behaviour, and tier 1 measured coverage sampling as free at plan time), so
-it changes how much is migrated without changing what either tool does per row. Changing row counts
-between implementations, or between repetitions, voids the run.
+| Workload | Assumed Java rows/s | Rows for ~350 s of Java | Default `load-cycles` |
+|---|---|---|---|
+| `narrow` | ~2,500 (few cells, few bytes) | ~875,000 | 1,800,000 |
+| `collections` | ~1,500 (the anchor, halved for cores and for the runner) | ~525,000 | 1,000,000 |
+| `wide` | ~800 (24 cells + 48 TTL/WRITETIME columns) | ~280,000 | 600,000 |
+
+**The defaults are deliberately about twice what the estimate needs.** A measured run is trimmed
+*downward* by `spark.cdm.filter.java.token.percent`, which cannot trim upward, so a dataset loaded
+too small can only be fixed by reloading — 15 minutes of budget — whereas one loaded too large
+costs nothing but disk, of which there is 9 GB spare. The row counts are therefore sized for the
+optimistic case and the calibration trims.
+
+**The calibration run.** Before config A, for each enabled workload: one Java migrate at
+`spark.cdm.filter.java.token.percent = 5`, which takes ~20 s and yields the runner's actual rate.
+From it the harness computes the coverage percentage that gives ~350 s of Java steady state, and
+uses that same value for **every** run of that workload — both implementations, every repetition,
+config A and config B alike. Cost: ~2 min per workload including the container reset. It removes
+the entire risk of the rate estimate being wrong, in both directions.
+
+Coverage sampling is a legitimate knob for this and not a shortcut: `TOK-005` reproduces Java's
+`SplitPartitions` shrink exactly, so both implementations narrow each range identically, and tier 1
+measured the sampling as free at plan time. It changes how much is migrated without changing what
+either tool does per row. What is *not* permitted is a different coverage between implementations,
+between repetitions, or between config A and config B.
+
+**Why ~350 s and not less.** `spark-submit` on a cold four-vCPU runner takes 30–60 s to reach the
+first row — JVM start, jar load, `SparkContext` init. Against 350 s of steady state that is 8–15%
+of Java's cold wall clock, where cdm-rs's `NFR-002` budget is under 2 s, i.e. under 1%. That gap is
+reported, never blended (§8.2). It is also long enough for the JVM to leave the interpreter and C1
+behind and spend most of the run in C2; a 60-second run would measure warm-up and would be a way of
+manufacturing a result. **350 s is a floor.** If the budget ever conflicts with it, drop a workload
+(§2) — never shorten a run.
+
+**The budget.** Per (workload, repetition) pair: Java ~350 s + cdm-rs ~175 s at the claimed 2×,
+plus 2 × (90 s container reset and origin restore + 60 s verification) = **~825 s, ~14 min**.
+
+| Phase | Cost |
+|---|---|
+| nb5 load of both default workloads, flush, compact, origin snapshot tarball | ~15 min |
+| calibration, 2 workloads | ~4 min |
+| config A: 2 workloads × 3 repetitions | ~83 min |
+| config B (§4.2): `narrow`, batchSize 5, 1 repetition | ~14 min |
+| `numParts` sensitivity (§4.3): `narrow`, Java only, 1 run | ~8 min |
+| **total, default suite** | **~2 h 5 min** |
+| with `wide` enabled: + load, + calibration, + 3 repetitions | + ~45 min → **~2 h 50 min** |
+
+The default suite leaves ~55 minutes of margin inside a 3 h envelope and nearly 4 h against the
+hard job limit. That margin is the point: it is what absorbs the rate estimate being 2× wrong in
+the bad direction even before the calibration run corrects for it. Enabling `wide` spends almost
+all of it, which is why it is opt-in rather than default.
+
+**What happens when a workload overruns anyway.** A job killed at the limit with no artefact is the
+worst outcome available — worse than a partial result, and far worse than a missing one that is
+labelled.
+
+- Each workload has its own timeout: `2 × expected Java cold time + 120 s`, derived from the
+  calibration. On expiry the run is terminated and the workload is reported as
+  **`OVERRAN — no ratio`**, carrying its elapsed time and whatever rows reached the target. The
+  suite moves to the next workload; it does not abort.
+- The suite has a global deadline of 3 h. Workloads not started by then are reported as
+  **`NOT RUN`**. A published result must list them.
+- **A partial result is not symmetric between the implementations, and must not be presented as
+  though it were.** On `SIGTERM` cdm-rs performs the `ENG-010` graceful shutdown — claiming stops,
+  in-flight ranges drain, the counters are flushed and printed, the run is marked `INTERRUPTED` and
+  it exits 4 — so a timed-out cdm-rs run yields honest counters. Java has no such path: `Ctrl-C`
+  kills `spark-submit` mid-write and the final counter block is never printed
+  (`docs/MIGRATION_FROM_JAVA.md` item 26). A timed-out Java run therefore yields elapsed time and a
+  row count read from the target table afterwards, and nothing from the tool itself. Both are
+  recorded as `OVERRAN`; neither produces a ratio.
 
 ---
 
@@ -255,20 +323,29 @@ stay so", so the two implementations are computing the same thing. Turning it of
 
 ### 4.1 Rate limits: 1,000,000, not 20,000
 
-**This is the single most likely way to accidentally publish a meaningless 1.0×.** Both
-implementations default to 20,000 rows/s per side and both honour it. A single-node Cassandra on
-four vCPU can plausibly absorb 5,000–20,000 writes/s. Left at the default, both tools would spend
-part of the run asleep in their own rate limiters, and the ratio would converge on 1.0 regardless
-of which is faster — the measurement would be of two rate limiters agreeing.
+Both implementations default to 20,000 rows/s per side and both honour it.
 
-Both are pinned to 1,000,000 rows/s, fifty times the default, which is far above anything this
-hardware can reach.
+**The evidence says that ceiling does not bind on this hardware.** cdm-rs's tier-2 macro-benchmark
+measured 9,509 rows/s for 100,000 rows of a 16-column table with both Cassandra containers and the
+tool on one Apple M-series laptop — less than half the default ceiling, on a machine faster than a
+free four-vCPU runner. §2.4's Java estimate of ~1,500–2,500 rows/s is an order of magnitude below
+it. So this pin is **not** a claim that both tools are currently sleeping against a limiter; it
+removes a ceiling that is probably not there.
 
-**The run is void if either implementation's observed rate comes within 20% of the ceiling.** The
-harness must check this and fail rather than report.
+It is pinned anyway, for two reasons that hold regardless of which way the estimate falls:
 
-One asymmetry survives: Java's limiter is a Guava `RateLimiter` held per JVM, cdm-rs's is per
-process. Under `--master local[N]` there is one JVM, so they are the same scope. On a real Spark
+- it costs nothing when the limiter never binds, and voids the entire result when it does;
+- a binding ceiling is **invisible in the output**. Both tools would report the same rate and the
+  ratio would read 1.0, which is indistinguishable from a genuine tie. There is no way to discover
+  after the fact that this happened, so it has to be excluded in advance.
+
+What turns that from an assumption into a measurement is the void condition: **the run is void if
+either implementation's observed rate comes within 20% of the ceiling.** The harness must check it
+and fail rather than report. If a future runner is fast enough that the check ever fires, the
+ceiling is raised and the run repeated — it is not a result.
+
+One asymmetry survives whatever the value: Java's limiter is a Guava `RateLimiter` held per JVM,
+cdm-rs's is per process. Under `--master local[N]` there is one JVM, so they are the same scope. On a real Spark
 cluster they would not be, and a Java figure from a multi-executor deployment cannot be compared
 with this one.
 
@@ -464,7 +541,7 @@ Mitigations, all of them mandatory:
 
 ### 7.3 JIT warm-up and GC
 
-A short run measures the interpreter. §2.4 sizes runs at 400–500 s of steady state for this reason,
+A short run measures the interpreter. §2.4 sets a floor of 350 s of steady state for this reason,
 and §8.2 measures steady state over the run's last 80% so that the warm-up window is excluded from
 the steady-state figure and visible in the cold one.
 
@@ -495,10 +572,12 @@ design point: Java cannot spread across executors, cdm-rs cannot use async concu
 cores for. The measurement drifts toward **"which wastes less CPU"**, which is a legitimate
 question and a different one from "which migrates faster".
 
-`ubuntu-latest` is also a shared, virtualised, co-tenanted runner. `docs/BENCHMARKS.md` §3 records
-the same binaries measuring **5–7× apart** between a loaded and an idle machine. That is why this
-tier is three repetitions with min/median/max reported, why it is not a CI gate, and why a ratio
-between 1.8× and 2.2× should be read as "approximately 2×, on this hardware, once".
+`ubuntu-latest` is also a shared, virtualised, co-tenanted runner. `docs/BENCHMARKS.md`, in its
+discussion of why the tier-1 gate ships at 200% rather than 10%, records the same binaries
+measuring **5–7× apart** between a loaded and an idle machine. That is why every workload is run
+three times with min/median/max reported — and why three repetitions is the floor that the number
+of *shapes* gives way to (§2), not the other way round — why this tier is not a CI gate, and why a
+ratio between 1.8× and 2.2× should be read as "approximately 2×, on this hardware, once".
 
 ### 7.6 Single-node clusters make both tools degenerate
 
@@ -558,7 +637,7 @@ Two figures per run, never one:
 - **Steady state**: measured over the last 80% of rows, from each implementation's own progress
   output, so that JVM warm-up and startup are excluded on both sides.
 
-Both are honest. Conflating them is not: at these run lengths, startup alone is 6–13% of Java's
+Both are honest. Conflating them is not: at these run lengths, startup alone is 8–15% of Java's
 cold wall clock and under 1% of cdm-rs's, so a single blended number would carry a ~1.1× advantage
 that has nothing to do with per-row throughput.
 
@@ -570,17 +649,27 @@ empty) all make it *faster*.
 
 After every run, before the containers are destroyed:
 
-1. `nodetool flush` on the target, then an exact `SELECT COUNT(*)`, which must equal the origin's.
+1. `nodetool flush` on the target, then an exact `SELECT COUNT(*)`.
+   - At `filter.java.token.percent = 100` it must equal the origin's count.
+   - When §2.4's calibration has trimmed the coverage below 100, the target legitimately holds
+     fewer rows than the origin, and the origin-equality check does not apply. What still applies,
+     and is the stronger check anyway, is that **the two implementations' targets must match each
+     other exactly** — same count, same digest. Both migrated the same slice of the same ring with
+     the same coverage value.
 2. A content digest: for each of 256 evenly spaced token sub-ranges, select every column plus
    `WRITETIME()` and `TTL()` of a nominated non-key column, sort, and SHA-256 the result. The digest
    must be **identical** for the Java run and the cdm-rs run of the same workload.
    - Including writetime and TTL is the point: it is what proves the propagation described in §3.3
      actually happened on both sides. A tool that quietly skipped it would be doing less work and
      would look faster.
-   - Full coverage on the first run of each workload, to establish the baseline; 5% of the ring
-     (~13 of the 256 sub-ranges, fixed and identical across runs) on subsequent runs, because a full
-     cqlsh dump of 3,000,000 rows costs more than the migration did. The residual risk — a defect
-     confined to the 95% not sampled — is stated rather than dismissed.
+   - The sample is a **fixed row budget, not a fixed fraction**: the first ~50,000 rows encountered
+     across a fixed, identical list of sub-ranges, which costs ~30 s and does not grow when the
+     row counts are raised. A percentage would have made verification scale with the dataset and
+     silently eat the budget the moment anyone increased `load-cycles`.
+   - Full coverage once, for `collections` only, during calibration, to establish that the sampled
+     digest agrees with the complete one. Doing it for every workload every run costs more than the
+     migrations do. The residual risk — a defect confined to the rows not sampled — is stated
+     rather than dismissed.
 3. Both implementations' final counter blocks are parsed and must agree with each other and with
    the row counts. cdm-rs's block is character-identical to Java's by requirement (`MET-005`,
    `MET-006`, `COMPAT-004`), so one parser reads both, and any divergence is itself a finding.
@@ -617,6 +706,19 @@ workload at N× Java CDM 6.x's steady-state rate, with the run's target content 
 
 It **will not** support: a claim about cluster-scale throughput, a claim about Astra, a single "×"
 detached from a workload, or a claim about the tools' behaviour on dirty data.
+
+Every workload ends in exactly one of four states, and all four are publishable:
+
+| State | Meaning |
+|---|---|
+| `MEASURED` | ran to completion, verification passed, ratio reported with cold and steady-state figures |
+| `VOID` | ran, but a precondition failed — the rate limiter bound (§4.1), either side retried (§5.3), GC exceeded 10% of wall clock (§7.3), or verification disagreed (§8.3). Recorded with the reason. Not a ratio. |
+| `OVERRAN` | hit its timeout (§2.4). Elapsed time and rows migrated are reported; cdm-rs's figures come from its own flushed counters, Java's from the target table, and the two are not equally trustworthy. Not a ratio. |
+| `NOT RUN` | the suite's 3 h deadline arrived first, or the workload is opt-in and was not enabled |
+
+The states exist so that a suite which does not finish still produces something honest. A result
+that lists `narrow: MEASURED 2.1×, collections: OVERRAN, wide: NOT RUN` is worth publishing; a job
+killed at the limit with no artefact is not.
 
 And if the measured ratio is below 2×, that is the result. `NFR-004` currently asserts ≥ 2×; if
 reality disagrees, `docs/SPEC.md` is what changes, not the workload.

@@ -5,22 +5,28 @@ description: |
   throughput-ceiling case: per-row fixed cost — token-range paging, primary-key extraction,
   statement binding, one round trip per row — dominates, and almost nothing else does.
 
-  One row is one partition, so 3,000,000 rows are 3,000,000 partitions spread uniformly over the
+  One row is one partition, so the loaded rows are that many partitions spread uniformly over the
   murmur3 ring. That is deliberate: it keeps the range planner honest (no range is empty, none is
   hot) and it stops the read side from amortising a partition lookup over many rows the way the
   clustered "collections" workload does.
+
+  `load-cycles` is a parameter, not a constant. Its default of 1,800,000 is sized for the
+  OPTIMISTIC case — roughly twice the rate we expect Java to reach on a four-vCPU runner — because
+  a measured run is trimmed downward with `spark.cdm.filter.java.token.percent`, which cannot trim
+  upward. Raise it once a calibration run has real numbers; see ../METHODOLOGY.md §2.4. Changing it
+  requires overriding `spark.cdm.perfops.numParts` to `load-cycles / 2000` on both commands.
 
   Run the schema block once per side and the load block only against the origin:
 
     nb5 narrow.nb5 default.schema keyspace=origin host=<origin>
     nb5 narrow.nb5 default.schema keyspace=target host=<target>
-    nb5 narrow.nb5 default.load   keyspace=origin host=<origin> load-cycles=3000000
+    nb5 narrow.nb5 default.load   keyspace=origin host=<origin> load-cycles=1800000
 
 scenarios:
   default:
     schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
     truncate: run driver=cql tags==block:truncate threads==1 cycles==UNDEF
-    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,3000000) threads=auto
+    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,1800000) threads=auto
 
 bindings:
   # One distinct partition per cycle. ToHashedUUID over the cycle number gives uniformly
