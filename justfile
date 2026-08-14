@@ -50,6 +50,11 @@ bench:
 bench-quick:
     cargo bench --workspace -- --warm-up-time 0.3 --measurement-time 0.5 --sample-size 10
 
+# End-to-end throughput against real clusters (TST-060 tier 2, NFR-004). Needs a container
+# runtime and takes minutes; skips cleanly without one. Reports a number, gates nothing.
+bench-macro *ARGS:
+    cargo xtask bench {{ARGS}}
+
 # Regenerate every generated artefact (OPS-012).
 generate:
     cargo xtask openapi
