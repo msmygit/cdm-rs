@@ -67,3 +67,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"
 [[bench]]
 name = "compare"
 harness = false
+
+[[bench]]
+name = "planner"
+harness = false

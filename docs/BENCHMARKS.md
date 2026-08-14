@@ -49,6 +49,7 @@ build exactly as a test would.
 | `cdm-codec` | `conversion` | `ConversionPlan::apply` — per cell, per column, per row |
 | `cdm-cql` | `bind` | PK extraction, the `MIG-012` `UNSET` decision, statement construction |
 | `cdm-engine` | `compare` | `ComparisonPlan::compare`, plus instrumentation overhead |
+| `cdm-engine` | `planner` | `split_ring` (`TOK-003`) and `shuffle_for_run` (`TOK-006`) — startup |
 | `cdm-feature` | `pipeline` | Constant columns, extract-JSON, filters, explode |
 | `cdm-core` | `token` | `TokenRange::split` — startup, not hot path |
 
@@ -87,6 +88,12 @@ compare      all_columns_match/4         93               bind_unset/empty_coll 
 
 token        split_murmur3/65536    320,471     split_narrow/4096          10,744
              split_random/65536     321,139     split_narrow/65536         10,683
+
+planner      split_ring/64            1,578     shuffle_for_run/64          1,853
+             split_ring/1024         18,091     shuffle_for_run/1024       28,659
+             split_ring/65536     1,290,261     shuffle_for_run/65536   1,963,146
+             coverage/{1,25,100}   ~185,000     partition_floor/dense  11,971,279
+                                                partition_floor/fallback       74
 ```
 
 What is worth reading out of that:
@@ -118,6 +125,22 @@ What is worth reading out of that:
 - **`TokenRange::split` is not a cold-start risk.** 65,536 sub-ranges cost 0.32 ms against
   `NFR-002`'s 2-second budget. `split_narrow` at 4,096 and 65,536 parts costs the same 10.7 µs,
   which is the one-sub-range-per-token clamp working.
+- **Ring planning is not a cold-start risk either, in any realistic configuration.** The `TOK-003`
+  split plus the `TOK-006` shuffle costs ~3.3 ms combined at 65,536 ranges. Coverage sampling
+  (`TOK-005`) is free — 1%, 25% and 100% all cost ~185 µs, so a run that samples pays nothing extra
+  at plan time for scanning less.
+- **`perfops.num_parts` has a 160,000× cliff in it.** At a fixed `num_parts` of 1,000,000, a range
+  whose span is 1,000,000 tokens plans in 11.97 ms; a range of 1,000 tokens plans in 74 ns. The
+  cause is `partition_size = span / num_parts` truncating to zero and falling back to a fixed
+  100,000, which for a narrow range is wider than the whole span, so the split emits one range and
+  stops. Both are correct Java behaviour, but the configuration gives no hint that the same setting
+  means two wildly different things depending on the range it is applied to. `TRK-033`'s rerun path
+  is where a large `num_parts` most easily meets a narrow range.
+
+  Relatedly, and also correct Java behaviour: **`num_parts` is a request, not a guarantee.** The
+  stride between ranges is `partition_size + 1`, so at `partition_size == 1` a `num_parts` of
+  1,000,000 yields 500,001 ranges. For every realistic configuration the `+1` disappears into the
+  rounding, but it is not an off-by-one and should not be "fixed".
 
 ### Known optimisation targets
 
