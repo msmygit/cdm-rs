@@ -39,6 +39,7 @@ zip.workspace = true
 cdm-testkit.workspace = true
 
 anyhow.workspace = true
+criterion.workspace = true
 futures.workspace = true
 # `proptest` is the workspace's property-testing crate (`cdm-codec`, `cdm-engine` and
 # `cdm-feature` all dev-depend on it); `TST-010`'s `MIG-012` property lives beside the binder.
@@ -49,3 +50,9 @@ testcontainers.workspace = true
 # `test-util` pauses the runtime clock, so the retry-backoff fault tests are a function of the
 # program rather than of the CI machine's load (`TST-040`).
 tokio = { workspace = true, features = ["test-util"] }
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "bind"
+harness = false
