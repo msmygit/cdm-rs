@@ -1,0 +1,13 @@
+# Resolve `# shellcheck source=...` directives relative to the script being checked, not to the
+# directory shellcheck happens to be invoked from.
+#
+# Without this, every script that sources a sibling — `bench/java-comparison/environment/*.sh`
+# reading `versions.env` — reports SC1091 and shellcheck exits non-zero, which fails the
+# pre-commit hook. The directives themselves are already correct; only the lookup path was wrong.
+#
+# Following the file is better than silencing the message: shellcheck then knows which variables
+# `versions.env` defines and can still flag genuinely unset ones.
+# `external-sources` opts in to following at all; `source-path` says where to look. Both are
+# needed — with only the latter, shellcheck still reports SC1091 and asks for `-x`.
+external-sources=true
+source-path=SCRIPTDIR

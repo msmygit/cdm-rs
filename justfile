@@ -55,6 +55,12 @@ bench-quick:
 bench-macro *ARGS:
     cargo xtask bench {{ARGS}}
 
+# The tier-3 Java CDM comparison (NFR-004). Starts fresh containers for each implementation, runs
+# both, verifies both targets and writes JSON plus a table. Needs Docker; needs Spark and the
+# pinned jar for the Java half, and reports honestly when it does not have them. Gates nothing.
+bench-java *ARGS:
+    bench/java-comparison/run.sh {{ARGS}}
+
 # Regenerate every generated artefact (OPS-012).
 generate:
     cargo xtask openapi

@@ -1,0 +1,73 @@
+description: |
+  cdm-rs tier-3 workload "narrow" (NFR-004, TST-060).
+
+  Four columns, one of them the partition key, no clustering column, no collections. This is the
+  throughput-ceiling case: per-row fixed cost — token-range paging, primary-key extraction,
+  statement binding, one round trip per row — dominates, and almost nothing else does.
+
+  One row is one partition, so the loaded rows are that many partitions spread uniformly over the
+  murmur3 ring. That is deliberate: it keeps the range planner honest (no range is empty, none is
+  hot) and it stops the read side from amortising a partition lookup over many rows the way the
+  clustered "collections" workload does.
+
+  `load-cycles` is a parameter, not a constant. Its default of 1,800,000 is sized for the
+  OPTIMISTIC case — roughly twice the rate we expect Java to reach on a four-vCPU runner — because
+  a measured run is trimmed downward with `spark.cdm.filter.java.token.percent`, which cannot trim
+  upward. Raise it once a calibration run has real numbers; see ../METHODOLOGY.md §2.4. Changing it
+  requires overriding `spark.cdm.perfops.numParts` to `load-cycles / 2000` on both commands.
+
+  Run the schema block once per side and the load block only against the origin:
+
+    nb5 narrow.nb5 default.schema keyspace=origin host=<origin>
+    nb5 narrow.nb5 default.schema keyspace=target host=<target>
+    nb5 narrow.nb5 default.load   keyspace=origin host=<origin> load-cycles=1800000
+
+scenarios:
+  default:
+    schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
+    truncate: run driver=cql tags==block:truncate threads==1 cycles==UNDEF
+    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,1800000) threads=auto
+
+bindings:
+  # One distinct partition per cycle. ToHashedUUID over the cycle number gives uniformly
+  # distributed tokens without a Mod(), which is what makes the ring split even.
+  event_id: ToHashedUUID() -> java.util.UUID
+  # One year of event timestamps, hashed off the cycle so the value is not correlated with the key.
+  event_ts: StartingEpochMillis('2022-01-01 00:00:00'); AddHashRange(0L,31536000000L); EpochMillisToJavaInstant()
+  seq: Uniform(0,1000000) -> int
+  # 24 characters. Big enough that the value is not free to serialise, small enough that the row
+  # stays dominated by its fixed costs.
+  payload: HashedLineToString('data/variable_words.txt'); Prefix('p-'); ToString()
+
+blocks:
+  schema:
+    params:
+      prepared: false
+    ops:
+      create-keyspace: |
+        CREATE KEYSPACE IF NOT EXISTS TEMPLATE(keyspace,origin)
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+        AND durable_writes = true;
+      create-table: |
+        CREATE TABLE IF NOT EXISTS TEMPLATE(keyspace,origin).narrow (
+            event_id uuid,
+            event_ts timestamp,
+            seq int,
+            payload text,
+            PRIMARY KEY (event_id)
+        );
+  truncate:
+    params:
+      prepared: false
+    ops:
+      truncate-table: |
+        TRUNCATE TABLE TEMPLATE(keyspace,origin).narrow;
+  load:
+    params:
+      cl: LOCAL_QUORUM
+      idempotent: true
+    ops:
+      insert-load: |
+        INSERT INTO TEMPLATE(keyspace,origin).narrow
+        (event_id, event_ts, seq, payload)
+        VALUES ({event_id}, {event_ts}, {seq}, {payload});

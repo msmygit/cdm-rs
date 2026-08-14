@@ -1,0 +1,112 @@
+description: |
+  cdm-rs tier-3 workload "collections" (NFR-004, TST-060).
+
+  A mirror of Java CDM's own reference workload, `PERF/perf-iot.yaml` in the
+  datastax/cassandra-data-migrator repository. `docs/SPEC.md` S3 names that workload by path, so
+  this is the one shape in the tier-3 suite that is not our invention: the schema, the bindings and
+  the value distributions below are upstream's, with three changes, all marked.
+
+  What it exercises that the other two do not is *framing*: a `frozen<map<text,text>>` of three
+  entries, a `list<text>` of one to five entries and a frozen UDT per row, so the per-element cost
+  of native-protocol collection encoding dominates the per-row cost. `docs/BENCHMARKS.md` §2
+  measures that at roughly 2x the per-element cost of the same conversion on a scalar for cdm-rs.
+  It is included precisely because tier 1 says it is cdm-rs's weakest shape.
+
+  It is also the workload most likely to be misread. Row counts are not comparable across the three
+  workloads here: one row of `sensor_data` carries about eight collection elements, so rows/s on
+  this workload and rows/s on `narrow` measure different amounts of work. Report both, never
+  average the ratios, and see `../METHODOLOGY.md` §6.
+
+  Changes from upstream `perf-iot.yaml`:
+    1. the keyspace is templated, so the same file creates the origin and the target side;
+    2. `sources` is a template parameter rather than an `<<sources:10000>>` macro;
+    3. upstream's `alerts` recipe has an unbalanced parenthesis (`ToString()));`) — removed;
+    4. the `insert-load` statement is wrapped across lines to stay inside the repository's
+       120-column yamllint limit. It sits in a block scalar and CQL ignores newlines, so the
+       statement sent to the cluster is unchanged.
+
+    nb5 collections.nb5 default.schema keyspace=origin host=<origin>
+    nb5 collections.nb5 default.schema keyspace=target host=<target>
+    nb5 collections.nb5 default.load   keyspace=origin host=<origin> load-cycles=1000000
+
+  The clustering key is (reading_date, reading_time) within 10,000 device partitions, and the two
+  are drawn independently, so cycles collide: upstream's own 1,000,000-cycle run landed 999,996
+  rows. Take the migrated row count from `SELECT COUNT(*)` on the origin, never from the cycle
+  count.
+
+  `load-cycles` is a parameter, not a constant. Its default of 1,000,000 is upstream's own figure
+  and is sized for the OPTIMISTIC case — roughly twice the rate we expect Java to reach on a
+  four-vCPU runner — because a measured run is trimmed downward with
+  `spark.cdm.filter.java.token.percent`, which cannot trim upward. Raise it once a calibration run
+  has real numbers; see ../METHODOLOGY.md §2.4. Changing it requires overriding
+  `spark.cdm.perfops.numParts` to `load-cycles / 2000` on both commands.
+
+scenarios:
+  default:
+    schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
+    truncate: run driver=cql tags==block:truncate threads==1 cycles==UNDEF
+    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,1000000) threads=auto
+
+params:
+  instrument: TEMPLATE(instrument,false)
+
+bindings:
+  device_id: Mod(TEMPLATE(sources,10000)); ToHashedUUID() -> java.util.UUID
+  reading_date: StartingEpochMillis('2022-01-01 00:00:00'); AddHashRange(0L,31536000000L); EpochMillisToCqlLocalDate();
+  reading_time: Uniform(0,86400) -> int
+  settings: MapSized(3, Combinations('A-Z;0-9'), ToString(), ToString())
+  alerts: ListSizedHashed(HashRange(1,5),ToString())
+  temperature: Normal(0.0,5.0); Add(100.0) -> double; ToBigDecimal(2)
+  humidity: Normal(0.0,5.0); Add(100.0) -> double; ToBigDecimal(2)
+  pressure: Normal(0.0,5.0); Add(100.0) -> double; ToBigDecimal(2)
+  wind_speed: Normal(0.0,5.0); Add(100.0) -> double; ToBigDecimal(2)
+  latitude: Uniform(-90.0,90.0) -> double; ToBigDecimal(8)
+  longitude: Uniform(-180.0,180.0) -> double; ToBigDecimal(8)
+
+blocks:
+  schema:
+    params:
+      prepared: false
+    ops:
+      create-keyspace: |
+        CREATE KEYSPACE IF NOT EXISTS TEMPLATE(keyspace,origin)
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+        AND durable_writes = true;
+      create-type: |
+        CREATE TYPE IF NOT EXISTS TEMPLATE(keyspace,origin).location (
+            latitude decimal,
+            longitude decimal
+        );
+      create-table: |
+        CREATE TABLE IF NOT EXISTS TEMPLATE(keyspace,origin).sensor_data (
+            device_id uuid,
+            reading_date date,
+            reading_time int,
+            settings frozen<map<text, text>>,
+            device_location location,
+            alerts list<text>,
+            temperature decimal,
+            humidity decimal,
+            pressure decimal,
+            wind_speed decimal,
+            PRIMARY KEY ((device_id), reading_date, reading_time)
+        ) WITH CLUSTERING ORDER BY (reading_date DESC, reading_time DESC);
+  truncate:
+    params:
+      prepared: false
+    ops:
+      truncate-table: |
+        TRUNCATE TABLE TEMPLATE(keyspace,origin).sensor_data;
+  load:
+    params:
+      cl: LOCAL_QUORUM
+      instrument: TEMPLATE(instrument-writes,TEMPLATE(instrument,false))
+      idempotent: true
+    ops:
+      insert-load: |
+        INSERT INTO TEMPLATE(keyspace,origin).sensor_data
+        (device_id, reading_date, reading_time, settings, device_location,
+         alerts, temperature, humidity, pressure, wind_speed)
+        VALUES ({device_id}, {reading_date}, {reading_time}, {settings},
+                {latitude:{latitude}, longitude:{longitude}},
+                {alerts}, {temperature}, {humidity}, {pressure}, {wind_speed});

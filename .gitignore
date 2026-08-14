@@ -12,6 +12,9 @@
 # Local run artefacts
 /cdm_logs/
 /reports/
+# Tier-3 benchmark output: one directory per run, holding Spark logs that reach tens of megabytes.
+# The workflow uploads them as an artefact; they are evidence, not source.
+/bench/java-comparison/results/
 *.profraw
 lcov.info
 

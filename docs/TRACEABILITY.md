@@ -493,7 +493,7 @@ test, fails CI.
 | `NFR-001` | Static binary for `linux-x86_64` (gnu + musl), `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64` | `workspace` | `nfr_001_*` | #56 |
 | `NFR-002` | Cold start to first row read MUST be < 2 seconds for a single-table run | `workspace`, `cdm-testkit::macrobench` (lower bound only; see `MacroBenchResult::cold_start`) | `nfr_002_*` | #55 |
 | `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace`, `cdm-engine::planner::report`, `cdm-cql::exec::scan`, `cdm-engine::jobs::guardrail::origin` | `nfr_003_*` | #17, #55 |
-| `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace`, `cdm-testkit::macrobench`, `xtask` (`cargo xtask bench`) | `nfr_004_*` | #55 |
+| `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace`, `cdm-testkit::macrobench`, `xtask` (`cargo xtask bench`), `bench/java-comparison` (tier 3; the claim itself is **not yet measured** — see `docs/BENCHMARKS.md` §5) | `nfr_004_*` | #55 |
 | `NFR-005` | MSRV MUST be an explicitly declared, tested Rust version, bumped only in a minor release, and stated in `Cargo.toml`… | `workspace` | `nfr_005_*` | #57 |
 | `NFR-006` | Every public item in every crate MUST have rustdoc; `#![deny(missing_docs)]` on all library crates | `workspace` | `nfr_006_*` | #57 |
 | `NFR-007` | All timestamps in APIs, logs and reports MUST be RFC 3339 UTC. Writetimes remain microseconds since epoch (Cassandra… | `workspace` | `nfr_007_*` | #57 |
