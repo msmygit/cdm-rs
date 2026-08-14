@@ -1,0 +1,98 @@
+description: |
+  cdm-rs tier-3 workload "wide" (NFR-004, TST-060).
+
+  Twenty-four non-key scalar columns. Per-column work dominates: twenty-four cells to decode,
+  convert and bind per row, and — because `spark.cdm.schema.origin.column.{ttl,writetime}.automatic`
+  is left at its shared default of `true` on both implementations — twenty-four `TTL()` and
+  twenty-four `WRITETIME()` expressions in the origin `SELECT` as well. The origin projection is
+  therefore 73 result columns wide for a 25-column table, and that ratio is the point of the
+  workload.
+
+  No collections, so the TTL/writetime eligibility rules apply cleanly to every non-key column and
+  neither implementation has to fall back to `ttlwritetime.calc.useCollections`.
+
+    nb5 wide.nb5 default.schema keyspace=origin host=<origin>
+    nb5 wide.nb5 default.schema keyspace=target host=<target>
+    nb5 wide.nb5 default.load   keyspace=origin host=<origin> load-cycles=500000
+
+scenarios:
+  default:
+    schema: run driver=cql tags==block:schema threads==1 cycles==UNDEF
+    truncate: run driver=cql tags==block:truncate threads==1 cycles==UNDEF
+    load: run driver=cql tags==block:load cycles===TEMPLATE(load-cycles,500000) threads=auto
+
+bindings:
+  row_id: ToHashedUUID() -> java.util.UUID
+  t01: HashedLineToString('data/variable_words.txt'); ToString()
+  t02: HashedLineToString('data/variable_words.txt'); ToString()
+  t03: HashedLineToString('data/variable_words.txt'); ToString()
+  t04: HashedLineToString('data/variable_words.txt'); ToString()
+  t05: HashedLineToString('data/variable_words.txt'); ToString()
+  t06: HashedLineToString('data/variable_words.txt'); ToString()
+  t07: HashedLineToString('data/variable_words.txt'); ToString()
+  t08: HashedLineToString('data/variable_words.txt'); ToString()
+  i01: Uniform(0,1000000) -> int
+  i02: Uniform(0,1000000) -> int
+  i03: Uniform(0,1000000) -> int
+  i04: Uniform(0,1000000) -> int
+  i05: Uniform(0,1000000) -> int
+  i06: Uniform(0,1000000) -> int
+  b01: Uniform(0,9223372036854775807) -> long
+  b02: Uniform(0,9223372036854775807) -> long
+  b03: Uniform(0,9223372036854775807) -> long
+  b04: Uniform(0,9223372036854775807) -> long
+  d01: Normal(0.0,5.0); Add(100.0) -> double
+  d02: Normal(0.0,5.0); Add(100.0) -> double
+  d03: Normal(0.0,5.0); Add(100.0) -> double
+  d04: Normal(0.0,5.0); Add(100.0) -> double
+  ts01: StartingEpochMillis('2022-01-01 00:00:00'); AddHashRange(0L,31536000000L); EpochMillisToJavaInstant()
+  ts02: StartingEpochMillis('2023-01-01 00:00:00'); AddHashRange(0L,31536000000L); EpochMillisToJavaInstant()
+  fl01: HashRange(0,1); ToBoolean()
+  fl02: HashRange(0,1); ToBoolean()
+
+blocks:
+  schema:
+    params:
+      prepared: false
+    ops:
+      create-keyspace: |
+        CREATE KEYSPACE IF NOT EXISTS TEMPLATE(keyspace,origin)
+        WITH replication = {'class': 'SimpleStrategy', 'replication_factor': '1'}
+        AND durable_writes = true;
+      create-table: |
+        CREATE TABLE IF NOT EXISTS TEMPLATE(keyspace,origin).wide (
+            row_id uuid,
+            t01 text, t02 text, t03 text, t04 text,
+            t05 text, t06 text, t07 text, t08 text,
+            i01 int, i02 int, i03 int, i04 int, i05 int, i06 int,
+            b01 bigint, b02 bigint, b03 bigint, b04 bigint,
+            d01 double, d02 double, d03 double, d04 double,
+            ts01 timestamp, ts02 timestamp,
+            fl01 boolean, fl02 boolean,
+            PRIMARY KEY (row_id)
+        );
+  truncate:
+    params:
+      prepared: false
+    ops:
+      truncate-table: |
+        TRUNCATE TABLE TEMPLATE(keyspace,origin).wide;
+  load:
+    params:
+      cl: LOCAL_QUORUM
+      idempotent: true
+    ops:
+      insert-load: |
+        INSERT INTO TEMPLATE(keyspace,origin).wide
+        (row_id,
+         t01, t02, t03, t04, t05, t06, t07, t08,
+         i01, i02, i03, i04, i05, i06,
+         b01, b02, b03, b04,
+         d01, d02, d03, d04,
+         ts01, ts02, fl01, fl02)
+        VALUES ({row_id},
+         {t01}, {t02}, {t03}, {t04}, {t05}, {t06}, {t07}, {t08},
+         {i01}, {i02}, {i03}, {i04}, {i05}, {i06},
+         {b01}, {b02}, {b03}, {b04},
+         {d01}, {d02}, {d03}, {d04},
+         {ts01}, {ts02}, {fl01}, {fl02});
