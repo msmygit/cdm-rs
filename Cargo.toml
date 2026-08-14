@@ -125,7 +125,15 @@ bytes = "1"
 smallvec = "1"
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"
-zip = "2"
+# The only archive cdm-rs ever opens is an Astra secure-connect-bundle (`CON-020`), parsed in
+# memory from bytes a user handed us. Every compression backend linked in is one more decoder that
+# archive can reach, so the default set — aes-crypto, bzip2, deflate64, lzma, ppmd, xz, zstd — is
+# off and only deflate is kept: deflate and stored are the methods real bundles and our own fixture
+# writer use. `deflate-flate2-zlib-rs` is the backend zip's own `deflate` feature picks: pure Rust,
+# so the decoder on that path needs no C toolchain and no system zlib.
+#
+# `NFR-005`: zip 8 declares `rust-version = "1.88"`, the workspace MSRV exactly.
+zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # --- embedded storage (TRK-036) ---------------------------------------------
 # The SQLite tracking backend. `bundled` compiles the SQLite amalgamation that ships inside the
