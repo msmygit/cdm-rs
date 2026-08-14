@@ -223,8 +223,8 @@ pub struct MacroBenchResult {
     /// Peak resident set size in bytes, if the platform can report it; `None` otherwise.
     ///
     /// **Read the caveats before quoting this number.** It is the largest value seen by sampling
-    /// this process's own resident set every [`RSS_SAMPLE_INTERVAL`] *during the migration only*.
-    /// Therefore:
+    /// this process's own resident set every 25 ms — `RSS_SAMPLE_INTERVAL`, which is private and so
+    /// is named rather than linked — *during the migration only*. Therefore:
     ///
     /// * it is the **harness process**, which is the migration pipeline plus the container
     ///   runtime client and the test binary — not a `cdm` binary, and not a lower bound on one;

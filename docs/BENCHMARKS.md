@@ -198,13 +198,37 @@ The human summary reports:
 | Figure | What it tells you |
 |---|---|
 | `rows_migrated` vs `spec_rows` | whether the run actually completed. A throughput figure from a partial migration is not a throughput figure |
-| `wall_clock` | total elapsed time, container startup included |
+| `wall_clock` | the migration itself — token plan handed to the scheduler, until the last range completes. **Excludes** container startup and seeding, which are setup, not the thing being measured |
 | `rows_per_second` | the headline, and the only figure `NFR-004` is about |
 | `cold_start` | time to the first row read, against `NFR-002`'s 2-second budget |
 | `peak_rss_bytes` | resident memory, against `NFR-003`. `None` where the platform does not report it |
 
 `--bencher` emits the same run as a single `cargo bench --output-format bencher` line named
-`nfr_004_macro_migrate`, which is what the workflow feeds to the trend store.
+`nfr_004_macro_migrate`, which is what the workflow feeds to the trend store. It reports
+**nanoseconds per migrated row** rather than rows per second, because the bencher format carries
+one number and treats lower as better — so a throughput regression rises on the chart like every
+tier-1 line, instead of inverting the axis for one series.
+
+### Reference numbers
+
+Apple M-series laptop, Docker Desktop, `cassandra:5.0` for both origin and target. Orientation
+only: this is a laptop running both clusters and the migration on one machine, which is not a
+configuration anybody migrates production data on.
+
+| Workload | Migration | Throughput | Cold start |
+|---|---|---|---|
+| 100,000 rows × 16 cols | 10.52 s | **9,509 rows/s** | 0.25 s |
+| 5,000 rows × 8 cols | 1.27 s | 3,936 rows/s | 0.14 s |
+
+The small run is slower per row because a 1.27-second migration is still paying fixed startup cost;
+throughput figures from short runs are not comparable with long ones, which is why the default
+workload is 100,000 rows rather than something that finishes quickly.
+
+`cold_start` at 0.25 s sits well inside `NFR-002`'s 2-second budget, but it does not by itself
+discharge that requirement — see the caveat on the field's rustdoc. It is measured from the
+`MET-010` observer seam on the first origin read, in-process against already-running nodes, so it
+covers connect → introspect → prepare → plan → schedule → first page and excludes process spawn,
+dynamic linking and config loading. It is a lower bound.
 
 ### Why it is weekly, and why it is not a gate
 

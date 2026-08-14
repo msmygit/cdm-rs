@@ -24,7 +24,11 @@ anyhow.workspace = true
 cdm-config.workspace = true
 # `cargo xtask it` must decide whether a container runtime is available using exactly the rule the
 # tests themselves use, or the two disagree and TST-102's "skip, do not fail" becomes a lie.
-cdm-testkit.workspace = true
+#
+# `macrobench` is what makes `cargo xtask bench` possible: the harness is off by default so that
+# `cdm-engine`/`cdm-cql`/`cdm-config` stay out of every other crate's test build, and xtask is the
+# one consumer that opts in (see the note above `[features]` in cdm-testkit, and ARCHITECTURE §3.3).
+cdm-testkit = { workspace = true, features = ["macrobench"] }
 clap.workspace = true
 regex.workspace = true
 serde_yaml.workspace = true
