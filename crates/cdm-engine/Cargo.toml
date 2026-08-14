@@ -48,9 +48,16 @@ tracing.workspace = true
 # engine (ARCHITECTURE.md §3), and the `*_it` suites are where each job meets a real node.
 cdm-testkit.workspace = true
 
+criterion.workspace = true
 proptest.workspace = true
 scylla.workspace = true
 tempfile.workspace = true
 # `test-util` is what makes the rate-limit and shutdown tests deterministic: it pauses the
 # runtime clock so elapsed time is a function of the program, not of the CI machine's load.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "compare"
+harness = false
