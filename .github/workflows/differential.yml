@@ -1,26 +1,148 @@
 name: Differential vs Java CDM
 
-# NOTE: the differential harness is delivered by PR #34. Restore the nightly schedule then.
+# TST-020: run Java CDM 6.0.1 and cdm-rs over one seeded corpus and assert byte-identical target
+# state and identical counter blocks.
+#
+# **This one gates.** `bench.yml` and `java-comparison.yml` report numbers and never fail a build
+# over them, because throughput moves with the runner's disk and its co-tenants. A difference in
+# what the two implementations wrote is not weather: it is either a defect in cdm-rs or a
+# divergence nobody recorded in `docs/MIGRATION_FROM_JAVA.md`. So a difference is red, and the diff
+# is uploaded whatever the outcome.
+#
+# Nightly, and deliberately **not** `pull_request`. The reasoning is `sit.yml`'s, one step further
+# along: `integration.yml` already runs on every pull request across four Cassandra versions and
+# gives the same signal sooner for everything except parity. What this job adds it buys by building
+# a 1.6 GiB Spark image, starting two pairs of Cassandra nodes and running a JVM job whose start-up
+# floor alone is ten seconds. That is a signal about `main`, at a price no branch push should pay.
+#
+# `push: [main]` is absent too, unlike `sit.yml`. A SIT run is two minutes and can afford to fire
+# per merge; a queue of these would contend with `integration.yml` for runners and with Docker Hub
+# for pull rate. Nightly plus `workflow_dispatch` is the cadence, and a suspected parity break is
+# dispatched by hand with the seed the failing run printed.
+
 on:
+  schedule:
+    # 05:30 UTC. Last in the nightly order on purpose: `integration.yml` starts at 03:00 and runs
+    # the better part of an hour over five engines, `bench.yml` at 04:00 and `sit.yml` at 04:30.
+    # This job is the longest and the most registry-hungry of the four, and a differential run that
+    # failed because it could not pull `cassandra:5.0` would report a parity break that never
+    # happened.
+    - cron: "30 5 * * *"
   workflow_dispatch:
+    inputs:
+      corpus:
+        description: "Corpus: full (the TST-020 type matrix) or smoke (plumbing only)"
+        required: false
+        default: full
+        type: choice
+        options: [full, smoke]
+      seed:
+        description: "Seed to replay. Empty means entropy; every run prints the seed it used"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  # One at a time, and never cancelled mid-run. Both phases claim the fixed container names and the
+  # fixed subnet declared in `bench/java-comparison/environment/versions.env`, so a second run would
+  # tear down the first one's clusters mid-migration — and a short target reads as a parity break.
+  group: differential
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   differential:
-    # TST-020: run both implementations over the same seeded corpus and assert
-    # byte-identical target state and identical counter blocks.
     name: Java/Rust differential suite
     runs-on: ubuntu-latest
+    # Two full migrations, two pairs of Cassandra nodes started from cold, an image build that
+    # downloads ~600 MiB, and a JVM job on top. Reaching this budget means something hung: the
+    # measured shape of this environment is minutes per migration, not hours.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5.7.0
-        with:
-          distribution: temurin
-          java-version: "17"
+
+      # No `setup-java`. Nothing in this job runs `java` on the runner: Java CDM runs inside the
+      # `eclipse-temurin:17.0.19_10-jre-noble` image that `environment/build-image.sh` builds from
+      # `versions.env`, which is the entire point of pinning it. A second, unpinned JDK on the
+      # runner would be one more version in a comparison that exists to have none.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo xtask differential
-      - uses: actions/upload-artifact@v7
+
+      - name: Reclaim disk before the Spark image is built
+        shell: bash
+        # `README-ENVIRONMENT.md` §5 budgets ~2.2 GiB for the image and the Cassandra layers, and
+        # then needs room for the corpus on an origin and a target at once. A stock `ubuntu-latest`
+        # starts with ~14 GiB free and spends several of them on toolchains this job never touches.
+        # That README also records that none of its disk arithmetic has ever been observed on a
+        # real runner, so the margin is taken rather than assumed.
+        run: |
+          set -euo pipefail
+          before="$(df -BG --output=avail / | tail -1 | tr -d 'G ')"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          after="$(df -BG --output=avail / | tail -1 | tr -d 'G ')"
+          echo "Free disk: ${before}G before, ${after}G after."
+
+      - name: Run the differential suite
+        shell: bash
+        # `shell: bash` is load-bearing on every step in this file, and most of all on this one.
+        # GitHub's default shell is `bash -e` WITHOUT `pipefail`, so a pipeline reports the exit
+        # status of its last command: `cargo xtask differential | tee log` would report `tee`'s
+        # success and turn a parity failure green. That exact bug shipped in `bench.yml` and was
+        # found by accident.
+        env:
+          # Through the environment rather than interpolated into the script: a dispatch input is
+          # attacker-controlled text, and `${{ }}` inside a `run:` block is substituted before bash
+          # ever sees it.
+          CORPUS: ${{ inputs.corpus }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          set -euo pipefail
+          # `:-` rather than a plain default: a scheduled run supplies no inputs at all, so these
+          # arrive set-but-empty rather than unset.
+          args=(--corpus "${CORPUS:-full}")
+          if [ -n "${SEED:-}" ]; then
+            args+=(--seed "${SEED}")
+          fi
+          cargo xtask differential "${args[@]}"
+
+      - name: Upload the diff
+        # `always()`, because the diff is this job's product and a failing run is exactly the run
+        # whose evidence is worth keeping. A green run uploads both captured target states, both
+        # counter blocks and both job logs as well — which is what makes the next failure diffable
+        # against a known-good pair.
         if: always()
+        uses: actions/upload-artifact@v7
         with:
           name: differential-report
           path: reports/differential/
+          # Nothing is written when the suite skips for want of a container runtime (TST-102), and
+          # a silent absence is clearer there than a warning nobody reads.
+          if-no-files-found: ignore
+
+      - name: Explain a failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::notice::A red run here is a parity claim, not weather: the two implementations"
+          echo "::notice::produced different target state or different counter blocks over one"
+          echo "::notice::seeded corpus (TST-020)."
+          echo "::notice::1. download the differential-report artefact; report.txt is the diff;"
+          echo "::notice::2. seed.txt carries the exact command that replays that corpus locally;"
+          echo "::notice::3. counters.txt under java-cdm/ and cdm-rs/ are the MET-006 blocks,"
+          echo "::notice::   which COMPAT-004 requires to be character-identical;"
+          echo "::notice::4. if the difference is deliberate it belongs in"
+          echo "::notice::   docs/MIGRATION_FROM_JAVA.md, behind --compat-java (COMPAT-001)."
+
+      - name: Remove the clusters and the image
+        # The runner is discarded either way. This exists for the self-hosted case, which is how
+        # this job moves off the free tier if it outgrows it: without teardown such a runner is
+        # left holding two Cassandra nodes and a 1.6 GiB image after every night.
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash bench/java-comparison/environment/clusters-down.sh || true
+          docker image prune --force > /dev/null || true

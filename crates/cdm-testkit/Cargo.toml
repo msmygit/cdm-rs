@@ -35,8 +35,20 @@ bench = false
 # `cargo check --workspace --all-targets --all-features` proves it.
 #
 # See `ARCHITECTURE.md` §3.3.
+# `differential` is off by default for the same reason, and a weaker one (TST-020).
+#
+# The Java-parity differential corpus is a large generated artefact — every CQL type, nesting
+# depth 3, nulls, empty collections and the edge-case values `TST-020` enumerates — and its only
+# consumers are `cargo xtask differential` and `tests/differential/`. Every other crate's test
+# build would pay to compile it and never call it.
+#
+# Unlike `macrobench` this adds no dependency edge today: the corpus emits CQL *statements* and
+# the comparator works on captured target state and counter blocks, both of which are text. If the
+# comparator ever needs a live session it must gain `dep:cdm-cql` here rather than reach for the
+# driver from the rest of the crate — see `ARCHITECTURE.md` §3.3, and the `TestSession` seam.
 [features]
 macrobench = ["dep:cdm-config", "dep:cdm-cql", "dep:cdm-engine"]
+differential = []
 
 [dependencies]
 # Deliberately no `scylla` and no `cdm-cql`: only `cdm-cql` may depend on the driver

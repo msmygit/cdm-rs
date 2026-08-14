@@ -28,7 +28,10 @@ cdm-config.workspace = true
 # `macrobench` is what makes `cargo xtask bench` possible: the harness is off by default so that
 # `cdm-engine`/`cdm-cql`/`cdm-config` stay out of every other crate's test build, and xtask is the
 # one consumer that opts in (see the note above `[features]` in cdm-testkit, and ARCHITECTURE §3.3).
-cdm-testkit = { workspace = true, features = ["macrobench"] }
+# `differential` is the same pattern for `cargo xtask differential` (TST-020): the generated
+# Java-parity corpus and the comparator are off by default so that no other crate's test build
+# compiles them, and xtask is the one consumer that opts in.
+cdm-testkit = { workspace = true, features = ["macrobench", "differential"] }
 clap.workspace = true
 regex.workspace = true
 serde_yaml.workspace = true
