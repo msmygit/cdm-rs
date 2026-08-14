@@ -16,10 +16,11 @@ one of them is shaped like a CI job.
 |---|---|---|---|
 | **1. Micro** | Did this commit make the hot path slower? | nothing | `bench.yml`, nightly + `bench` label |
 | **2. Macro** | How many rows per second, end to end? | Cassandra containers | `bench.yml`, weekly, **not a gate** |
-| **3. Java comparison** | Is it really ≥ 2× Java CDM? (`NFR-004`) | Spark + Java CDM + fixed hardware | by hand, written up here |
+| **3. Java comparison** | Is it really ≥ 2× Java CDM? (`NFR-004`) | Spark + Java CDM + both clusters | `java-comparison.yml`, fortnightly, **not a gate** |
 
-Tiers 1 and 2 exist. Tier 3 is roadmap #55's remaining work, and it is the one that actually
-settles `NFR-004`.
+All three exist. Tier 3 is the one that actually settles `NFR-004`, and as of this commit it has a
+harness and a schedule but no measured result: §5 says so and stays empty until the first
+scheduled run fills it in.
 
 Tier 2 records and reports; it never fails a build. End-to-end throughput on a shared runner is
 dominated by the disk that runner was allocated, the tenants it shares a host with and how long
@@ -282,19 +283,157 @@ detected and trended, but the threshold is 200%, not 10%.
 
 ---
 
-## 5. Tier 3 — the `NFR-004` claim (not yet run)
+## 5. Tier 3 — the `NFR-004` claim
 
-`NFR-004` asserts throughput ≥ 2× Java CDM on the same hardware for the reference workload. **This
-has never been measured.** The number is currently an aspiration, and this document is the place it
-will be substantiated or corrected.
+`NFR-004` asserts throughput ≥ 2× Java CDM on the same hardware for the reference workload. Tiers 1
+and 2 cannot answer it: both measure cdm-rs against cdm-rs, and the claim is about something else
+entirely. Tier 3 runs the other implementation.
 
-It cannot be a CI job. Java CDM is a Spark application, driven by `spark-submit`; a meaningful
-comparison means standing up Spark, both clusters and an identical dataset on hardware that is not
-shared with anyone else. That is a benchmarking exercise with a written-up result, run on demand.
+```bash
+just bench-java                                     # the reference workload, both implementations
+bench/java-comparison/run.sh --workload all --repeats 2
+bench/java-comparison/run.sh --rows 250000
+bench/java-comparison/run.sh --skip-java            # the cdm-rs half only; no Spark needed
+```
 
-When it is run, the result belongs here, alongside the exact hardware, dataset, cluster topology,
-row count, both versions and both configurations. A throughput figure without its hardware is not a
-result.
+### What it is
 
-If the measured ratio comes in below 2×, that is a finding to publish and act on, not a number to
-quietly adjust.
+`bench/java-comparison/` holds three parts, deliberately separable:
+
+| Path | What it owns |
+|---|---|
+| `environment/` | Spark, the pinned Java CDM jar, the origin/target containers |
+| `workloads/` | The three datasets (`narrow`, `wide`, `collections`) and `METHODOLOGY.md`'s config-equivalence audit |
+| `run.sh` | The comparison itself: order, verification, timing, and the result documents |
+
+`.github/workflows/java-comparison.yml` runs it fortnightly on a free `ubuntu-latest` runner —
+4 vCPU, 16 GB RAM, ~14 GB free disk, no secrets, all OSS — and on `workflow_dispatch` with the
+workload, row count, repeat count and starting implementation as inputs.
+
+`run.sh` is a shell script rather than a `cargo xtask` subcommand because everything it does is
+process orchestration against things that are not Rust: `docker`, `spark-submit`, `cqlsh`, `nb5`,
+and two implementations invoked as binaries. Tier 2 is an xtask precisely because it drives the
+library in process and can assert on typed results; tier 3 drives no library at all. Putting a
+workspace build on the critical path of a benchmark that times a *released* binary is the concrete
+cost, and having to compile before it can report that Spark is missing is the concrete symptom.
+
+### The four things that make the number mean anything
+
+**Fresh containers per implementation.** Not one pair reused across both runs. Whichever ran second
+would read origin out of a warm page cache and write into a target still holding the first run's
+SSTables and its compaction backlog. Both effects favour the second runner, and both are large
+enough to fabricate the entire claim on their own. So the nodes are destroyed and recreated, the
+schema recreated and the data reseeded, for every measured run — which costs a minute of container
+startup per run and is not negotiable.
+
+**Order is alternated and recorded.** `--first` fixes which implementation goes first; the default,
+`auto`, alternates on the repeat index, so `--repeats 2` covers both orders in one invocation. A
+single-repeat scheduled run has nothing to alternate within, so the starting side comes from the
+ISO week number and consecutive fortnightly runs swap. Every result carries `order_index` — 0 for
+the side that ran first — so the question can be asked of the data afterwards rather than assumed
+away.
+
+**Cold and steady-state are reported separately, never conflated.** Cold is the whole invocation:
+process spawn, JVM boot, `SparkSession` creation, executor startup, the migration, exit. Steady
+state subtracts a startup floor which is *measured, not assumed* — the same workload with zero rows
+in it, run by the same procedure on both sides. That is a complete invocation minus only the row
+work.
+
+  Subtracting an empty run slightly over-estimates startup, because scanning the ranges of an empty
+  table is not free. The direction is deliberate: over-estimating startup shortens the steady-state
+  window and so raises the reported steady-state rate, by more for the implementation with the
+  larger startup — which is Java. The bias works against cdm-rs's ratio, never for it. The
+  alternative, grepping a marker out of Spark's log4j output, would make the measurement depend on
+  a logging configuration neither implementation guarantees.
+
+**Both targets are verified before either number is reported.** Two checks per run: an independent
+`SELECT COUNT(*)` through `cqlsh`, which must agree with the job's own write counter — cdm-rs's
+`MET-033` summary or Java's `Final Write Record Count` line, which cdm-rs reproduces character for
+character (`COMPAT-004`) — and a full `cdm validate`, comparing both sides row by row and column by
+column. A run whose target does not match is recorded with `status: "unverified"` and is excluded
+from every aggregate. This is the same rule `crates/cdm-testkit/src/macrobench.rs` applies at tier
+2: a throughput figure from a lossy migration measures nothing. Note the one asymmetry, which is
+stated rather than hidden: `validate` is cdm-rs's comparator on both sides. It is independent of
+Java CDM's writer and of cdm-rs's *migrate* path, but not of cdm-rs itself — the `COUNT(*)` is the
+part that depends on neither implementation.
+
+### What it emits
+
+One JSON document per run under `runs/`, `comparison.json` aggregating them, and `results.md`
+rendered *from* that JSON so the prose and the machine-readable form cannot drift apart. The
+workflow uploads the whole directory as an artefact on every run, including a failed one, and puts
+`results.md` in the job summary.
+
+```jsonc
+{
+  "schema": "cdm-rs.java-comparison.run/v1",
+  "workload": "narrow",
+  "implementation": "cdm-rs",            // or "java-cdm"
+  "version": "cdm 0.1.0",                // or the pinned jar
+  "status": "ok",                        // ok | unverified | failed | unavailable
+  "note": null,                          // why, whenever status is not "ok"
+  "repeat": 0,
+  "order_index": 0,                      // 0 = ran first in this pair
+  "rows_expected": 100000,
+  "rows_written": 100000,                // the job's own counter
+  "origin_row_count": 100000,            // independent SELECT COUNT(*)
+  "target_row_count": 100000,            // independent SELECT COUNT(*)
+  "verification": { "method": "…", "validate": "clean", "unrepaired_differences": 0 },
+  "verified": true,
+  "cold_wall_clock_secs": 71.204,
+  "startup_secs": 43.918,                // measured, not assumed
+  "steady_state_secs": 27.286,
+  "cold_rows_per_sec": 1404.42,
+  "steady_rows_per_sec": 3664.86,
+  "started_at": "…Z", "finished_at": "…Z",
+  "properties_sha256": "…",              // the config both sides were handed
+  "properties_equivalence": "file",      // "file" = byte-identical; "mapped" = see below
+  "environment": { "cpus": 4, "memory_bytes": …, "disk_free_bytes": …, "cpu_model": "…",
+                   "cassandra_image": "…", "spark": "…", "java": "…", "java_cdm": "…",
+                   "cdm_rs_version": "…", "cdm_rs_commit": "…", "ci_run": "…" }
+}
+```
+
+`comparison.json` adds `cold_ratio` and `steady_ratio` per workload — **and only where both sides
+produced a verified run.** A failed Java run, an unverified target or a missing steady state
+produces `null` and a sentence naming what is missing. A ratio computed against a partial run is
+not a weaker result, it is a wrong one.
+
+With `--repeats N > 1` the aggregate is the median of each side's verified runs, computed
+identically for both, and `comparison.json` says so in its `aggregate` field. There is no best-of-N
+anywhere, no retry, and no fallback that would give one implementation a second attempt the other
+did not get.
+
+### How it degrades
+
+The Java side is optional to the harness and mandatory to the claim. If Spark will not start, the
+jar is missing or the version triple is wrong, the run is recorded as `status: "unavailable"` with
+the reason, the cdm-rs half is still measured and published, and **no ratio is emitted**. The
+workflow does not fail: it never fails on a number, only when the harness itself breaks.
+
+`run.sh` talks to the other two directories through three seams, each of which prefers the
+sibling's script and falls back to something self-contained, so a checkout with neither still gives
+`--skip-java` a working cdm-rs half. Where the Java seam is `submit-migrate.sh`, which builds its
+own properties from a template, the workload's settings are carried across as the environment
+variables that script documents and the result records `properties_equivalence: "mapped"` rather
+than `"file"` — configured alike, not byte-identical, and the file says which.
+
+### Results
+
+**Empty. Nothing has been measured yet.** The harness, the workflow and the schedule exist as of
+this commit; the first scheduled run — or the first `workflow_dispatch` — populates this section.
+
+When it does, what goes here is the table from `results.md` with the runner's CPU, RAM and free
+disk, the row count, both versions, both configurations and the artefact link. A throughput figure
+without its hardware is not a result.
+
+Two things are settled in advance, so that neither is decided by whoever first sees the number:
+
+- **If the ratio comes in below 2×, it gets published as it is.** It is a finding to act on, not a
+  number to adjust, and not a reason to add a "best of five" to the runner.
+- **A free `ubuntu-latest` runner is not reference hardware.** Four shared vCPU hosting two
+  Cassandra nodes, a Spark JVM and the migrator is a small, contended machine, and the figures will
+  be lower than a dedicated box gives — for both implementations. What it buys is that the *ratio*
+  is measured on one machine, at one moment, with the same containers and the same dataset, which
+  is exactly what `NFR-004` asks for. Anyone with dedicated hardware can run the same script on it;
+  that result belongs here too, next to this one rather than instead of it.

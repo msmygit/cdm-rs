@@ -1,0 +1,233 @@
+name: Java comparison
+
+# Tier 3 of docs/BENCHMARKS.md: Java CDM and cdm-rs over the same dataset, on the same machine,
+# back to back (`NFR-004`, `TST-060`).
+#
+# This is the only job in the repository that measures the ≥ 2× claim rather than measuring cdm-rs
+# against itself. `bench.yml` tier 1 answers "did this commit make the hot path slower?" and tier 2
+# answers "how many rows per second, end to end?"; neither can answer "faster than what?", because
+# neither runs the other implementation.
+#
+# **It is not a gate.** It reports. It never fails a build over a throughput ratio, in either
+# direction — a ratio below 2× is a finding to publish, not a red check mark, and a workflow that
+# went red on it would be muted within a month. It fails only when the harness itself breaks:
+# containers that will not start, a dataset that did not load, a results file that was not written.
+# That distinction is what makes the number worth reading.
+#
+# Everything runs on a free `ubuntu-latest` runner — 4 vCPU, 16 GB RAM, ~14 GB free disk — with no
+# secrets and nothing but OSS. That is a modest machine and it is stated in every result document,
+# because a throughput figure without its hardware is not a result. It is also, deliberately, the
+# *same* modest machine for both implementations, which is the only property the claim needs.
+
+on:
+  schedule:
+    # 03:00 UTC on Saturdays. GitHub's cron has no fortnightly expression, so the schedule fires
+    # weekly and the `cadence` job below drops every other one; see the comment there for why the
+    # alternative — cutting the cadence in half by hand — loses the order alternation.
+    #
+    # Saturday because the runner pool is quietest then, and this job is more sensitive to
+    # co-tenancy than anything else in the repository: it is a wall-clock measurement of two
+    # processes that both want all four cores. 03:00 keeps it clear of `integration.yml` (03:00
+    # nightly, weekdays included), `bench.yml` (04:00) and `sit.yml` (04:30) — a benchmark that
+    # contends with another job for the same runner measures the contention.
+    - cron: "0 3 * * 6"
+  workflow_dispatch:
+    inputs:
+      workload:
+        description: "Workload: narrow, wide, collections, all, or a comma-separated list"
+        required: false
+        default: narrow
+        type: string
+      rows:
+        description: "Rows to migrate per workload"
+        required: false
+        default: "100000"
+        type: string
+      repeats:
+        description: "Repeats per workload. Above 1 the runner reports the median, identically for both sides"
+        required: false
+        default: "1"
+        type: string
+      first:
+        description: "Which implementation runs first: auto (alternates), cdm-rs, or java-cdm"
+        required: false
+        default: auto
+        type: choice
+        options: [auto, cdm-rs, java-cdm]
+
+# Never `pull_request`. Not for the usual secrets reason — this job has no secrets — but because
+# the measurement is meaningless on a shared, contended runner queue and because a pull request
+# must never be able to publish a number that describes `main`.
+
+concurrency:
+  # One at a time, and never cancelled mid-run. Two of these on one runner would each measure the
+  # other, and killing one part way leaves two Cassandra containers holding 2 GiB of RAM with
+  # nothing left to run the teardown.
+  group: java-comparison
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  cadence:
+    # The fortnightly gate. GitHub cron cannot express "every other Saturday", and the obvious
+    # workaround — halving the cadence to monthly — is worse: `run.sh --first auto` alternates the
+    # order on the ISO week number, so consecutive runs are supposed to swap which implementation
+    # goes first. Dropping odd weeks preserves that alternation exactly; running monthly would not.
+    #
+    # A manual dispatch always runs: someone who asked for it does not want to be told to come back
+    # next week.
+    name: Should this run?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          week="$(date -u +%V)"
+          # 10# forces base 10: ISO weeks 08 and 09 are not octal, and bash would otherwise refuse
+          # them with "value too great for base" for two weeks a year.
+          if [ $(( 10#$week % 2 )) -eq 0 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Fortnightly schedule: ISO week $week is an odd week, so this run is skipped."
+          fi
+
+  compare:
+    name: Java CDM vs cdm-rs
+    needs: cadence
+    if: needs.cadence.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    # Five and a half hours against GitHub's six-hour ceiling. Generous on purpose: a default
+    # `narrow` run is well under an hour, but a dispatch with `--workload all --repeats 2` is
+    # twelve measured runs plus twelve pairs of cold Cassandra containers, and the failure this
+    # budget must not cause is a job killed with results collected and never uploaded. The
+    # remaining half hour is the margin in which the "always" artefact upload still happens.
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Java CDM 6.x needs a JDK 17 or newer, because Spark 4.x binaries are compiled with it.
+      # `environment/` pins the exact version it wants and may install its own; this is the floor
+      # that makes `java -version` in the fingerprint meaningful even when it does not.
+      - uses: actions/setup-java@v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # A `ubuntu-latest` runner starts with ~14 GB free and the image carries several gigabytes of
+      # toolchains this job never uses. Two Cassandra containers, a Spark distribution, the CDM jar
+      # and a dataset fit comfortably; a dataset three times larger, dispatched by hand, does not.
+      # Reclaiming first turns "out of disk half way through the second workload" — which looks
+      # exactly like a slow migration until you read the log — into headroom.
+      - name: Reclaim disk
+        shell: bash
+        run: |
+          before="$(df -BG --output=avail / | tail -1 | tr -d 'G ')"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost || true
+          sudo docker image prune --all --force > /dev/null || true
+          after="$(df -BG --output=avail / | tail -1 | tr -d 'G ')"
+          echo "Free disk: ${before}G before, ${after}G after."
+
+      # The binary under test, built the way a user gets it. `--profile dist` is what
+      # `just release` builds and what the release workflow ships; a `--release` build with a
+      # different LTO or codegen-units setting would be a fourth configuration nobody publishes.
+      - name: Build cdm
+        shell: bash
+        run: cargo build --profile dist --bin cdm
+
+      # jq assembles every result document; nosqlbench loads the datasets when `workloads/` has no
+      # `seed.sh` of its own. Both are best-effort by design: the runner degrades to a clear
+      # message when a seeding seam is missing rather than inventing a dataset.
+      - name: Install jq and nosqlbench
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+          if [ ! -x bench/java-comparison/workloads/seed.sh ]; then
+            sudo curl -fsSL -o /usr/local/bin/nb5 \
+              https://github.com/nosqlbench/nosqlbench/releases/latest/download/nb5 || true
+            sudo chmod +x /usr/local/bin/nb5 || true
+            nb5 --version || echo "::warning::nosqlbench is unavailable; the runner will say so and record no dataset."
+          fi
+
+      # Spark and the pinned Java CDM jar. Owned by `bench/java-comparison/environment/`; this step
+      # only invokes whatever that directory offers. It must not fail the job: an environment that
+      # cannot be prepared is exactly the case the runner is built to report, with the cdm-rs half
+      # of the measurement still collected and the Java half recorded as unavailable.
+      - name: Prepare the Java CDM environment
+        id: environment
+        shell: bash
+        continue-on-error: true
+        run: |
+          if [ -x bench/java-comparison/environment/setup.sh ]; then
+            bench/java-comparison/environment/setup.sh
+          elif [ -x bench/java-comparison/environment/build-image.sh ]; then
+            bench/java-comparison/environment/build-image.sh
+          else
+            echo "::warning::No environment setup script; the Java side will be reported as unavailable."
+          fi
+
+      # `shell: bash` is load-bearing on every step in this file, and especially here. GitHub's
+      # default shell is `bash -e` WITHOUT `pipefail`, so a runner that died half way through a
+      # pipeline would exit 0 and the job would publish a truncated results file as a result. That
+      # exact bug was found and fixed in `bench.yml`; this is the same trap.
+      - name: Run the comparison
+        shell: bash
+        run: |
+          bench/java-comparison/run.sh \
+            --workload "${{ inputs.workload || 'narrow' }}" \
+            --rows "${{ inputs.rows || '100000' }}" \
+            --repeats "${{ inputs.repeats || '1' }}" \
+            --first "${{ inputs.first || 'auto' }}" \
+            --out "$GITHUB_WORKSPACE/java-comparison-results"
+
+      # The table goes in the job summary so the result is readable without downloading anything.
+      # Rendered by the runner, not here: the summary and the JSON are the same document, and a
+      # second renderer is a second chance for them to disagree.
+      - name: Publish the table to the job summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -r java-comparison-results/results.md ]; then
+            cat java-comparison-results/results.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The runner produced no results.md — the harness failed before it measured anything." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # `always()`, including on failure: a run that died half way still holds the Spark log and
+      # the container logs that say why, and those are the whole diagnostic. Ninety days because
+      # the schedule is fortnightly — a 30-day default would leave two data points.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: java-comparison-${{ github.run_id }}
+          path: java-comparison-results/
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Explain a failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "::notice::This job failing means the HARNESS broke, never that cdm-rs was slow."
+          echo "::notice::Check in this order:"
+          echo "  1. the artefact's logs/ — a Spark NoSuchMethodError on scala.runtime.Statics"
+          echo "     means the jar and the Spark distribution were compiled against different"
+          echo "     Scala versions, which is pinned in environment/versions.env;"
+          echo "  2. runs/*.json — a run with status 'unverified' migrated a different number of"
+          echo "     rows than it seeded, which voids its throughput figure by design;"
+          echo "  3. a Cassandra container that exited during startup is almost always the heap:"
+          echo "     two nodes plus a Spark driver have to fit in 16 GB."
