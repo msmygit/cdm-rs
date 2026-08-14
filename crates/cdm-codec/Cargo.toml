@@ -26,4 +26,11 @@ serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "conversion"
+harness = false

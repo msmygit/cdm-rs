@@ -236,6 +236,7 @@ the mapping from every Java class to its Rust home.
 | [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md) | Requirement → crate → test → PR matrix, CI-enforced |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | The phased, PR-by-PR delivery plan |
 | [`docs/MIGRATION_FROM_JAVA.md`](docs/MIGRATION_FROM_JAVA.md) | Every intentional behavioural difference, and how to restore the old behaviour |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | How performance is measured, and what is not yet measured |
 | [`docs/adr/`](docs/adr/) | Architecture decision records |
 
 ## Contributing

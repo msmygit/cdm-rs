@@ -41,9 +41,14 @@ differential:
 cover:
     cargo llvm-cov --workspace --all-features --html --fail-under-lines 85
 
-# Benchmarks (TST-060).
+# Benchmarks (TST-060). See docs/BENCHMARKS.md for what these numbers do and do not prove.
 bench:
     cargo bench --workspace
+
+# A fast, low-fidelity benchmark pass for iterating. Too noisy to draw conclusions from; use
+# `just bench` for anything you intend to act on.
+bench-quick:
+    cargo bench --workspace -- --warm-up-time 0.3 --measurement-time 0.5 --sample-size 10
 
 # Regenerate every generated artefact (OPS-012).
 generate:

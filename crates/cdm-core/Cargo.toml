@@ -25,4 +25,11 @@ thiserror.workspace = true
 
 # `serde_json` proves the serde representations that `cdm-api` and the tracking store depend on.
 [dev-dependencies]
+criterion.workspace = true
 serde_json.workspace = true
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "token"
+harness = false
