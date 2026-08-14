@@ -90,7 +90,7 @@ zeroize = { version = "1", features = ["derive"] }
 # `sha1` backs the JKS keyed digest and the JKS key-protection stream cipher, both of which the
 # format defines as SHA-1 and which are used for nothing else.
 p12-keystore = "0.3"
-sha1 = "0.10"
+sha1 = "0.11"
 
 # --- CLI --------------------------------------------------------------------
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
