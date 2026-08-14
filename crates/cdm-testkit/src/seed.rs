@@ -17,7 +17,7 @@
 use std::fmt;
 
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// The environment variable that pins the seed, so a failure can be replayed.
 pub const SEED_ENV: &str = "CDM_TEST_SEED";
@@ -170,7 +170,7 @@ impl Drop for SeedGuard {
 /// caller's unit of reproducibility. Returns `None` for an empty range, which is the only way it
 /// can fail and is a caller error rather than a panic.
 pub(crate) fn choose(rng: &mut StdRng, len: usize) -> Option<usize> {
-    (len > 0).then(|| rng.gen_range(0..len))
+    (len > 0).then(|| rng.random_range(0..len))
 }
 
 // Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
@@ -187,7 +187,7 @@ mod tests {
 
     fn draw(seed: Seed, count: usize) -> Vec<u64> {
         let mut rng = seed.rng();
-        (0..count).map(|_| rng.gen()).collect()
+        (0..count).map(|_| rng.random()).collect()
     }
 
     #[test]

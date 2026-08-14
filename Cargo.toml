@@ -145,7 +145,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # --- utilities --------------------------------------------------------------
 governor = "0.7"
 parking_lot = "0.12"
-rand = "0.8"
+rand = "0.10"
 strsim = "0.11"
 humantime-serde = "1"
 num_cpus = "1"
