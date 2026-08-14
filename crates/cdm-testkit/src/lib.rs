@@ -21,6 +21,7 @@
 //! | [`session`] | [`TestSession`], [`MockSession`], [`TestRow`] | `TST-100` |
 //! | [`faults`] | [`FaultKind`], [`Fault`], [`FaultPlan`], [`FaultySession`] | `TST-040` |
 //! | [`sit`] | [`SitCase`], [`SitStep`], [`compare_counter_block`], [`compare_cqlsh`] | `TST-003` |
+//! | [`differential`] | [`compare`](differential::compare) | `TST-020`, `MET-005`, `MET-006` |
 //! | `macrobench` | `MacroBenchSpec`, `MacroBenchResult`, `run_macro_bench` | `TST-060`, `NFR-004` |
 //!
 //! The last row is behind the off-by-default `macrobench` feature, because it is the one thing
@@ -72,10 +73,13 @@
 //! - `TST-040` — [`FaultySession`], [`FaultPlan`], [`Fault`]
 //! - `TST-003` — [`sit`], and the ported cases in `tests/sit/`
 //! - `TST-060`, `NFR-004` — `macrobench` (feature-gated), and `tests/macrobench.rs`
+//! - `TST-020`, `MET-005`, `MET-006` — [`differential::compare`]; its CQL reader is behind the
+//!   `differential` feature for the same reason `macrobench` is behind its own
 
 pub mod containers;
 pub mod counters;
 pub mod data;
+pub mod differential;
 pub mod faults;
 #[cfg(feature = "macrobench")]
 pub mod macrobench;

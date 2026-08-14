@@ -35,8 +35,20 @@ bench = false
 # `cargo check --workspace --all-targets --all-features` proves it.
 #
 # See `ARCHITECTURE.md` §3.3.
+#
+# `differential` is the sibling of `macrobench`, off for the same reason and on the same terms
+# (TST-020). The differential harness has to read both target keyspaces back as *bytes*, which is
+# a `cdm-cql` job, but nothing else in the comparison engine is: the snapshot types, the byte
+# comparison and both counter-block comparisons in `src/differential/compare.rs` are driver-free
+# and compile with no features at all. Only `snapshot_target` is gated, so the default dependency
+# graph of this crate is again byte-for-byte unchanged.
+#
+# Note for whoever reconciles this with the documentation: `ARCHITECTURE.md` §3.3 currently says
+# `macrobench.rs` is *the only file* behind an optional edge. That sentence needs a second name in
+# it — this feature does not widen the graph, but it does widen that list.
 [features]
 macrobench = ["dep:cdm-config", "dep:cdm-cql", "dep:cdm-engine"]
+differential = ["dep:cdm-cql"]
 
 [dependencies]
 # Deliberately no `scylla` and no `cdm-cql`: only `cdm-cql` may depend on the driver
