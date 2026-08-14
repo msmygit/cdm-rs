@@ -17,7 +17,7 @@ use cdm_testkit::differential::compare::{
     compare_counter_blocks, compare_target_state, connect_target, snapshot_target, CompareOptions,
     DifferentialReport, FinalBlock, SnapshotSpec, TargetSnapshot,
 };
-use cdm_testkit::differential::{Corpus, CorpusTable};
+use cdm_testkit::differential::{snapshot_spec, Corpus, CorpusTable};
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// cdm-rs repository automation.
@@ -1082,31 +1082,6 @@ fn snapshot_targets(
     })
 }
 
-/// What to read from one corpus table, taken from the corpus's own column metadata.
-///
-/// Built from [`CorpusColumn::timestamp_eligible`] rather than from a rule inferred here. The
-/// corpus measured the three exclusions against `cassandra:5.0.9` and documents each: `WRITETIME`
-/// is rejected outright for a primary-key column, and is *accepted* for a counter and for a
-/// non-frozen collection — answering, for the collection, with a `list<bigint>` whose length is a
-/// function of the value rather than the `bigint` every other column returns. A second rule here
-/// would be a second source of truth, and the one that was not measured.
-///
-/// [`CorpusColumn::timestamp_eligible`]: cdm_testkit::differential::CorpusColumn::timestamp_eligible
-fn snapshot_spec(table: &CorpusTable) -> SnapshotSpec {
-    let mut spec = SnapshotSpec::new(table.spec().keyspace(), table.spec().table());
-    for column in table.key_columns() {
-        spec = spec.key_column(column.name());
-    }
-    for column in table.value_columns() {
-        spec = if column.timestamp_eligible() {
-            spec.value_column(column.name())
-        } else {
-            spec.value_column_without_timestamps(column.name())
-        };
-    }
-    spec
-}
-
 /// Renders a snapshot as the run's evidence: hex bytes, one column per line.
 ///
 /// Hex and never text, for `SEC-002`'s reason — the same one
@@ -1763,7 +1738,8 @@ mod tests {
     #[test]
     fn tst_020_both_sides_get_the_same_performance_settings() {
         let corpus = corpus();
-        let properties = rust_properties(&environment(), &corpus.tables()[0]);
+        let table = corpus.tables().first().expect("the corpus has tables");
+        let properties = rust_properties(&environment(), table);
         for setting in [
             DIFFERENTIAL_NUM_PARTS,
             DIFFERENTIAL_BATCH_SIZE,

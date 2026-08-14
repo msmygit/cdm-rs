@@ -36,6 +36,38 @@ pub use corpus::{
 
 use std::path::{Path, PathBuf};
 
+use crate::differential::compare::SnapshotSpec;
+
+/// What to read back from one corpus table, taken from the corpus's own column metadata.
+///
+/// The join between the two halves of this module, and the reason it is here rather than in the
+/// runner: the corpus states what it built and the comparator selects exactly that, so the
+/// translation between them belongs to neither and must exist only once. `xtask differential` and
+/// `tests/differential_corpus_it.rs` both go through this function, which is what makes the
+/// container test a test of what the nightly actually does.
+///
+/// Writetime and TTL are selected where — and only where —
+/// [`CorpusColumn::timestamp_eligible`](corpus::CorpusColumn::timestamp_eligible) says the server
+/// will answer with a `bigint`. That rule was *measured* against `cassandra:5.0.9`, and a second
+/// rule inferred here would be a second source of truth, and the one nobody measured. Note in
+/// particular that a column which is not timestamp-eligible still has its value compared byte for
+/// byte; only per-cell metadata the server will not report goes unasked.
+#[must_use]
+pub fn snapshot_spec(table: &CorpusTable) -> SnapshotSpec {
+    let mut spec = SnapshotSpec::new(table.spec().keyspace(), table.spec().table());
+    for column in table.key_columns() {
+        spec = spec.key_column(column.name());
+    }
+    for column in table.value_columns() {
+        spec = if column.timestamp_eligible() {
+            spec.value_column(column.name())
+        } else {
+            spec.value_column_without_timestamps(column.name())
+        };
+    }
+    spec
+}
+
 /// The `tests/differential/` directory, which holds the checked-in rendering of the corpus.
 ///
 /// Resolved from `CARGO_MANIFEST_DIR` rather than from the current directory, because `cargo test`
