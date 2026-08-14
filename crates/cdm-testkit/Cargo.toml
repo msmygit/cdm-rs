@@ -19,6 +19,25 @@ workspace = true
 [lib]
 bench = false
 
+# `macrobench` is off by default, and that is the whole design (TST-060, NFR-004).
+#
+# The tier-2 macro-benchmark has to drive the *real* migrate job, or it measures something other
+# than the product and is worthless. That needs `cdm-engine`, `cdm-cql` and `cdm-config`, which is
+# the exact edge `ARCHITECTURE.md` §3 forbids this crate: `cdm-cql` and `cdm-engine` both
+# dev-depend on `cdm-testkit`, so an unconditional edge would put the driver and the scheduler
+# underneath every crate's test build.
+#
+# Behind an off-by-default feature it does not. The default dependency graph of `cdm-testkit` is
+# byte-for-byte what it was, so nothing any other crate builds changes; only a caller that asks
+# for `--features macrobench` — `cargo xtask bench`, and the suite in `tests/macrobench.rs` —
+# resolves the extra edges. Cargo permits the resulting dev-dependency cycle (it is a cycle only
+# through a dev-dependency, which is not part of any crate's own build), and
+# `cargo check --workspace --all-targets --all-features` proves it.
+#
+# See `ARCHITECTURE.md` §3.3.
+[features]
+macrobench = ["dep:cdm-config", "dep:cdm-cql", "dep:cdm-engine"]
+
 [dependencies]
 # Deliberately no `scylla` and no `cdm-cql`: only `cdm-cql` may depend on the driver
 # (AGENTS.md, ARCHITECTURE.md §3), so the container fixture speaks to a node over a
@@ -27,6 +46,11 @@ bench = false
 cdm-codec.workspace = true
 cdm-core.workspace = true
 cdm-metrics.workspace = true
+
+# Only under `macrobench`; see the note above the `[features]` table.
+cdm-config = { workspace = true, optional = true }
+cdm-cql = { workspace = true, optional = true }
+cdm-engine = { workspace = true, optional = true }
 
 async-trait.workspace = true
 chrono.workspace = true

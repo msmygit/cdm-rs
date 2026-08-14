@@ -21,6 +21,12 @@
 //! | [`session`] | [`TestSession`], [`MockSession`], [`TestRow`] | `TST-100` |
 //! | [`faults`] | [`FaultKind`], [`Fault`], [`FaultPlan`], [`FaultySession`] | `TST-040` |
 //! | [`sit`] | [`SitCase`], [`SitStep`], [`compare_counter_block`], [`compare_cqlsh`] | `TST-003` |
+//! | `macrobench` | `MacroBenchSpec`, `MacroBenchResult`, `run_macro_bench` | `TST-060`, `NFR-004` |
+//!
+//! The last row is behind the off-by-default `macrobench` feature, because it is the one thing
+//! here that drives the real migrate job and therefore needs `cdm-engine` and `cdm-cql` — edges
+//! `ARCHITECTURE.md` §3 does not give this crate by default. See §3.3 there, and the note above
+//! `[features]` in this crate's `Cargo.toml`.
 //!
 //! # The three things worth knowing before using it
 //!
@@ -65,11 +71,14 @@
 //! - `TST-102` — [`ContainerRuntime`], [`skip_without_container_runtime!`], `cargo xtask it`
 //! - `TST-040` — [`FaultySession`], [`FaultPlan`], [`Fault`]
 //! - `TST-003` — [`sit`], and the ported cases in `tests/sit/`
+//! - `TST-060`, `NFR-004` — `macrobench` (feature-gated), and `tests/macrobench.rs`
 
 pub mod containers;
 pub mod counters;
 pub mod data;
 pub mod faults;
+#[cfg(feature = "macrobench")]
+pub mod macrobench;
 pub mod runtime;
 pub mod schema;
 pub mod seed;
@@ -83,6 +92,10 @@ pub use containers::{
 pub use counters::{counts, parse_final_block, parse_metrics_string, CounterExpectation};
 pub use data::{quote, DataGen, DataGenOptions, GeneratedRow};
 pub use faults::{Fault, FaultKind, FaultPlan, FaultySession, InjectedFault};
+#[cfg(feature = "macrobench")]
+pub use macrobench::{
+    run_macro_bench, run_macro_bench_or_skip, MacroBenchResult, MacroBenchSpec, BENCHER_NAME,
+};
 pub use runtime::{well_known_sockets, ContainerRuntime, NoContainerRuntime, RuntimeSource};
 pub use schema::{
     create_keyspace_statement, type_slug, ColumnKind, ColumnSpec, SchemaGen, TableSpec,
