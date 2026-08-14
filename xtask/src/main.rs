@@ -5,10 +5,19 @@
 
 mod traceability;
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+// The differential suite (`TST-020`) is the one task that talks to the comparison engine rather
+// than to a subprocess, so its types are imported rather than spelled out at every use.
+use cdm_testkit::differential::compare::{
+    compare_counter_blocks, compare_target_state, connect_target, snapshot_target, CompareOptions,
+    DifferentialReport, FinalBlock, SnapshotSpec, TargetSnapshot,
+};
+use cdm_testkit::differential::{Corpus, CorpusTable};
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// cdm-rs repository automation.
@@ -618,8 +627,21 @@ fn differential(
     let cdm_binary = build_cdm_binary(&root)?;
     run_environment_script(&env_dir, "build-image.sh", &[], &[])?;
 
-    let java = java_half(&env_dir, &environment, &generated, &out)?;
-    let rust = rust_half(&cdm_binary, &env_dir, &environment, &generated, &out)?;
+    // One runtime for the whole run. Both targets are read back over the native protocol rather
+    // than through `cqlsh` — see [`snapshot_targets`] for why that is not a preference — and the
+    // driver is async while this task is not.
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|e| anyhow::anyhow!("cannot start a tokio runtime to read the targets: {e}"))?;
+
+    let java = java_half(&env_dir, &environment, &generated, &out, &runtime)?;
+    let rust = rust_half(
+        &cdm_binary,
+        &env_dir,
+        &environment,
+        &generated,
+        &out,
+        &runtime,
+    )?;
 
     if keep_clusters {
         println!(
@@ -662,13 +684,10 @@ fn docker_answers() -> Result<(), String> {
 }
 
 /// Builds the seeded corpus (`TST-020`).
-fn generate_corpus(
-    corpus: CorpusChoice,
-    seed: cdm_testkit::Seed,
-) -> anyhow::Result<cdm_testkit::differential::Corpus> {
+fn generate_corpus(corpus: CorpusChoice, seed: cdm_testkit::Seed) -> anyhow::Result<Corpus> {
     let built = match corpus {
-        CorpusChoice::Full => cdm_testkit::differential::Corpus::full(seed),
-        CorpusChoice::Smoke => cdm_testkit::differential::Corpus::smoke(seed),
+        CorpusChoice::Full => Corpus::full(seed),
+        CorpusChoice::Smoke => Corpus::smoke(seed),
     };
     built.map_err(|e| {
         anyhow::anyhow!(
@@ -683,56 +702,90 @@ fn generate_corpus(
 struct Half {
     /// How this half is named in messages and in the report.
     name: &'static str,
-    /// The target's contents, as `cqlsh` renders them.
-    target_state: String,
-    /// The `MET-006` final counter block, normalised to begin at `Final `.
+    /// One entry per corpus table, in the corpus's own order — which both halves iterate, so the
+    /// two `Vec`s line up positionally and the comparison never has to guess.
+    tables: Vec<TableEvidence>,
+}
+
+/// What one implementation left in one table, and the evidence that it got there.
+///
+/// One per table rather than one per half, because the corpus is two tables that migrate as two
+/// jobs: a `counter` may not share a table with anything else (`MIG-030`), so the counter table is
+/// its own `Migrate` and prints its own `MET-006` block.
+#[derive(Debug)]
+struct TableEvidence {
+    /// `keyspace.table`, as the corpus names it.
+    table: String,
+    /// The `MET-006` final counter block of the job that migrated it, normalised to begin at
+    /// `Final `.
     counter_block: String,
-    /// Rows the target actually holds, counted independently of anything either job claimed.
+    /// Rows the target actually holds, counted independently of anything the job claimed.
     target_rows: u64,
+    /// The target's contents as the server serialised them — never as anything rendered them.
+    snapshot: TargetSnapshot,
+}
+
+/// One finished job, before its target has been read back.
+struct JobRun<'a> {
+    /// The table it migrated.
+    table: &'a CorpusTable,
+    /// Everything it printed, which is where its counter block comes from.
+    output: String,
+    /// Where this job's evidence is written.
+    dir: PathBuf,
 }
 
 /// Runs Java CDM against a fresh pair of nodes and captures what it produced.
 fn java_half(
     env_dir: &Path,
     environment: &JavaEnvironment,
-    corpus: &cdm_testkit::differential::Corpus,
+    corpus: &Corpus,
     out: &Path,
+    runtime: &tokio::runtime::Runtime,
 ) -> anyhow::Result<Half> {
     let dir = out.join("java-cdm");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", dir.display()))?;
     prepare_clusters(env_dir, environment, corpus)?;
 
-    println!(
-        "differential: running Java CDM Migrate over {}",
-        corpus.table()
-    );
-    let outdir = path_argument(&dir)?;
-    // `submit-migrate.sh` owns the whole `spark-submit` line, including both workarounds. Every
-    // knob it exposes is set here rather than left to its defaults, so that this file is the one
-    // place a reader can see that the two implementations were configured alike.
-    let submitted = run_environment_script(
-        env_dir,
-        "submit-migrate.sh",
-        &[corpus.table(), outdir],
-        &[
-            ("CDM_NUM_PARTS", DIFFERENTIAL_NUM_PARTS),
-            ("CDM_BATCH_SIZE", DIFFERENTIAL_BATCH_SIZE),
-            ("CDM_FETCH_SIZE", DIFFERENTIAL_FETCH_SIZE),
-            ("CDM_RATELIMIT", DIFFERENTIAL_RATELIMIT),
-        ],
-    );
-    // The script's own output holds the counter block it greps out of Spark's log, so it is kept
-    // whether or not the run succeeded — a failed differential run is diagnosed from this file.
-    let log = dir.join("submit.log");
-    if let Ok(text) = &submitted {
-        write_file(&log, text)?;
+    let mut jobs = Vec::new();
+    for table in corpus.tables() {
+        let table_dir = job_directory(&dir, table)?;
+        let qualified = table.qualified_name();
+        println!("differential: running Java CDM Migrate over {qualified}");
+        let outdir = path_argument(&table_dir)?;
+        // `submit-migrate.sh` owns the whole `spark-submit` line, including both workarounds.
+        // Every knob it exposes is set here rather than left to its defaults, so that this file is
+        // the one place a reader can see that the two implementations were configured alike.
+        let submitted = run_environment_script(
+            env_dir,
+            "submit-migrate.sh",
+            &[qualified.as_str(), outdir],
+            &[
+                ("CDM_NUM_PARTS", DIFFERENTIAL_NUM_PARTS),
+                ("CDM_BATCH_SIZE", DIFFERENTIAL_BATCH_SIZE),
+                ("CDM_FETCH_SIZE", DIFFERENTIAL_FETCH_SIZE),
+                ("CDM_RATELIMIT", DIFFERENTIAL_RATELIMIT),
+            ],
+        );
+        // The script's own output holds the counter block it greps out of Spark's log, so it is
+        // kept whether or not the run succeeded — a failed run is diagnosed from this file.
+        let log = table_dir.join("submit.log");
+        if let Ok(text) = &submitted {
+            write_file(&log, text)?;
+        }
+        let output = submitted.map_err(|e| {
+            anyhow::anyhow!(
+                "Java CDM's spark-submit failed for {qualified}: {e}\nsee {}",
+                log.display()
+            )
+        })?;
+        jobs.push(JobRun {
+            table,
+            output,
+            dir: table_dir,
+        });
     }
-    let text = submitted.map_err(|e| {
-        anyhow::anyhow!("Java CDM's spark-submit failed: {e}\nsee {}", log.display())
-    })?;
 
-    finish_half("java-cdm", &text, environment, corpus, &dir)
+    capture_half("java-cdm", environment, corpus, &jobs, runtime)
 }
 
 /// Runs cdm-rs against a fresh pair of nodes and captures what it produced.
@@ -740,53 +793,103 @@ fn rust_half(
     cdm_binary: &Path,
     env_dir: &Path,
     environment: &JavaEnvironment,
-    corpus: &cdm_testkit::differential::Corpus,
+    corpus: &Corpus,
     out: &Path,
+    runtime: &tokio::runtime::Runtime,
 ) -> anyhow::Result<Half> {
     let dir = out.join("cdm-rs");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", dir.display()))?;
     prepare_clusters(env_dir, environment, corpus)?;
 
-    let properties = dir.join("cdm.properties");
-    write_file(&properties, &rust_properties(environment, corpus.table()))?;
+    let mut jobs = Vec::new();
+    for table in corpus.tables() {
+        let table_dir = job_directory(&dir, table)?;
+        let qualified = table.qualified_name();
+        let properties = table_dir.join("cdm.properties");
+        write_file(&properties, &rust_properties(environment, table))?;
 
-    println!(
-        "differential: running cdm-rs migrate over {}",
-        corpus.table()
-    );
-    // Run from the output directory: `VAL-012`'s diff log defaults to `cdm_logs/cdm_diff.log`
-    // relative to the working directory, and a run started from the repository root would leave
-    // one in the source tree.
-    let output = Command::new(cdm_binary)
-        .current_dir(&dir)
-        .arg("migrate")
-        .arg("--properties-file")
-        .arg(&properties)
-        .arg("--summary-out")
-        .arg(dir.join("summary.json"))
-        .output()
-        .map_err(|e| anyhow::anyhow!("cannot run `{} migrate`: {e}", cdm_binary.display()))?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let log = dir.join("migrate.log");
-    write_file(&log, &text)?;
-    // `CLI-004` reserves 2..5 for a run that never happened. Unlike Java CDM, cdm-rs's exit status
-    // is trustworthy — but it is checked *as well as* the counter block, not instead of it.
-    anyhow::ensure!(
-        output.status.code() == Some(0),
-        "cdm-rs migrate exited {:?}; see {}",
-        output.status.code(),
-        log.display()
-    );
+        println!("differential: running cdm-rs migrate over {qualified}");
+        // Run from the output directory: `VAL-012`'s diff log defaults to `cdm_logs/cdm_diff.log`
+        // relative to the working directory, and a run started from the repository root would
+        // leave one in the source tree.
+        let output = Command::new(cdm_binary)
+            .current_dir(&table_dir)
+            .arg("migrate")
+            .arg("--properties-file")
+            .arg(&properties)
+            .arg("--summary-out")
+            .arg(table_dir.join("summary.json"))
+            .output()
+            .map_err(|e| anyhow::anyhow!("cannot run `{} migrate`: {e}", cdm_binary.display()))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let log = table_dir.join("migrate.log");
+        write_file(&log, &text)?;
+        // `CLI-004` reserves 2..5 for a run that never happened. Unlike Java CDM, cdm-rs's exit
+        // status is trustworthy — but it is checked *as well as* the counter block, not instead.
+        anyhow::ensure!(
+            output.status.code() == Some(0),
+            "cdm-rs migrate over {qualified} exited {:?}; see {}",
+            output.status.code(),
+            log.display()
+        );
+        jobs.push(JobRun {
+            table,
+            output: text,
+            dir: table_dir,
+        });
+    }
 
-    finish_half("cdm-rs", &text, environment, corpus, &dir)
+    capture_half("cdm-rs", environment, corpus, &jobs, runtime)
 }
 
-/// Verifies one half completed and captures its target, given the job's own output.
+/// Verifies every job of one half completed, then reads that half's target.
+///
+/// The order is the point: nothing is read until every table has cleared
+/// [`verified_job`]'s three checks, because a target read after a job that lost rows would produce
+/// a snapshot that diffs entirely against the rows that are not there.
+fn capture_half(
+    name: &'static str,
+    environment: &JavaEnvironment,
+    corpus: &Corpus,
+    jobs: &[JobRun<'_>],
+    runtime: &tokio::runtime::Runtime,
+) -> anyhow::Result<Half> {
+    let mut verified = Vec::new();
+    for job in jobs {
+        verified.push(verified_job(name, job, environment)?);
+    }
+
+    let mut snapshots = snapshot_targets(environment, corpus, runtime)?;
+    let mut tables = Vec::new();
+    for (job, (counter_block, target_rows)) in jobs.iter().zip(verified) {
+        let table = job.table.qualified_name();
+        let snapshot = snapshots.remove(&table).ok_or_else(|| {
+            anyhow::anyhow!("{name}: no snapshot of {table} was taken, so it cannot be compared")
+        })?;
+        // The bytes that will be compared, written out as the run's evidence. Rendered from the
+        // snapshot rather than read a second time: an artefact produced by a different query than
+        // the comparison is an artefact that can disagree with the verdict beside it.
+        write_file(
+            &job.dir.join("target-state.txt"),
+            &render_snapshot(&snapshot),
+        )?;
+        println!(
+            "differential: {name} completed {table}, {target_rows} rows verified on the target"
+        );
+        tables.push(TableEvidence {
+            table,
+            counter_block,
+            target_rows,
+            snapshot,
+        });
+    }
+    Ok(Half { name, tables })
+}
+
+/// Proves one job finished, and returns its counter block and the target's row count.
 ///
 /// # Completion is proved three times over
 ///
@@ -801,101 +904,242 @@ fn rust_half(
 /// * **the write counter equals the corpus.** The counter block can only report what the job
 ///   believes.
 /// * **an independent `SELECT COUNT(*)` on the target equals the corpus.** This is the one check
-///   that does not take either implementation's word for anything.
-fn finish_half(
+///   that does not take either implementation's word for anything. It goes through `cqlsh`, which
+///   is the one place in this runner where rendered text is the right answer: a count is a number
+///   the server computed, not a value whose encoding is under test.
+fn verified_job(
     name: &'static str,
-    job_output: &str,
+    job: &JobRun<'_>,
     environment: &JavaEnvironment,
-    corpus: &cdm_testkit::differential::Corpus,
-    dir: &Path,
-) -> anyhow::Result<Half> {
-    let counter_block = normalised_counter_block(job_output).ok_or_else(|| {
+) -> anyhow::Result<(String, u64)> {
+    let table = job.table.qualified_name();
+    let counter_block = normalised_counter_block(&job.output).ok_or_else(|| {
         anyhow::anyhow!(
-            "{name} printed no `Final … Record Count` block (MET-006), so there is no evidence it \
-             ran to completion; see {}",
-            dir.display()
+            "{name} printed no `Final … Record Count` block (MET-006) for {table}, so there is no \
+             evidence it ran to completion; see {}",
+            job.dir.display()
         )
     })?;
-    write_file(&dir.join("counters.txt"), &format!("{counter_block}\n"))?;
+    write_file(&job.dir.join("counters.txt"), &format!("{counter_block}\n"))?;
 
-    let expected = corpus.row_count();
+    let expected = job.table.row_count();
     let errors = counter(&counter_block, "Error").unwrap_or(0);
     anyhow::ensure!(
         errors == 0,
-        "{name} reported {errors} error records. It may well have exited 0 anyway — Java CDM \
-         does — but a run that dropped rows cannot be compared against one that did not.\n{counter_block}"
+        "{name} reported {errors} error records migrating {table}. It may well have exited 0 \
+         anyway — Java CDM does — but a run that dropped rows cannot be compared against one that \
+         did not.\n{counter_block}"
     );
     let written = counter(&counter_block, "Write").ok_or_else(|| {
         anyhow::anyhow!(
-            "{name}'s counter block has no `Final Write Record Count`:\n{counter_block}"
+            "{name}'s counter block for {table} has no `Final Write Record Count`:\n{counter_block}"
         )
     })?;
     anyhow::ensure!(
         written == expected,
-        "{name} wrote {written} of the corpus's {expected} rows:\n{counter_block}"
+        "{name} wrote {written} of {table}'s {expected} rows:\n{counter_block}"
     );
 
-    let target_rows = count_target_rows(environment, corpus.table())?;
+    let target_rows = count_target_rows(environment, &table)?;
     anyhow::ensure!(
         target_rows == expected,
-        "{name} claims {written} rows written, and the target holds {target_rows} of the \
-         corpus's {expected}. The claim is not the evidence."
+        "{name} claims {written} rows written to {table}, and the target holds {target_rows} of \
+         the corpus's {expected}. The claim is not the evidence."
     );
-
-    let target_state = capture_target_state(environment, corpus.table())?;
-    write_file(&dir.join("target-state.txt"), &target_state)?;
-    println!("differential: {name} completed, {target_rows} rows verified on the target");
-
-    Ok(Half {
-        name,
-        target_state,
-        counter_block,
-        target_rows,
-    })
+    Ok((counter_block, target_rows))
 }
 
 /// Compares the two halves and writes the report that is this suite's product.
+///
+/// One [`DifferentialReport`] per corpus table, because each table is its own job and so has its
+/// own counter block: rolling them into one verdict would say "the run differs" where the useful
+/// statement is "the counter table's block differs and `all_types` is byte-identical".
 fn compare_halves(java: &Half, rust: &Half, out: &Path) -> anyhow::Result<()> {
     let report = out.join("report.txt");
+    anyhow::ensure!(
+        java.tables.len() == rust.tables.len(),
+        "{} migrated {} table(s) and {} migrated {}; there is nothing to compare them table by \
+         table with",
+        java.name,
+        java.tables.len(),
+        rust.name,
+        rust.tables.len()
+    );
 
-    // The one call whose exact shape belongs to the comparison engine in
-    // `crates/cdm-testkit/src/differential/compare.rs`. Everything above it produces the four
-    // pieces of evidence `TST-020` names — two target states and two counter blocks — as plain
-    // text on disk, so adapting to a different signature costs this statement and nothing else.
-    match cdm_testkit::differential::compare(
-        &java.target_state,
-        &java.counter_block,
-        &rust.target_state,
-        &rust.counter_block,
-    ) {
-        Ok(()) => {
-            write_file(
-                &report,
-                &format!(
-                    "TST-020: {} and {} produced identical target state and identical counter \
-                     blocks over {} rows.\n",
-                    java.name, rust.name, java.target_rows
-                ),
-            )?;
-            println!(
-                "differential: identical. {} rows, byte for byte, counter block included.",
-                java.target_rows
-            );
-            Ok(())
+    let mut rendered = String::new();
+    let mut differing: Vec<&str> = Vec::new();
+    let mut compared_rows = 0_u64;
+    for (java_table, rust_table) in java.tables.iter().zip(&rust.tables) {
+        anyhow::ensure!(
+            java_table.table == rust_table.table,
+            "the two halves are in different table order: {} against {}",
+            java_table.table,
+            rust_table.table
+        );
+
+        // The comparison engine, and nothing else. It takes two snapshots of raw cells and two
+        // parsed counter blocks; it never sees a rendering of either, which is the whole reason
+        // the targets are read over the native protocol above.
+        let state = compare_target_state(
+            &java_table.snapshot,
+            &rust_table.snapshot,
+            &CompareOptions::new(),
+        );
+        let counters = compare_counter_blocks(
+            &final_block(java.name, &java_table.table, &java_table.counter_block)?,
+            &final_block(rust.name, &rust_table.table, &rust_table.counter_block)?,
+        );
+        let table_report = DifferentialReport { state, counters };
+        let _ = writeln!(rendered, "--- {} ---\n{table_report}\n", java_table.table);
+        if !table_report.is_identical() {
+            differing.push(&java_table.table);
         }
-        Err(diff) => {
-            write_file(&report, &format!("{diff}\n"))?;
-            anyhow::bail!(
-                "TST-020: {} and {} disagree.\n{diff}\n\nThe report is {}, and it is this run's \
-                 product: unlike the tier-2 and tier-3 benchmarks, this suite is a gate. \
-                 Reproduce it with the flags in {}.",
-                java.name,
-                rust.name,
-                report.display(),
-                out.join("seed.txt").display()
-            )
+        compared_rows += java_table.target_rows;
+    }
+    write_file(&report, &rendered)?;
+
+    if differing.is_empty() {
+        println!(
+            "differential: identical. {compared_rows} rows across {} table(s), byte for byte, \
+             counter blocks included.",
+            java.tables.len()
+        );
+        return Ok(());
+    }
+    anyhow::bail!(
+        "TST-020: {} and {} disagree over {}.\n\n{rendered}\nThe report is {}, and it is this \
+         run's product: unlike the tier-2 and tier-3 benchmarks, this suite is a gate. Reproduce \
+         it with the flags in {}.",
+        java.name,
+        rust.name,
+        differing.join(", "),
+        report.display(),
+        out.join("seed.txt").display()
+    )
+}
+
+/// Parses one half's `MET-006` block, naming whose it was when it will not parse.
+fn final_block(name: &str, table: &str, block: &str) -> anyhow::Result<FinalBlock> {
+    FinalBlock::parse(block).map_err(|e| {
+        anyhow::anyhow!("{name}'s counter block for {table} does not parse: {e}\n{block}")
+    })
+}
+
+/// Reads every corpus table out of the target over the native protocol (`TST-020`).
+///
+/// # Why not `cqlsh`
+///
+/// Because `TST-020` asks for byte-identical target state, and `cqlsh` cannot answer that question:
+/// its output is decoded and then formatted, so a `varint` of `0x01` and one of `0x0001` both print
+/// as `1`, a `decimal` prints at whatever scale the formatter chose, and a `map` prints in the
+/// driver's iteration order. Every one of those is two different things on disk and one string on
+/// screen — and they are exactly the class of bug this suite exists to catch, several of which the
+/// corpus generates on purpose. A comparison over rendered text would call them identical and
+/// report a green run over data it never saw.
+///
+/// So the rows come back as raw cells through [`snapshot_target`], which is `cdm-cql`'s
+/// undeserialised view of a response frame: no codec, no decoding, nothing between the server's
+/// bytes and the comparison.
+///
+/// One session for both tables, opened after every job of this half has finished, and dropped
+/// before the clusters are torn down.
+fn snapshot_targets(
+    environment: &JavaEnvironment,
+    corpus: &Corpus,
+    runtime: &tokio::runtime::Runtime,
+) -> anyhow::Result<BTreeMap<String, TargetSnapshot>> {
+    let port: u16 = environment.native_port.parse().map_err(|e| {
+        anyhow::anyhow!(
+            "NATIVE_PORT={} in versions.env is not a port number: {e}",
+            environment.native_port
+        )
+    })?;
+    let specs: Vec<(String, SnapshotSpec)> = corpus
+        .tables()
+        .iter()
+        .map(|table| (table.qualified_name(), snapshot_spec(table)))
+        .collect();
+
+    runtime.block_on(async {
+        let session = connect_target(&environment.target_ip, port)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot connect to the target at {}:{port} to read it back: {e}. The two \
+                     nodes sit on the bench bridge network declared in versions.env, which has to \
+                     be routable from this process — on Linux it is, and on macOS it is not.",
+                    environment.target_ip
+                )
+            })?;
+        let mut snapshots = BTreeMap::new();
+        for (table, spec) in &specs {
+            let snapshot = snapshot_target(&session, spec)
+                .await
+                .map_err(|e| anyhow::anyhow!("cannot read {table} back from the target: {e}"))?;
+            snapshots.insert(table.clone(), snapshot);
+        }
+        Ok(snapshots)
+    })
+}
+
+/// What to read from one corpus table, taken from the corpus's own column metadata.
+///
+/// Built from [`CorpusColumn::timestamp_eligible`] rather than from a rule inferred here. The
+/// corpus measured the three exclusions against `cassandra:5.0.9` and documents each: `WRITETIME`
+/// is rejected outright for a primary-key column, and is *accepted* for a counter and for a
+/// non-frozen collection — answering, for the collection, with a `list<bigint>` whose length is a
+/// function of the value rather than the `bigint` every other column returns. A second rule here
+/// would be a second source of truth, and the one that was not measured.
+///
+/// [`CorpusColumn::timestamp_eligible`]: cdm_testkit::differential::CorpusColumn::timestamp_eligible
+fn snapshot_spec(table: &CorpusTable) -> SnapshotSpec {
+    let mut spec = SnapshotSpec::new(table.spec().keyspace(), table.spec().table());
+    for column in table.key_columns() {
+        spec = spec.key_column(column.name());
+    }
+    for column in table.value_columns() {
+        spec = if column.timestamp_eligible() {
+            spec.value_column(column.name())
+        } else {
+            spec.value_column_without_timestamps(column.name())
+        };
+    }
+    spec
+}
+
+/// Renders a snapshot as the run's evidence: hex bytes, one column per line.
+///
+/// Hex and never text, for `SEC-002`'s reason — the same one
+/// [`Redaction::Hex`](cdm_testkit::differential::compare::Redaction) gives — and because the whole
+/// claim being made is about bytes. A rendering that decoded them would be the thing this suite
+/// refuses to compare, kept as though it were the evidence.
+fn render_snapshot(snapshot: &TargetSnapshot) -> String {
+    let mut text = format!(
+        "# {} — {} row(s), keyed by {}\n# TST-020: the bytes the server returned, hex-encoded.\n",
+        snapshot.table(),
+        snapshot.len(),
+        snapshot.key_columns().join(", ")
+    );
+    for (key, row) in snapshot.rows() {
+        let rendered: Vec<String> = key.values().iter().map(ToString::to_string).collect();
+        let _ = writeln!(text, "({})", rendered.join(", "));
+        for (column, cell) in &row.cells {
+            let _ = writeln!(
+                text,
+                "  {column} = {} writetime={} ttl={}",
+                cell.value, cell.writetime, cell.ttl
+            );
         }
     }
+    text
+}
+
+/// The directory one table's job writes its evidence to.
+fn job_directory(half_dir: &Path, table: &CorpusTable) -> anyhow::Result<PathBuf> {
+    let dir = half_dir.join(table.spec().table());
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
 /// Destroys both nodes and recreates them, then seeds the origin from the corpus.
@@ -910,7 +1154,7 @@ fn compare_halves(java: &Half, rust: &Half, out: &Path) -> anyhow::Result<()> {
 fn prepare_clusters(
     env_dir: &Path,
     environment: &JavaEnvironment,
-    corpus: &cdm_testkit::differential::Corpus,
+    corpus: &Corpus,
 ) -> anyhow::Result<()> {
     clusters_down(env_dir);
     run_environment_script(env_dir, "clusters-up.sh", &[], &[])?;
@@ -930,20 +1174,70 @@ fn prepare_clusters(
         cqlsh(environment, container, host, &joined(schema))?;
     }
 
-    let inserts = corpus.insert_statements();
-    println!(
-        "differential: seeding the origin with {} row(s)",
-        corpus.row_count()
-    );
-    for chunk in inserts.chunks(CQLSH_STATEMENTS_PER_INVOCATION) {
-        cqlsh(
-            environment,
-            &environment.origin_container,
-            &environment.origin_ip,
-            &joined(chunk),
-        )?;
+    // Every table, not just the one under test: the counter table migrates as its own job
+    // (`MIG-030`) and an empty origin would give it an empty target on both sides, which compares
+    // identical and proves nothing.
+    for table in corpus.tables() {
+        let statements = seed_statements(table);
+        println!(
+            "differential: seeding the origin's {} with {} row(s)",
+            table.qualified_name(),
+            statements.len()
+        );
+        for chunk in statements.chunks(CQLSH_STATEMENTS_PER_INVOCATION) {
+            cqlsh(
+                environment,
+                &environment.origin_container,
+                &environment.origin_ip,
+                &joined(chunk),
+            )?;
+        }
     }
     Ok(())
+}
+
+/// The writetime every seeded origin row is written with, in microseconds since the epoch.
+///
+/// 2024-01-01T00:00:00Z, and the value itself is arbitrary. That it is *fixed* is not.
+///
+/// # Why the seeding has to state a timestamp at all
+///
+/// Both implementations propagate the origin's writetime onto the target by default:
+/// `schema.origin.writetime.automatic` is `true` in cdm-rs and
+/// `spark.cdm.schema.origin.column.writetime.automatic` is `true` in Java CDM, so each target row
+/// is written `USING TIMESTAMP <the largest writetime among the origin row's eligible columns>`.
+///
+/// The two halves seed two origins minutes apart. Left to the coordinator's clock those origins
+/// would hold the same bytes with different writetimes, both targets would faithfully carry their
+/// own origin's writetimes, and [`compare_target_state`] would report a `WRITETIME` difference on
+/// every eligible column of every row — a failure manufactured entirely by the harness, over the
+/// one quantity `MIG-020`/`FEA-040` most need compared.
+///
+/// Pinning the seed writetime removes the harness from the question. What is then compared is
+/// whether the two implementations *carry* an identical origin writetime identically, which is the
+/// claim. It does not weaken the comparison: [`TtlPolicy::Exact`] still applies, and a run where
+/// one side dropped the writetime, rounded it, or substituted its own clock still fails.
+///
+/// Counter tables are excluded because CQL forbids it: a counter update may not carry
+/// `USING TIMESTAMP`, which is the same reason `FEA-045` refuses the combination and the reason
+/// the corpus marks counter columns as not timestamp-eligible.
+///
+/// [`TtlPolicy::Exact`]: cdm_testkit::differential::compare::TtlPolicy::Exact
+const SEED_WRITETIME_MICROS: i64 = 1_704_067_200_000_000;
+
+/// One table's origin-seeding statements, with the pinned writetime where CQL allows one.
+fn seed_statements(table: &CorpusTable) -> Vec<String> {
+    table
+        .write_statements()
+        .iter()
+        .map(|statement| {
+            if table.is_counter_table() {
+                statement.clone()
+            } else {
+                format!("{statement} USING TIMESTAMP {SEED_WRITETIME_MICROS}")
+            }
+        })
+        .collect()
 }
 
 /// Joins statements into one `cqlsh` script, terminating any that is missing its semicolon.
@@ -979,7 +1273,26 @@ fn clusters_down(env_dir: &Path) {
 /// additionally needs `spark.cdm.schema.target.keyspaceTable`, which Java CDM defaults from the
 /// origin. Every setting that changes what a job *does* is identical, and identical by
 /// construction: both sides read the constants above.
-fn rust_properties(environment: &JavaEnvironment, keyspace_table: &str) -> String {
+///
+/// # The one place the two files legitimately differ
+///
+/// A counter table gets `schema.origin.{ttl,writetime}.automatic false`, and this is the two sides
+/// being made to *do* the same thing rather than to *say* the same thing. Neither implementation
+/// can write a counter with a timestamp — CQL forbids it — but they decline differently: Java CDM
+/// disables its `WritetimeTTL` feature silently when the origin is a counter table, while cdm-rs
+/// reports `FEA-045` and refuses the configuration. That divergence is recorded in
+/// `docs/MIGRATION_FROM_JAVA.md`; leaving cdm-rs to fail on it here would test the divergence
+/// rather than the migration, and would say nothing about whether the counters arrived intact.
+fn rust_properties(environment: &JavaEnvironment, table: &CorpusTable) -> String {
+    let keyspace_table = table.qualified_name();
+    let counter_rules = if table.is_counter_table() {
+        "\n# See the note above: a counter cannot be written with a timestamp or a TTL, and the two\n\
+         # implementations decline that combination differently (FEA-045).\n\
+         spark.cdm.schema.origin.column.ttl.automatic       false\n\
+         spark.cdm.schema.origin.column.writetime.automatic false\n"
+    } else {
+        ""
+    };
     let JavaEnvironment {
         origin_ip,
         target_ip,
@@ -1020,7 +1333,8 @@ fn rust_properties(environment: &JavaEnvironment, keyspace_table: &str) -> Strin
          spark.cdm.perfops.consistency.write               LOCAL_QUORUM\n\
          # Zero, as Java CDM defaults: a row that fails to migrate aborts the run rather than\n\
          # quietly shortening the target.\n\
-         spark.cdm.perfops.errorLimit                      0\n"
+         spark.cdm.perfops.errorLimit                      0\n\
+         {counter_rules}"
     )
 }
 
@@ -1223,24 +1537,6 @@ fn count_target_rows(environment: &JavaEnvironment, keyspace_table: &str) -> any
         .and_then(|table| table.rows.first())
         .and_then(|row| row.trim().parse::<u64>().ok())
         .ok_or_else(|| anyhow::anyhow!("cannot read a count out of cqlsh's output:\n{text}"))
-}
-
-/// Captures the target's contents as `cqlsh` renders them.
-///
-/// A full scan of a single node returns rows in token order, which is a function of the partition
-/// keys and the partitioner alone — so two nodes holding the same rows render them in the same
-/// order, whatever vnodes they happened to be assigned. `PAGING OFF` removes the one piece of
-/// interactive furniture that would otherwise appear part way down a long result.
-fn capture_target_state(
-    environment: &JavaEnvironment,
-    keyspace_table: &str,
-) -> anyhow::Result<String> {
-    cqlsh(
-        environment,
-        &environment.target_container,
-        &environment.target_ip,
-        &format!("PAGING OFF;\nSELECT * FROM {keyspace_table};\n"),
-    )
 }
 
 /// Extracts the `MET-006` final counter block from a job's output.

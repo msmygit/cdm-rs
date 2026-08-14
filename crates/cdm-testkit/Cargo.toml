@@ -45,7 +45,11 @@ bench = false
 #   test build would compile it and never call it.
 # * the **comparison engine** is driver-free too for the snapshot types, the byte comparison and
 #   both counter-block comparisons — but it has to read each target keyspace back as raw bytes,
-#   which is a `cdm-cql` job. Only `snapshot_target` is gated on that.
+#   which is a `cdm-cql` job. Only `snapshot_target` and `connect_target` are gated on that, and
+#   `connect_target` is why `differential` also pulls `cdm-config`: opening a session means naming
+#   a `CdmConfig`. That edge is optional in exactly the way `macrobench`'s is, so the default
+#   dependency graph of this crate is unchanged either way — which is the property the gating is
+#   for, not the length of the list.
 #
 # So the default dependency graph of this crate is again byte-for-byte unchanged.
 #
@@ -53,7 +57,7 @@ bench = false
 # now records this one beside it.
 [features]
 macrobench = ["dep:cdm-config", "dep:cdm-cql", "dep:cdm-engine"]
-differential = ["dep:cdm-cql"]
+differential = ["dep:cdm-config", "dep:cdm-cql"]
 
 [dependencies]
 # Deliberately no `scylla` and no `cdm-cql`: only `cdm-cql` may depend on the driver

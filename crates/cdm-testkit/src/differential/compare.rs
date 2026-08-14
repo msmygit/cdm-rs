@@ -1694,6 +1694,35 @@ fn ttl_of(bytes: Option<&[u8]>) -> Result<CellTime<i32>, CdmError> {
     }
 }
 
+/// Opens a session to one target node over the native protocol (`TST-020`).
+///
+/// The counterpart of [`snapshot_target`], and the reason it exists here rather than in the caller:
+/// `xtask` orchestrates the differential run but may not depend on `cdm-cql` — `ARCHITECTURE.md` §3
+/// keeps the driver behind that one crate — so the crate that owns the snapshot owns the connection
+/// as well. Behind the same off-by-default `differential` feature, on the same terms.
+///
+/// A default [`CdmConfig`](cdm_config::model::CdmConfig) with only the address changed: no
+/// authentication and no TLS, because this connects to the containerised node that
+/// `bench/java-comparison/environment/` starts, and a knob here that the two halves could be given
+/// differently is a knob that could explain a difference the harness then reports as a defect.
+///
+/// # Errors
+///
+/// Whatever [`cdm_cql::connect::connect`] reports: an unreachable node, or a configuration the
+/// driver rejects.
+#[cfg(feature = "differential")]
+// The driver's `build()` future is large and `connect` awaits it, exactly as in `macrobench`.
+#[allow(clippy::large_futures)]
+pub async fn connect_target(
+    host: &str,
+    port: u16,
+) -> Result<cdm_cql::connect::ClusterSession, CdmError> {
+    let mut config = cdm_config::model::CdmConfig::default();
+    config.connect.target.host = host.to_owned();
+    config.connect.target.port = port;
+    cdm_cql::connect::connect(&config, cdm_core::Side::Target).await
+}
+
 /// Reads a whole target table into a [`TargetSnapshot`] (`TST-020`).
 ///
 /// Behind the off-by-default `differential` feature, because it needs `cdm-cql` — see the module
