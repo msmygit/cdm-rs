@@ -561,9 +561,13 @@ invoke_implementation() {
     local impl="$1" properties="$2" log_file="$3" summary_file="$4" workload="$5"
     local started finished status=0
 
+    # Reset every global this function reports through. These outlive one call — the suite loops
+    # over workloads, implementations and repetitions — so a value left behind by an earlier run
+    # would be attributed to this one.
     RUN_STATUS="ok"
     RUN_SECONDS=""
     RUN_ROWS_WRITTEN="null"
+    RUN_ERROR_RECORDS="null"
 
     started="$(now_seconds)"
     case "$impl" in
@@ -596,6 +600,20 @@ invoke_implementation() {
             | tail -n1 | grep -oE '[0-9]+$' || true)"
         [ -n "$RUN_ROWS_WRITTEN" ] || RUN_ROWS_WRITTEN="null"
     fi
+
+    # The error counter, read for its diagnostic value rather than as the safety net.
+    #
+    # Java CDM exits 0 after losing data: a run that reported 34,454 error records and a short
+    # target still returned success with `errorLimit=0` (the shape `MIGRATION_FROM_JAVA.md` item 42
+    # records for `DiffData`). A harness that trusted `$?` would score lost rows as a faster run.
+    #
+    # It is not what protects the result — the independent `SELECT COUNT(*)` below does that, and
+    # catches loss whether or not either implementation admits to it. But "Java reported 135264
+    # error records" is a diagnosis, whereas "the counts disagree" is only a symptom, and the run
+    # that produces it costs hours to repeat.
+    RUN_ERROR_RECORDS="$(grep -oE '(Final )?Error Record Count: *[0-9]+' "$log_file" \
+        | tail -n1 | grep -oE '[0-9]+$' || true)"
+    [ -n "$RUN_ERROR_RECORDS" ] || RUN_ERROR_RECORDS="null"
     return 0
 }
 
@@ -715,6 +733,12 @@ run_one() {
         if [ "$target_rows" != "$ROWS" ] || [ "$rows_written" != "$ROWS" ]; then
             status="unverified"
             note="seeded ${ROWS}, the job counted ${rows_written} written, the target holds ${target_rows}"
+            # Name the cause when the job admitted to one. Java CDM's most likely reason for a
+            # short target is write failures it exited 0 on; saying so here saves the reader
+            # correlating this against a multi-megabyte Spark log.
+            if [ "${RUN_ERROR_RECORDS:-null}" != "null" ] && [ "${RUN_ERROR_RECORDS:-0}" -gt 0 ]; then
+                note="${note}; the job reported ${RUN_ERROR_RECORDS} error records"
+            fi
         fi
     fi
     if [ "$status" = "ok" ]; then

@@ -156,10 +156,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq jq
           if [ ! -x bench/java-comparison/workloads/seed.sh ]; then
-            sudo curl -fsSL -o /usr/local/bin/nb5 \
-              https://github.com/nosqlbench/nosqlbench/releases/latest/download/nb5 || true
-            sudo chmod +x /usr/local/bin/nb5 || true
-            nb5 --version || echo "::warning::nosqlbench is unavailable; the runner will say so and record no dataset."
+            # Version and checksum come from environment/versions.env, which is the single place
+            # every pin lives. `releases/latest/download/nb5` would make the data generator float:
+            # a new nosqlbench could change binding semantics or value distributions and move these
+            # numbers months apart with no commit to attribute it to.
+            # shellcheck disable=SC1091
+            . bench/java-comparison/environment/versions.env
+            if curl -fsSL -o /tmp/nb5 "$NB5_URL"; then
+              if echo "${NB5_SHA512}  /tmp/nb5" | sha512sum --check --status; then
+                sudo install -m 0755 /tmp/nb5 /usr/local/bin/nb5
+                nb5 --version
+              else
+                echo "::warning::nb5 checksum mismatch; refusing to seed with an unverified generator."
+                rm -f /tmp/nb5
+              fi
+            else
+              echo "::warning::nosqlbench is unavailable; the runner will say so and record no dataset."
+            fi
           fi
 
       # Spark and the pinned Java CDM jar. Owned by `bench/java-comparison/environment/`; this step

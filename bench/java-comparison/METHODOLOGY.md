@@ -321,7 +321,7 @@ stay so", so the two implementations are computing the same thing. Turning it of
 
 ## 4. Where the pinned values depart from the shared default, and why
 
-### 4.1 Rate limits: 1,000,000, not 20,000
+### 4.1 Rate limits: 100,000, not 20,000 and not 1,000,000
 
 Both implementations default to 20,000 rows/s per side and both honour it.
 
@@ -343,6 +343,23 @@ What turns that from an assumption into a measurement is the void condition: **t
 either implementation's observed rate comes within 20% of the ceiling.** The harness must check it
 and fail rather than report. If a future runner is fast enough that the check ever fires, the
 ceiling is raised and the run repeated — it is not a result.
+
+**Why 100,000 and not something larger.** This section originally specified 1,000,000, on the
+reasoning above that a higher ceiling is strictly safer. That reasoning was wrong, and standing up
+the environment disproved it. This limiter is also the **only backpressure in Java CDM's write
+path**: it does not slow down when the target stops keeping up, it fails writes. Run at 1,000,000,
+the same job reported `Final Error Record Count: 135264` and lost 24,409 rows to
+`NodeUnavailableException`.
+
+100,000 keeps the backpressure while staying far above anything this hardware reaches — the
+environment smoke test measured ~22,000 rows/s of Java steady state on a twelve-core laptop, and a
+four-vCPU runner will be well under that. The void condition still guards the case where it binds.
+
+The loss would not have been mistaken for throughput: `run.sh` cross-checks each job's write
+counter against an independent `SELECT COUNT(*)` and marks a short target `unverified`, which is
+excluded from every aggregate. But an unverified run is three hours of runner time spent to produce
+no number, so the ceiling that avoids the loss is better than the check that catches it. Both are
+kept. See `README-ENVIRONMENT.md` §7.
 
 One asymmetry survives whatever the value: Java's limiter is a Guava `RateLimiter` held per JVM,
 cdm-rs's is per process. Under `--master local[N]` there is one JVM, so they are the same scope. On a real Spark

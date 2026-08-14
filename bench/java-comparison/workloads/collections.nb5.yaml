@@ -20,7 +20,10 @@ description: |
   Changes from upstream `perf-iot.yaml`:
     1. the keyspace is templated, so the same file creates the origin and the target side;
     2. `sources` is a template parameter rather than an `<<sources:10000>>` macro;
-    3. upstream's `alerts` recipe has an unbalanced parenthesis (`ToString()));`) — removed.
+    3. upstream's `alerts` recipe has an unbalanced parenthesis (`ToString()));`) — removed;
+    4. the `insert-load` statement is wrapped across lines to stay inside the repository's
+       120-column yamllint limit. It sits in a block scalar and CQL ignores newlines, so the
+       statement sent to the cluster is unchanged.
 
     nb5 collections.nb5 default.schema keyspace=origin host=<origin>
     nb5 collections.nb5 default.schema keyspace=target host=<target>
@@ -102,5 +105,8 @@ blocks:
     ops:
       insert-load: |
         INSERT INTO TEMPLATE(keyspace,origin).sensor_data
-        (device_id, reading_date, reading_time, settings, device_location, alerts, temperature, humidity, pressure, wind_speed)
-        VALUES ({device_id}, {reading_date}, {reading_time}, {settings}, {latitude:{latitude}, longitude:{longitude}}, {alerts}, {temperature}, {humidity}, {pressure}, {wind_speed});
+        (device_id, reading_date, reading_time, settings, device_location,
+         alerts, temperature, humidity, pressure, wind_speed)
+        VALUES ({device_id}, {reading_date}, {reading_time}, {settings},
+                {latitude:{latitude}, longitude:{longitude}},
+                {alerts}, {temperature}, {humidity}, {pressure}, {wind_speed});
