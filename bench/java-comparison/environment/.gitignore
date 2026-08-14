@@ -1,0 +1,6 @@
+# Per-run artefacts from `submit-migrate.sh`: the Spark log, the generated properties file, the
+# generated passwd file and Spark's scratch directory. Logs are megabytes each and one is written
+# per run, so they are evidence to read and quote, not history to keep. The numbers that matter get
+# copied into README-ENVIRONMENT.md or docs/BENCHMARKS.md by hand, where they can be given their
+# hardware.
+out/

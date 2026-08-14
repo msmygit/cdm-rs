@@ -1,0 +1,61 @@
+# Java CDM 6.0.1 properties for the tier-3 comparison (`NFR-004`, `TST-060`).
+#
+# `submit-migrate.sh` expands the `@PLACEHOLDER@` tokens and writes the result next to the log it
+# produces, so every run keeps the exact properties it was given. Derived from CDM 6.0.1's own
+# `src/resources/cdm.properties`; every deviation from that file's defaults is commented below,
+# because an uncommented deviation in a benchmark configuration is indistinguishable from cheating.
+
+spark.cdm.connect.origin.host                     @ORIGIN_IP@
+spark.cdm.connect.origin.port                     @NATIVE_PORT@
+spark.cdm.connect.origin.username                 cassandra
+spark.cdm.connect.origin.password                 cassandra
+
+spark.cdm.connect.target.host                     @TARGET_IP@
+spark.cdm.connect.target.port                     @NATIVE_PORT@
+spark.cdm.connect.target.username                 cassandra
+spark.cdm.connect.target.password                 cassandra
+
+spark.cdm.schema.origin.keyspaceTable             @KEYSPACE_TABLE@
+
+spark.cdm.autocorrect.missing                     false
+spark.cdm.autocorrect.mismatch                    false
+
+# Off. `trackRun=true` makes CDM write a row per token range to `cdm_run_info`/`cdm_run_details` on
+# the target, which is real work the throughput number would then include. cdm-rs has an equivalent
+# (`TRK-*`); whichever way this is set, it must be set the same way on both sides. Off is the
+# cheaper and more comparable default -- a resumable run is a different measurement.
+spark.cdm.trackRun                                false
+
+# THE MOST IMPORTANT LINE IN THIS FILE.
+#
+# CDM's default is 20000, and it is a *rate limiter*, not a target: leave it and the job is capped
+# at 20,000 rows/second per side no matter what the hardware can do. A throughput benchmark run
+# against the default measures the limiter, produces a suspiciously round number, and would make
+# cdm-rs look arbitrarily faster.
+#
+# It is equally wrong to set it to infinity. This limiter is also the only backpressure in CDM's
+# write path: at 1,000,000 a 200,000-row job lost 135,264 records to
+# `NodeUnavailableException: No connection was available` against a single-node target. The value
+# has to be above what the hardware can do and below what the write path can survive -- and
+# checked, per dataset, by confirming the measured rate is well under it.
+spark.cdm.perfops.ratelimit.origin                @RATELIMIT@
+spark.cdm.perfops.ratelimit.target                @RATELIMIT@
+
+# Ring splits, i.e. Spark partitions, i.e. tasks. CDM's default of 5000 assumes a real cluster and
+# a real dataset; on one node with a few million rows it is 5000 tasks whose scheduling overhead
+# swamps their work. See README-ENVIRONMENT.md, "numParts": this is the one setting most likely to
+# be argued about, so it is a knob rather than a constant.
+spark.cdm.perfops.numParts                        @NUM_PARTS@
+
+spark.cdm.perfops.batchSize                       @BATCH_SIZE@
+spark.cdm.perfops.fetchSizeInRows                 @FETCH_SIZE@
+
+# Single-node clusters, so LOCAL_QUORUM and ONE are the same acknowledgement -- but only if the
+# keyspace is NetworkTopologyStrategy with the local DC named. Stated explicitly rather than
+# defaulted so that the value is in the record next to the number it produced.
+spark.cdm.perfops.consistency.read                LOCAL_QUORUM
+spark.cdm.perfops.consistency.write               LOCAL_QUORUM
+
+# Zero, CDM's default: any row that fails to migrate aborts the run. A benchmark that tolerates
+# errors is measuring how fast it can drop data.
+spark.cdm.perfops.errorLimit                      0
