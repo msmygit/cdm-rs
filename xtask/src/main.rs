@@ -1610,3 +1610,170 @@ fn remove_sit_node() {
         }
     }
 }
+
+// Tests may panic freely: a failed assertion *is* the reporting mechanism, and the no-panic rule
+// (ERR-004) exists to protect production paths, not test bodies.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// The smoke corpus: the same schema and the same edge rows as the full one, fewer filler rows.
+    fn corpus() -> Corpus {
+        Corpus::smoke(cdm_testkit::Seed::new(7)).unwrap()
+    }
+
+    /// A stand-in `versions.env`, for the property files that do not touch a cluster.
+    fn environment() -> JavaEnvironment {
+        JavaEnvironment {
+            origin_container: "cdm-bench-origin".to_owned(),
+            target_container: "cdm-bench-target".to_owned(),
+            origin_ip: "172.31.0.2".to_owned(),
+            target_ip: "172.31.0.3".to_owned(),
+            native_port: "9042".to_owned(),
+        }
+    }
+
+    /// The projection asks for `WRITETIME`/`TTL` exactly where the corpus says the server answers
+    /// with a `bigint`, and nowhere else.
+    ///
+    /// The rule itself is deliberately not restated here — restating it is the bug this guards
+    /// against. The corpus measured which columns are eligible against `cassandra:5.0.9`; this
+    /// asserts only that the runner asked the corpus rather than deciding for itself.
+    #[test]
+    fn tst_020_the_snapshot_spec_takes_its_timestamps_from_the_corpus() {
+        let corpus = corpus();
+        for table in corpus.tables() {
+            let spec = snapshot_spec(table);
+            let statement = spec.select_statement().unwrap();
+
+            for column in table.key_columns() {
+                assert!(
+                    !statement.contains(&format!("WRITETIME(\"{}\")", column.name())),
+                    "a primary-key column is not selectable with WRITETIME and the server rejects \
+                     the whole SELECT for asking: {statement}"
+                );
+            }
+            for column in table.value_columns() {
+                let asked = statement.contains(&format!("WRITETIME(\"{}\")", column.name()));
+                assert_eq!(
+                    asked,
+                    column.timestamp_eligible(),
+                    "`{}` is timestamp_eligible = {} but the projection {} its WRITETIME",
+                    column.name(),
+                    column.timestamp_eligible(),
+                    if asked { "asks for" } else { "omits" }
+                );
+            }
+        }
+    }
+
+    /// Every column of every corpus table is read, whether or not its writetime can be.
+    ///
+    /// An ineligible column is not an unread column: its *value* is still compared byte for byte,
+    /// and only the per-cell metadata the server will not report goes unasked.
+    #[test]
+    fn tst_020_every_corpus_column_is_projected() {
+        let corpus = corpus();
+        for table in corpus.tables() {
+            let spec = snapshot_spec(table);
+            assert_eq!(spec.key_columns().len(), table.key_columns().len());
+            assert_eq!(spec.value_columns().len(), table.value_columns().len());
+
+            let statement = spec.select_statement().unwrap();
+            for column in table.columns() {
+                assert!(
+                    statement.contains(&format!("\"{}\"", column.name())),
+                    "`{}` is a column of {} and is not in the snapshot projection: {statement}",
+                    column.name(),
+                    table.qualified_name()
+                );
+            }
+        }
+    }
+
+    /// Both tables are snapshotted, the counter table included.
+    ///
+    /// A corpus table nobody reads back is a corpus table the harness cannot see, and an empty
+    /// comparison of it reports "identical" as loudly as a real one.
+    #[test]
+    fn tst_020_the_counter_table_is_part_of_the_comparison() {
+        let corpus = corpus();
+        assert!(
+            corpus.tables().iter().any(CorpusTable::is_counter_table),
+            "the corpus is supposed to carry a counter table (MIG-030)"
+        );
+        for table in corpus.tables() {
+            let snapshot = snapshot_spec(table).empty_snapshot();
+            assert_eq!(snapshot.table(), table.qualified_name());
+        }
+    }
+
+    /// The seed pins a writetime, so that two origins seeded minutes apart are identical in the one
+    /// dimension a wall clock would otherwise make different — except on the counter table, where
+    /// CQL does not allow it.
+    #[test]
+    fn tst_020_seeding_pins_the_writetime_except_on_counters() {
+        let corpus = corpus();
+        for table in corpus.tables() {
+            let statements = seed_statements(table);
+            assert_eq!(statements.len(), table.write_statements().len());
+            for statement in &statements {
+                assert_eq!(
+                    statement.contains("USING TIMESTAMP"),
+                    !table.is_counter_table(),
+                    "{}: {statement}",
+                    table.qualified_name()
+                );
+            }
+        }
+    }
+
+    /// cdm-rs is told not to compute a TTL or a writetime for the counter table, because it refuses
+    /// that combination (`FEA-045`) where Java CDM silently disables it.
+    #[test]
+    fn tst_020_the_counter_job_disables_the_writetime_feature() {
+        let corpus = corpus();
+        let counters = corpus
+            .counter_table()
+            .expect("the corpus carries a counter table");
+        let properties = rust_properties(&environment(), counters);
+        assert!(
+            properties.contains("spark.cdm.schema.origin.column.writetime.automatic false"),
+            "{properties}"
+        );
+        assert!(
+            properties.contains("spark.cdm.schema.origin.column.ttl.automatic       false"),
+            "{properties}"
+        );
+
+        let primary = corpus
+            .tables()
+            .iter()
+            .find(|table| !table.is_counter_table())
+            .expect("the corpus carries the table under test");
+        let properties = rust_properties(&environment(), primary);
+        assert!(
+            !properties.contains("writetime.automatic"),
+            "an ordinary table must carry the origin's writetime (MIG-020):\n{properties}"
+        );
+    }
+
+    /// Both sides are configured from the same constants, so a difference cannot be one of them.
+    #[test]
+    fn tst_020_both_sides_get_the_same_performance_settings() {
+        let corpus = corpus();
+        let properties = rust_properties(&environment(), &corpus.tables()[0]);
+        for setting in [
+            DIFFERENTIAL_NUM_PARTS,
+            DIFFERENTIAL_BATCH_SIZE,
+            DIFFERENTIAL_FETCH_SIZE,
+            DIFFERENTIAL_RATELIMIT,
+        ] {
+            assert!(
+                properties.contains(setting),
+                "{setting} is not in:\n{properties}"
+            );
+        }
+    }
+}
