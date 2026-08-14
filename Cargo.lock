@@ -746,6 +746,7 @@ dependencies = [
  "cdm-codec",
  "cdm-core",
  "chrono",
+ "criterion",
  "num-bigint",
  "proptest",
  "regex",

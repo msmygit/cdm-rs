@@ -33,4 +33,11 @@ uuid.workspace = true
 # `proptest` is already the workspace's property-testing crate (`cdm-engine` dev-depends on it), so
 # this adds no new licence, advisory or supply-chain surface for `cargo deny` to weigh.
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "pipeline"
+harness = false
