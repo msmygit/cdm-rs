@@ -787,7 +787,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "cdm-codec",
+ "cdm-config",
  "cdm-core",
+ "cdm-cql",
+ "cdm-engine",
  "cdm-metrics",
  "chrono",
  "rand 0.8.7",

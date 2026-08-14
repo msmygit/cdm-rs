@@ -491,9 +491,9 @@ test, fails CI.
 | ID | Requirement | Home | Verified by | PR |
 |---|---|---|---|---|
 | `NFR-001` | Static binary for `linux-x86_64` (gnu + musl), `linux-aarch64`, `macos-x86_64`, `macos-aarch64`, `windows-x86_64` | `workspace` | `nfr_001_*` | #56 |
-| `NFR-002` | Cold start to first row read MUST be < 2 seconds for a single-table run | `workspace` | `nfr_002_*` | #55 |
+| `NFR-002` | Cold start to first row read MUST be < 2 seconds for a single-table run | `workspace`, `cdm-testkit::macrobench` (lower bound only; see `MacroBenchResult::cold_start`) | `nfr_002_*` | #55 |
 | `NFR-003` | Memory is bounded and computable from the configuration; no setting may cause unbounded growth | `workspace`, `cdm-engine::planner::report`, `cdm-cql::exec::scan`, `cdm-engine::jobs::guardrail::origin` | `nfr_003_*` | #17, #55 |
-| `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace` | `nfr_004_*` | #55 |
+| `NFR-004` | Throughput MUST be ≥ 2× Java CDM on the same hardware for the reference workload, measured by the benchmark suite (`TST-060`) | `workspace`, `cdm-testkit::macrobench` | `nfr_004_*` | #55 |
 | `NFR-005` | MSRV MUST be an explicitly declared, tested Rust version, bumped only in a minor release, and stated in `Cargo.toml`… | `workspace` | `nfr_005_*` | #57 |
 | `NFR-006` | Every public item in every crate MUST have rustdoc; `#![deny(missing_docs)]` on all library crates | `workspace` | `nfr_006_*` | #57 |
 | `NFR-007` | All timestamps in APIs, logs and reports MUST be RFC 3339 UTC. Writetimes remain microseconds since epoch (Cassandra… | `workspace` | `nfr_007_*` | #57 |
@@ -515,7 +515,7 @@ test, fails CI.
 | `TST-042` | **Distributed tests**: 3 nodes, one killed mid-range; assert lease reclaim, no double processing of counter ranges… | `cdm-testkit / tests` | `tst_042_*` | #34 |
 | `TST-050` | **Interface conformance**: the same logical operation issued via CLI, REST, MCP and A2A MUST produce identical results and… | `cdm-testkit / tests` | `tst_050_*` | #15 |
 | `TST-051` | **OpenAPI contract tests**: every endpoint MUST be exercised and its response validated against the schema (schemathesis or… | `cdm-testkit / tests` | `tst_051_*` | #15 |
-| `TST-060` | **Benchmarks**: `criterion` micro-benchmarks for the hot path (bind, convert, compare) and a reproducible macro-benchmark… | `crates/*/benches` | `tst_060_*` | #55 |
+| `TST-060` | **Benchmarks**: `criterion` micro-benchmarks for the hot path (bind, convert, compare) and a reproducible macro-benchmark… | `crates/*/benches`, `cdm-testkit::macrobench`, `cdm-testkit / tests/macrobench.rs` | `tst_060_*` | #55 |
 | `TST-070` | **Snapshot tests** (`insta`) for CLI output, generated CQL, generated config files, error messages, and the OpenAPI document | `cdm-testkit / tests` | `tst_070_*` | #10 |
 | `TST-080` | **Fuzzing** (`cargo-fuzz`) of the properties parser, the CQL identifier quoter, the JSON extractor, and the Java date-pattern… | `cdm-testkit / tests` | `tst_080_*` | #58 |
 | `TST-090` | Every rustdoc example compiles and runs, and code blocks in `docs/` are extracted and compiled | `cdm-testkit / tests` | `tst_090_*` | #57 |

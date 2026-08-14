@@ -168,6 +168,48 @@ graph TD
   edge** to "simplify" this: it puts the metric registry underneath the driver and is the change
   the trait exists to prevent.
 
+### 3.3 The one edge that is optional: `cdm-testkit --features macrobench`
+
+The graph above is the graph of a **default** build, and `cdm-testkit` sits at the bottom of it:
+no driver, no engine, only `cdm-core`, `cdm-codec` and `cdm-metrics`. That is what lets
+`cdm-cql`, `cdm-engine` and `cdm-track` all dev-depend on it without dragging the world into
+every test build.
+
+`TST-060`'s **tier-2 macro-benchmark** (`docs/BENCHMARKS.md` §1) is the single exception, and it
+is a genuine one rather than a convenience. It measures rows per second for a whole migration
+between two containerised clusters, which is only a measurement of cdm-rs if it drives the
+shipping code: `cdm-engine`'s scheduler and migrate job, `cdm-cql`'s executor and statements,
+`cdm-config`'s model. A harness built on a hand-rolled copy loop would report a number about the
+harness.
+
+```
+cdm-testkit --features macrobench  -->  cdm-engine, cdm-cql, cdm-config
+```
+
+Three properties make this acceptable rather than a hole in the rule:
+
+* **It is off by default.** Nothing in a default `cargo build`, `cargo test` or any other crate's
+  dev-dependency resolution sees these edges. The graph in §3 is unchanged for every consumer
+  that does not ask.
+* **The resulting cycle is a dev-dependency cycle, which Cargo permits.**
+  `cdm-engine → (dev) cdm-testkit → cdm-engine` is not a cycle in any crate's own build; only the
+  test targets close it. `cargo check --workspace --all-targets --all-features` is the standing
+  proof, and it is in CI.
+* **It is confined to one module.** `crates/cdm-testkit/src/macrobench.rs` is the only file
+  behind the feature. Nothing else in the crate may use `cdm-cql`, `cdm-engine` or `cdm-config`,
+  feature or no feature.
+
+**Do not widen it.** In particular, do not make the feature a default, and do not reach for
+`cdm-cql`'s session from the rest of `cdm-testkit` because it is now nominally available: the
+`TestSession` seam exists precisely so the fixtures stay driver-free, and `crates/cdm-cql/tests/
+testkit_fixture.rs` is where the two halves are meant to meet.
+
+The alternative considered and rejected was a separate `cdm-bench` crate. It would keep the graph
+literally untouched, at the cost of a sixteenth-plus-one crate whose entire contents are one
+module, and of splitting the container fixtures from the only other thing that starts containers.
+If tier 3 (`NFR-004`'s Java comparison) ever needs a home in the workspace, that trade reverses
+and the crate should be created then.
+
 ---
 
 ## 4. Configuration pipeline
