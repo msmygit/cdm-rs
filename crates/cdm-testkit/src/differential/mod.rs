@@ -81,3 +81,75 @@ pub fn corpus_root() -> PathBuf {
         .join("tests")
         .join("differential")
 }
+
+#[cfg(test)]
+mod tests {
+    // A failed assertion *is* the reporting mechanism in a test; the no-panic rule (`ERR-004`)
+    // protects production paths, not test bodies.
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    /// The smoke corpus: the same schema and the same edge rows as the full one, fewer filler rows.
+    fn corpus() -> Corpus {
+        Corpus::smoke(crate::Seed::new(7)).unwrap()
+    }
+
+    /// The projection asks for `WRITETIME`/`TTL` exactly where the corpus says the server answers
+    /// with a `bigint`, and nowhere else.
+    ///
+    /// The rule itself is deliberately not restated here — restating it is the bug this guards
+    /// against. The corpus measured which columns are eligible against `cassandra:5.0.9`; this
+    /// asserts only that the runner asked the corpus rather than deciding for itself.
+    #[test]
+    fn tst_020_the_snapshot_spec_takes_its_timestamps_from_the_corpus() {
+        let corpus = corpus();
+        for table in corpus.tables() {
+            let spec = snapshot_spec(table);
+            let statement = spec.select_statement().unwrap();
+
+            for column in table.key_columns() {
+                assert!(
+                    !statement.contains(&format!("WRITETIME(\"{}\")", column.name())),
+                    "a primary-key column is not selectable with WRITETIME and the server rejects \
+                     the whole SELECT for asking: {statement}"
+                );
+            }
+            for column in table.value_columns() {
+                let asked = statement.contains(&format!("WRITETIME(\"{}\")", column.name()));
+                assert_eq!(
+                    asked,
+                    column.timestamp_eligible(),
+                    "`{}` is timestamp_eligible = {} but the projection {} its WRITETIME",
+                    column.name(),
+                    column.timestamp_eligible(),
+                    if asked { "asks for" } else { "omits" }
+                );
+            }
+        }
+    }
+
+    /// Every column of every corpus table is read, whether or not its writetime can be.
+    ///
+    /// An ineligible column is not an unread column: its *value* is still compared byte for byte,
+    /// and only the per-cell metadata the server will not report goes unasked.
+    #[test]
+    fn tst_020_every_corpus_column_is_projected() {
+        let corpus = corpus();
+        for table in corpus.tables() {
+            let spec = snapshot_spec(table);
+            assert_eq!(spec.key_columns().len(), table.key_columns().len());
+            assert_eq!(spec.value_columns().len(), table.value_columns().len());
+
+            let statement = spec.select_statement().unwrap();
+            for column in table.columns() {
+                assert!(
+                    statement.contains(&format!("\"{}\"", column.name())),
+                    "`{}` is a column of {} and is not in the snapshot projection: {statement}",
+                    column.name(),
+                    table.qualified_name()
+                );
+            }
+        }
+    }
+}
