@@ -10,6 +10,7 @@
 - [Architecture](docs/ARCHITECTURE.md)
 - [Configuration properties](docs/generated/PROPERTIES.md)
 - [Benchmarks](docs/BENCHMARKS.md)
+- [Java-parity differential suite](docs/DIFFERENTIAL.md)
 - [API documentation (rustdoc)](api.md)
 
 # Migrating from Java CDM

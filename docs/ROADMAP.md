@@ -125,7 +125,7 @@ it would otherwise list, but not the rows), and `cdm serve` and `cdm mcp` on #41
 | #31 | `feat(feature): filter chain` | `FEA-050`..`FEA-054` |
 | #32 | `test(sit): port all 19 Java SIT cases` | `TST-003`, `S1` — **also restores the `push`/`schedule` triggers on `sit.yml`**. Not `pull_request`: the suite is minutes of container time for a signal `integration.yml` mostly gives first on every PR, and what it adds — a counter block that changes only when a job's accounting changes — is a claim about `main`. |
 | #33 | `test: property, fault-injection and resume suites` | `TST-010`, `TST-040`, `TST-041` |
-| #34 | `test: differential harness against Java CDM` | `TST-020`, `COMPAT-003`, `COMPAT-004` — **also restores the nightly schedule on `differential.yml`** |
+| #34 | `test: differential harness against Java CDM` | `TST-020`, `COMPAT-003`, `COMPAT-004` — **restores the nightly schedule on `differential.yml`**. Three parts: the seeded corpus and the comparator in `cdm-testkit --features differential`, and `cargo xtask differential`, which orchestrates them over the *existing* `bench/java-comparison/environment/` — the same Java CDM 6.0.1 / Spark 4.1.2 stack tier 3 measures throughput on, asked a different question. Fresh clusters per implementation, both halves proved complete before anything is compared (Java CDM exits 0 after losing data, so the counter block is the authority and an independent `SELECT COUNT(*)` is the arbiter), and the diff is uploaded whatever the outcome. **Unlike `bench.yml` and `java-comparison.yml`, this one gates.** Documented in `docs/DIFFERENTIAL.md` rather than `docs/BENCHMARKS.md` for exactly that reason. |
 | #35 | `feat: --compat-java behaviour bundle + migration guide` | `COMPAT-001`, `COMPAT-002` |
 
 > **Milestone `v0.9.0-parity`** — cut after #35. Success criteria S1, S2, S4 must be met. This is the
@@ -198,15 +198,15 @@ stream that SSE and the UI consume.
 ## CI gates that are deliberately dormant
 
 A workflow that cannot possibly pass is worse than no workflow: it trains reviewers to ignore red.
-Four workflows are therefore checked in but restricted to `workflow_dispatch` until the PR that
-gives them something to run. Each carries a comment naming that PR, and that PR is responsible for
-restoring the triggers.
+Four workflows were therefore checked in but restricted to `workflow_dispatch` until the PR that
+gave them something to run. Each carried a comment naming that PR, and that PR was responsible for
+restoring the triggers. **All four are now live.**
 
 | Workflow | Dormant until | Reason |
 |---|---|---|
 | ~~`integration.yml`~~ | ~~#16~~ — **live**, restored early by #2 | the driver spike gave it something to run before #16 did |
 | ~~`sit.yml`~~ | ~~#32~~ — **live** | restored by #32 to `push: [main]` plus a nightly schedule; deliberately not `pull_request`, because `integration.yml` already covers that ground faster |
-| `differential.yml` | #34 | no differential harness exists |
+| ~~`differential.yml`~~ | ~~#34~~ — **live** | restored by #34 to a nightly schedule plus `workflow_dispatch` with `corpus` and `seed` inputs. Deliberately neither `pull_request` nor `push: [main]`: it builds a 1.6 GiB Spark image and starts two pairs of Cassandra nodes, which is tens of minutes for a signal `integration.yml` mostly gives first — and unlike `sit.yml` it is far too slow to fire per merge. It is the only Java-comparison workflow that **gates** |
 | ~~`bench.yml`~~ | ~~#55~~ — **live** | restored by #55 to a nightly schedule plus an opt-in `bench` label on pull requests; a full workspace bench build is far too slow for every push. #55 adds a second, independent weekly job for the containerised macro-benchmark, which records throughput and gates nothing |
 
 `cargo xtask openapi --check` and `cargo xtask docs --check` run on every PR from now on, but verify

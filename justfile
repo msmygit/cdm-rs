@@ -33,9 +33,14 @@ it:
 sit:
     cargo xtask sit
 
-# Nightly differential suite against Java CDM (TST-020).
-differential:
-    cargo xtask differential
+# The Java-parity differential suite (TST-020). Runs Java CDM 6.0.1 and cdm-rs over one seeded
+# corpus on fresh clusters each and asserts byte-identical target state and identical counter
+# blocks. Needs Docker; skips cleanly without one. Tens of minutes, and unlike every other
+# Java comparison in this repository it is a GATE: a difference exits non-zero and the diff lands
+# in reports/differential/. See docs/DIFFERENTIAL.md. Pass --corpus smoke to iterate, and
+# --seed <n> to replay a failure exactly.
+differential *ARGS:
+    cargo xtask differential {{ARGS}}
 
 # Coverage, with the CI threshold applied.
 cover:

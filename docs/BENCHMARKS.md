@@ -300,6 +300,14 @@ bench/java-comparison/run.sh --skip-java            # the cdm-rs half only; no S
 
 `bench/java-comparison/` holds three parts, deliberately separable:
 
+> **`environment/` has a second consumer, and it is not a benchmark.** `TST-020`'s differential
+> suite runs both implementations over a hostile seeded corpus and asserts byte-identical target
+> state — the same containers, the same jar, the same `spark-submit` line, a different question.
+> It is documented in [`DIFFERENTIAL.md`](DIFFERENTIAL.md) rather than here for one reason: **it
+> gates**, where nothing in this document ever does. Anyone changing `environment/` is changing
+> both, and the differential suite will go red for it where tier 3 would only publish a footnote.
+
+
 | Path | What it owns |
 |---|---|
 | `environment/` | Spark, the pinned Java CDM jar, the origin/target containers |

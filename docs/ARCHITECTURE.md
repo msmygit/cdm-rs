@@ -204,6 +204,33 @@ Three properties make this acceptable rather than a hole in the rule:
 `TestSession` seam exists precisely so the fixtures stay driver-free, and `crates/cdm-cql/tests/
 testkit_fixture.rs` is where the two halves are meant to meet.
 
+### 3.3.1 A second optional feature that is not an exception: `--features differential`
+
+`TST-020`'s Java-parity corpus and comparator live behind `cdm-testkit --features differential`,
+and `xtask` opts into it the same way it opts into `macrobench`. The pattern is borrowed; the
+justification is not, and the difference is worth stating so that nobody reads this as §3.3 being
+widened.
+
+```
+cdm-testkit --features differential  -->  (no new edges)
+```
+
+**It adds no dependency edge.** The corpus emits CQL *statements*, and the comparator works on a
+captured target state and a counter block, both of which are text — so nothing here needs a driver,
+a scheduler or a configuration model. The feature exists only to keep a large generated artefact
+out of every other crate's test build: `cdm-cql`, `cdm-engine` and `cdm-track` all dev-depend on
+`cdm-testkit`, and none of them calls the corpus.
+
+The graph rule therefore still has exactly one exception, which is `macrobench`. If the comparator
+ever needs a live session, it takes `dep:cdm-cql` in `Cargo.toml` — visibly, in the feature table,
+where it becomes a second exception that has to be argued — rather than reaching for the driver
+from elsewhere in the crate.
+
+The orchestration lives in `xtask` rather than in the crate, for the reason `BENCHMARKS.md` §5
+gives for tier 3 being a shell script: it is process orchestration against `docker`, `spark-submit`
+and `cqlsh`, and it drives the `cdm` **binary** as a black box, exactly as it drives `spark-submit`
+on the Java side. See [`DIFFERENTIAL.md`](DIFFERENTIAL.md).
+
 The alternative considered and rejected was a separate `cdm-bench` crate. It would keep the graph
 literally untouched, at the cost of a sixteenth-plus-one crate whose entire contents are one
 module, and of splitting the container fixtures from the only other thing that starts containers.

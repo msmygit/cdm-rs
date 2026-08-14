@@ -37,15 +37,20 @@ bench = false
 # See `ARCHITECTURE.md` §3.3.
 #
 # `differential` is the sibling of `macrobench`, off for the same reason and on the same terms
-# (TST-020). The differential harness has to read both target keyspaces back as *bytes*, which is
-# a `cdm-cql` job, but nothing else in the comparison engine is: the snapshot types, the byte
-# comparison and both counter-block comparisons in `src/differential/compare.rs` are driver-free
-# and compile with no features at all. Only `snapshot_target` is gated, so the default dependency
-# graph of this crate is again byte-for-byte unchanged.
+# (TST-020). Two things are behind it, and only one of them needs the driver:
 #
-# Note for whoever reconciles this with the documentation: `ARCHITECTURE.md` §3.3 currently says
-# `macrobench.rs` is *the only file* behind an optional edge. That sentence needs a second name in
-# it — this feature does not widen the graph, but it does widen that list.
+# * the **corpus** emits CQL *statements* and is driver-free — but it is a large generated
+#   artefact (every CQL type, nesting depth 3, nulls, empty collections, edge-case values) whose
+#   only consumers are `cargo xtask differential` and `tests/differential/`. Every other crate's
+#   test build would compile it and never call it.
+# * the **comparison engine** is driver-free too for the snapshot types, the byte comparison and
+#   both counter-block comparisons — but it has to read each target keyspace back as raw bytes,
+#   which is a `cdm-cql` job. Only `snapshot_target` is gated on that.
+#
+# So the default dependency graph of this crate is again byte-for-byte unchanged.
+#
+# `ARCHITECTURE.md` §3.3 named `macrobench.rs` as the only file behind an optional edge; §3.3.1
+# now records this one beside it.
 [features]
 macrobench = ["dep:cdm-config", "dep:cdm-cql", "dep:cdm-engine"]
 differential = ["dep:cdm-cql"]
