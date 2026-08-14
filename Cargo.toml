@@ -125,7 +125,7 @@ bytes = "1"
 smallvec = "1"
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"
-zip = "2"
+zip = "8"
 
 # --- embedded storage (TRK-036) ---------------------------------------------
 # The SQLite tracking backend. `bundled` compiles the SQLite amalgamation that ships inside the
