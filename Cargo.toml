@@ -119,7 +119,7 @@ owo-colors = "4"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
-num-bigint = "0.4"
+num-bigint = "0.5"
 bigdecimal = "0.4"
 bytes = "1"
 smallvec = "1"
