@@ -1,19 +1,22 @@
 //! The Java-parity differential harness (`TST-020`).
 //!
 //! `TST-020` asks for a harness that runs cdm-rs and Java CDM against *the same seeded dataset*
-//! and asserts byte-identical target state and identical counter blocks. It has two halves that
-//! fail in completely different ways:
+//! and asserts byte-identical target state and identical counter blocks. It has three parts, and
+//! they fail in completely different ways — which is why they are separate modules:
 //!
-//! * the **corpus** ([`corpus`]) — what the two implementations are pointed at. Its failure mode
-//!   is silent: a type the corpus never generates is a type the harness never compares, and the
-//!   run still reports "identical". Every gap is therefore named in
-//!   [`Corpus::coverage`](corpus::Corpus::coverage) rather than left to be inferred from the
-//!   schema;
-//! * the **comparison engine** — how the two target states are reduced to a verdict. Its failure
-//!   mode is loud: a wrong comparison reports a difference that is not there.
+//! | Part | Where | Failure mode |
+//! |---|---|---|
+//! | the corpus | [`corpus`] | **silent**: a type the corpus never generates is a type the harness never compares, and the run still reports "identical" |
+//! | the comparison | [`compare`] | **loud**: a wrong comparison reports a difference that is not there |
+//! | the wiring | `xtask differential`, `.github/workflows/differential.yml` | runs both implementations nightly and feeds one to the other |
 //!
-//! This module owns the first. The comparison engine lands beside it as `compare.rs`, declared
-//! here by whoever adds it.
+//! Because the corpus fails silently, every gap in it is named in
+//! [`Corpus::coverage`](corpus::Corpus::coverage) rather than left to be inferred from the schema.
+//!
+//! [`compare`] deliberately knows nothing about how either target was produced: it takes two
+//! snapshots and two counter blocks, whoever made them. That is what lets it judge cdm-rs without
+//! using cdm-rs's own comparator to do it — see its module documentation for why that distinction
+//! is the whole point.
 //!
 //! # Where the corpus lives
 //!
@@ -23,6 +26,7 @@
 //! the corpus cannot slip through review unnoticed. [`corpus_root`] finds that directory, and
 //! `tests/differential/README.md` says how to regenerate the files in it.
 
+pub mod compare;
 pub mod corpus;
 
 pub use corpus::{
