@@ -693,6 +693,7 @@ dependencies = [
  "cdm-config",
  "cdm-core",
  "cdm-testkit",
+ "criterion",
  "futures",
  "p12-keystore",
  "proptest",
