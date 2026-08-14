@@ -151,10 +151,15 @@ fn json_document(fields: usize) -> String {
 /// The cost of promoting one JSON property to a column (`FEA-030`, `FEA-035`).
 ///
 /// This is the only feature that parses, and it parses the *whole* document to read one property of
-/// it — `serde_json` has no way to stop early — so the cost is linear in the document's size no
-/// matter how shallow the mapping is. The sweep over filler-field counts is there to make that
-/// linearity visible: a run whose origin column holds large documents pays for every byte of them
-/// on every row, which is the argument for `exclusive` (`FEA-033`) narrowing the read.
+/// it — `serde_json` has no way to stop early — so a run whose origin column holds large documents
+/// pays for every byte of them on every row. That is the argument for `exclusive` (`FEA-033`)
+/// narrowing the read.
+///
+/// The sweep over filler-field counts exists because the cost is worse than linear. `serde_json`
+/// backs an object with a `BTreeMap`, so building one is `n log n` in the property count on top of
+/// the linear scan of the bytes; measured, 16 → 256 filler fields costs 13–19× rather than the ~10×
+/// the size increase alone would predict. A single number could not show that, and it is the shape,
+/// not the absolute figure, that says whether this feature will scale with someone's documents.
 ///
 /// Throughput is reported in bytes rather than rows because the per-row figure is meaningless
 /// without the document size that produced it.
