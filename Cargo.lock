@@ -726,6 +726,7 @@ dependencies = [
  "cdm-metrics",
  "cdm-testkit",
  "chrono",
+ "criterion",
  "futures",
  "parking_lot",
  "proptest",
