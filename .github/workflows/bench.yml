@@ -1,26 +1,56 @@
 name: Benchmarks
 
-# NOTE: the benchmark suite is delivered by PR #55. Restore the nightly schedule then.
+# TST-060 / NFR-004. See docs/BENCHMARKS.md for what these numbers do and do not prove.
+#
+# Nightly on `main` establishes the baseline series. Pull requests opt in with the `bench` label,
+# because a full workspace bench build is far too slow to run on every push.
 on:
+  schedule:
+    - cron: "0 4 * * *"
   pull_request:
     types: [labeled]
   workflow_dispatch:
 
+permissions:
+  contents: write        # the baseline series is stored on the gh-pages branch
+  pull-requests: write   # regression comments
+
 jobs:
   bench:
-    # TST-060 / NFR-004: hot-path regressions over 10% fail the build.
-    name: Criterion + macro benchmark
+    name: Criterion micro-benchmarks
     if: github.event_name != 'pull_request' || github.event.label.name == 'bench'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo bench --workspace -- --output-format bencher | tee bench.txt
+
+      # `shell: bash` is load-bearing: it sets `pipefail`, which the default shell does not. Without
+      # it a panicking benchmark is swallowed by `tee`, the step goes green, and the truncated
+      # bench.txt silently becomes the new baseline. That is worse than having no gate at all.
+      - name: Run benchmarks
+        shell: bash
+        run: cargo bench --workspace -- --output-format bencher | tee bench.txt
+
+      # On `main`, record the result as the new baseline. On a pull request, compare against the
+      # stored series but never write to it — a PR must not be able to move the bar it is measured
+      # against.
       - uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: cargo
           output-file-path: bench.txt
-          fail-on-alert: true
-          alert-threshold: "110%"
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          # 200% = a 2x slowdown. This is deliberately far looser than the 10% TST-060 asks for.
+          # `ubuntu-latest` is a shared, noisy runner: run-to-run variance on wall-clock
+          # microbenchmarks is routinely 10-30%, so a 110% threshold does not detect a 10%
+          # regression — it fires constantly on noise and gets muted, which leaves no gate at all.
+          # A threshold this loose still catches the failures that actually matter (an accidental
+          # clone in a hot loop, a lost fast path, an O(n) turned O(n^2)).
+          #
+          # Meeting TST-060 as literally written needs a metric that does not depend on what else
+          # the runner is doing. See docs/BENCHMARKS.md, "The 10% gate".
+          alert-threshold: "200%"
+          fail-on-alert: ${{ github.event_name == 'pull_request' }}
+          comment-on-alert: true
+          auto-push: ${{ github.event_name != 'pull_request' }}
+          save-data-file: ${{ github.event_name != 'pull_request' }}

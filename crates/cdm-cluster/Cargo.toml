@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # No driver. `ARCHITECTURE.md` §3 reserves `scylla` for `cdm-cql`, and the one documented
 # exception is `cdm-track`, which owns the tracking tables the leases live beside; the Cassandra
 # implementation of `cdm-core`'s `LeaseStore` is therefore *there*, and this crate names only the

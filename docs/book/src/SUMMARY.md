@@ -9,6 +9,7 @@
 - [Specification](docs/SPEC.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Configuration properties](docs/generated/PROPERTIES.md)
+- [Benchmarks](docs/BENCHMARKS.md)
 - [API documentation (rustdoc)](api.md)
 
 # Migrating from Java CDM

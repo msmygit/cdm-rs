@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # No `scylla`, no `cdm-cql`: this crate operates on a driver-independent `CqlTypeInfo` and raw
 # byte buffers (ARCHITECTURE.md §3.2), so codecs are unit-testable with no session and stay
 # valid if the underlying driver is ever swapped.
@@ -26,4 +32,11 @@ serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "conversion"
+harness = false

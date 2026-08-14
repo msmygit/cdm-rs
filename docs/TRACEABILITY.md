@@ -515,7 +515,7 @@ test, fails CI.
 | `TST-042` | **Distributed tests**: 3 nodes, one killed mid-range; assert lease reclaim, no double processing of counter ranges… | `cdm-testkit / tests` | `tst_042_*` | #34 |
 | `TST-050` | **Interface conformance**: the same logical operation issued via CLI, REST, MCP and A2A MUST produce identical results and… | `cdm-testkit / tests` | `tst_050_*` | #15 |
 | `TST-051` | **OpenAPI contract tests**: every endpoint MUST be exercised and its response validated against the schema (schemathesis or… | `cdm-testkit / tests` | `tst_051_*` | #15 |
-| `TST-060` | **Benchmarks**: `criterion` micro-benchmarks for the hot path (bind, convert, compare) and a reproducible macro-benchmark… | `cdm-testkit / tests` | `tst_060_*` | #49 |
+| `TST-060` | **Benchmarks**: `criterion` micro-benchmarks for the hot path (bind, convert, compare) and a reproducible macro-benchmark… | `crates/*/benches` | `tst_060_*` | #55 |
 | `TST-070` | **Snapshot tests** (`insta`) for CLI output, generated CQL, generated config files, error messages, and the OpenAPI document | `cdm-testkit / tests` | `tst_070_*` | #10 |
 | `TST-080` | **Fuzzing** (`cargo-fuzz`) of the properties parser, the CQL identifier quoter, the JSON extractor, and the Java date-pattern… | `cdm-testkit / tests` | `tst_080_*` | #58 |
 | `TST-090` | Every rustdoc example compiles and runs, and code blocks in `docs/` are extracted and compiled | `cdm-testkit / tests` | `tst_090_*` | #57 |

@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # `cdm-engine` is a dependency and not the other way round: the engine's seam into tracking is the
 # `RangeObserver` trait, which this crate implements, so nothing in `cdm-engine` names `cdm-track`
 # and the graph stays acyclic. Depending on it here is what lets `TRK-033` reuse the Java-parity

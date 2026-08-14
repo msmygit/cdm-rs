@@ -13,9 +13,16 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 [[bin]]
 name = "cdm"
 path = "src/main.rs"
+bench = false
 
 # The CLI is the first caller that assembles a whole run, so it takes an edge to every layer the
 # run passes through: `cdm-cql` for the sessions and statements, `cdm-codec` for the conversion

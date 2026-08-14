@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # Zero I/O (ARCHITECTURE §3.2): no driver, no HTTP client/server, no async runtime, no
 # filesystem access. `async-trait` only shapes trait signatures; it pulls in no executor.
 [dependencies]
@@ -25,4 +31,11 @@ thiserror.workspace = true
 
 # `serde_json` proves the serde representations that `cdm-api` and the tracking store depend on.
 [dev-dependencies]
+criterion.workspace = true
 serde_json.workspace = true
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "token"
+harness = false

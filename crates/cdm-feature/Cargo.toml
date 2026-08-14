@@ -13,6 +13,12 @@ categories.workspace = true
 [lints]
 workspace = true
 
+# `cargo bench` would otherwise also run this target's libtest harness, which rejects criterion's
+# `--output-format bencher` and fails the whole workspace bench run before a single benchmark
+# executes (TST-060). Only `benches/` targets are benchmarks here.
+[lib]
+bench = false
+
 # ARCHITECTURE §3 puts `cdm-feature` above `cdm-codec`, `cdm-core` and `cdm-cql`. Nothing here
 # needs a session: every feature is expressed against the driver-independent `CqlTypeInfo`,
 # `RawCell` and `Record`, which is what makes the "independently unit-testable without a cluster"
@@ -33,4 +39,11 @@ uuid.workspace = true
 # `proptest` is already the workspace's property-testing crate (`cdm-engine` dev-depends on it), so
 # this adds no new licence, advisory or supply-chain surface for `cargo deny` to weigh.
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
+
+# `harness = false` hands `cargo bench` to criterion's own runner instead of libtest's, which is
+# what gives us the statistics and the `--output-format bencher` that `bench.yml` consumes.
+[[bench]]
+name = "pipeline"
+harness = false

@@ -12,6 +12,13 @@ publish = false
 [lints]
 workspace = true
 
+# See the note in every crate's Cargo.toml: libtest harnesses reject criterion's
+# `--output-format bencher` and would fail the workspace bench run (TST-060).
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+bench = false
+
 [dependencies]
 anyhow.workspace = true
 cdm-config.workspace = true
