@@ -16,6 +16,11 @@ cargo xtask it                # integration tests; needs Docker or Podman
 If you would rather not install Python, `cargo xtask install-hooks` installs equivalent native git
 hooks.
 
+The full list of CI gates — every command, the tools you need to install to run them, and which are
+worth running before every commit rather than before a push — lives in
+[`AGENTS.md`](AGENTS.md#commands). That list is canonical; it is written for agents but it is the
+same list humans need, so it is kept in one place rather than two.
+
 ## How work is organised
 
 1. [`docs/SPEC.md`](docs/SPEC.md) states every requirement, with a stable ID like `MIG-012`.
@@ -60,7 +65,10 @@ citing its ID will fail.
 | A codec | round-trip property test **and** a known-vector test |
 | The hot path | a benchmark, with no regression over 10% |
 
-Coverage is enforced at 85% workspace-wide. Aim for 90% in the crate you touch.
+Coverage is a ratchet, not a fixed bar: `coverage.yml` fails below the floor the codebase clears
+today (70%, with `xtask/` excluded as repository automation), and that floor is raised by the PR
+that raises the coverage and never lowered. 85% workspace-wide is the v1.0 success criterion (S4),
+not today's gate. Aim for 90% in the crate you touch.
 
 ## Behaviour differences from Java CDM
 
