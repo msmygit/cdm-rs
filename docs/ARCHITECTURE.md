@@ -204,6 +204,44 @@ Three properties make this acceptable rather than a hole in the rule:
 `TestSession` seam exists precisely so the fixtures stay driver-free, and `crates/cdm-cql/tests/
 testkit_fixture.rs` is where the two halves are meant to meet.
 
+### 3.3.1 A second optional feature that is not an exception: `--features differential`
+
+`TST-020`'s Java-parity corpus and comparator live behind `cdm-testkit --features differential`,
+and `xtask` opts into it the same way it opts into `macrobench`. The pattern is borrowed; the
+justification is not, and the difference is worth stating so that nobody reads this as §3.3 being
+widened.
+
+```
+cdm-testkit --features differential  -->  cdm-cql, cdm-config
+```
+
+**Almost all of it adds no dependency edge.** The corpus emits CQL *statements*; the snapshot
+types, the byte comparison, both counter-block comparisons and the report are pure data. None of
+that needs a driver, a scheduler or a configuration model, and none of it is why the feature
+exists: the feature exists to keep a large generated artefact out of every other crate's test
+build, since `cdm-cql`, `cdm-engine` and `cdm-track` all dev-depend on `cdm-testkit` and none of
+them calls the corpus.
+
+Two functions do need the driver, and this is the second exception the paragraph below used to
+anticipate. `TST-020` requires **byte-identical** target state, which can only be read as bytes:
+`snapshot_target` reads a target table as `cdm-cql`'s undeserialised `RawRow`, and `connect_target`
+opens the session it reads through — which means naming a `CdmConfig`. So the feature takes
+`dep:cdm-cql` and `dep:cdm-config`, visibly, in the feature table, exactly as the rule requires.
+The alternative was to compare `cqlsh` output, and it is not an alternative: `cqlsh` decodes and
+formats, so a `varint` of `0x01` and one of `0x0001` both print as `1`, and a harness that compared
+that text would report parity over precisely the differences it exists to find.
+
+`differential` is off by default, so the resolved dependency graph of every other crate's build is
+unchanged — which is the property §3.3 is protecting, and the one that makes this a second instance
+of the pattern rather than a widening of the rule.
+
+The orchestration lives in `xtask` rather than in the crate, for the reason `BENCHMARKS.md` §5
+gives for tier 3 being a shell script: it is process orchestration against `docker`, `spark-submit`
+and `cqlsh`, and it drives the `cdm` **binary** as a black box, exactly as it drives `spark-submit`
+on the Java side. `xtask` itself still may not depend on `cdm-cql` — the session it snapshots
+through comes from `cdm-testkit`, which is where the driver edge is argued. See
+[`DIFFERENTIAL.md`](DIFFERENTIAL.md).
+
 The alternative considered and rejected was a separate `cdm-bench` crate. It would keep the graph
 literally untouched, at the cost of a sixteenth-plus-one crate whose entire contents are one
 module, and of splitting the container fixtures from the only other thing that starts containers.
