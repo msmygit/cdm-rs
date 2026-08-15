@@ -10,7 +10,8 @@ build:
 release:
     cargo build --profile dist --bin cdm
 
-# Formatting and lints, exactly as CI runs them.
+# Formatting and lints, with the exact flags CI uses. These are three of CI's gates, not all of
+# them — see AGENTS.md "Commands" for the full list. A green `just lint` does not predict a green CI.
 lint:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -37,7 +38,8 @@ sit:
 differential:
     cargo xtask differential
 
-# Coverage, with the CI threshold applied.
+# Coverage against the v1.0 target (success criterion S4), which is deliberately stricter than the
+# gate: coverage.yml fails under 70% with `xtask/` excluded. This recipe can fail while CI passes.
 cover:
     cargo llvm-cov --workspace --all-features --html --fail-under-lines 85
 
