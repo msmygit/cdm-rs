@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1787115185968,
+  "lastUpdate": 1787287972649,
   "repoUrl": "https://github.com/msmygit/cdm-rs",
   "entries": {
     "Benchmark": [
@@ -1941,6 +1941,508 @@ window.BENCHMARK_DATA = {
             "name": "tst_060_explode_map/256",
             "value": 42474,
             "range": "± 158",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Madhavan",
+            "username": "msmygit",
+            "email": "msmygit@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "72b38003bb33518bd7e89c34457eb88b6b5b93e0",
+          "message": "Merge pull request #92 from msmygit/dependabot/github_actions/taiki-e/install-action-2.85.13\n\nchore(deps): bump taiki-e/install-action from 2.85.9 to 2.85.13",
+          "timestamp": "2026-08-19T01:27:21Z",
+          "url": "https://github.com/msmygit/cdm-rs/commit/72b38003bb33518bd7e89c34457eb88b6b5b93e0"
+        },
+        "date": 1787287971907,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "tst_060_passthrough/16",
+            "value": 23,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_passthrough/256",
+            "value": 23,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_passthrough/4096",
+            "value": 23,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_int_to_text",
+            "value": 36,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_collection/1",
+            "value": 107,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_collection/16",
+            "value": 1289,
+            "range": "± 43",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_collection/256",
+            "value": 20960,
+            "range": "± 1227",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_murmur3_ring/64",
+            "value": 123,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_murmur3_ring/1024",
+            "value": 1477,
+            "range": "± 68",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_murmur3_ring/65536",
+            "value": 102166,
+            "range": "± 4846",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_random_ring/64",
+            "value": 135,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_random_ring/1024",
+            "value": 1455,
+            "range": "± 12",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_random_ring/65536",
+            "value": 103449,
+            "range": "± 2087",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_narrow_range/64",
+            "value": 123,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_narrow_range/4096",
+            "value": 6010,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_narrow_range/65536",
+            "value": 6024,
+            "range": "± 254",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_extraction/1",
+            "value": 28,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_extraction/3",
+            "value": 51,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_extraction/8",
+            "value": 103,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/clean/8",
+            "value": 4,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/substituted/8",
+            "value": 149,
+            "range": "± 7",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/clean/32",
+            "value": 3,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/substituted/32",
+            "value": 592,
+            "range": "± 30",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/clean/128",
+            "value": 3,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/substituted/128",
+            "value": 2316,
+            "range": "± 17",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_row/8",
+            "value": 56,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_row/32",
+            "value": 177,
+            "range": "± 11",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_row/128",
+            "value": 727,
+            "range": "± 32",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_unset_decision/value",
+            "value": 184,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_unset_decision/null",
+            "value": 166,
+            "range": "± 9",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_unset_decision/empty_collection",
+            "value": 196,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/cql/8",
+            "value": 5583,
+            "range": "± 178",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/binder/8",
+            "value": 3944,
+            "range": "± 100",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/cql/32",
+            "value": 21537,
+            "range": "± 533",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/binder/32",
+            "value": 14315,
+            "range": "± 378",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/cql/128",
+            "value": 88461,
+            "range": "± 160",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/binder/128",
+            "value": 52708,
+            "range": "± 127",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_all_columns_match/4",
+            "value": 56,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_all_columns_match/16",
+            "value": 216,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_all_columns_match/64",
+            "value": 861,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_mismatch_in_last_column/4",
+            "value": 106,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_mismatch_in_last_column/16",
+            "value": 265,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_mismatch_in_last_column/64",
+            "value": 907,
+            "range": "± 52",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_missing_target_row/4",
+            "value": 2,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_missing_target_row/16",
+            "value": 2,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_missing_target_row/64",
+            "value": 2,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_keys_only/4",
+            "value": 2,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_keys_only/16",
+            "value": 2,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_keys_only/64",
+            "value": 2,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_ratelimit_wait_observer_overhead/none",
+            "value": 24215,
+            "range": "± 137",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_ratelimit_wait_observer_overhead/instruments",
+            "value": 41393,
+            "range": "± 170",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_adaptive_signal_overhead/disabled",
+            "value": 1,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_adaptive_signal_overhead/enabled",
+            "value": 32,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_murmur3/64",
+            "value": 511,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_murmur3/1024",
+            "value": 6970,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_murmur3/65536",
+            "value": 436165,
+            "range": "± 935",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_coverage/1",
+            "value": 52082,
+            "range": "± 81",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_coverage/25",
+            "value": 59236,
+            "range": "± 3098",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_coverage/100",
+            "value": 52389,
+            "range": "± 2507",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_partition_floor/dense",
+            "value": 3215903,
+            "range": "± 24184",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_partition_floor/fallback",
+            "value": 24,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_shuffle_for_run/64",
+            "value": 667,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_shuffle_for_run/1024",
+            "value": 10471,
+            "range": "± 475",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_shuffle_for_run/65536",
+            "value": 773366,
+            "range": "± 26571",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_no_features_baseline/empty_filter_chain",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_no_features_baseline/disabled_constant_columns",
+            "value": 5,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_constant_columns/extend_target_binding",
+            "value": 42,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_constant_columns/resolve",
+            "value": 119,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/field/0",
+            "value": 179,
+            "range": "± 10",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/pointer/0",
+            "value": 275,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/field/16",
+            "value": 1365,
+            "range": "± 7",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/pointer/16",
+            "value": 1499,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/field/256",
+            "value": 25832,
+            "range": "± 1019",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/pointer/256",
+            "value": 25940,
+            "range": "± 69",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_filter_chain/accept",
+            "value": 11,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_filter_chain/reject",
+            "value": 16,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_filter_chain/accept_chain_of_four",
+            "value": 47,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_explode_map/1",
+            "value": 114,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_explode_map/16",
+            "value": 2673,
+            "range": "± 82",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_explode_map/256",
+            "value": 51581,
+            "range": "± 1892",
             "unit": "ns/iter"
           }
         ]
