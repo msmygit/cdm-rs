@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788686166935,
+  "lastUpdate": 1789293993504,
   "repoUrl": "https://github.com/msmygit/cdm-rs",
   "entries": {
     "Benchmark": [
@@ -110,6 +110,34 @@ window.BENCHMARK_DATA = {
           {
             "name": "nfr_004_macro_migrate",
             "value": 108607,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Madhavan",
+            "username": "msmygit",
+            "email": "msmygit@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "2dfd93258211e65337cab751af93f5d26e07018f",
+          "message": "Merge pull request #97 from msmygit/dependabot/github_actions/actions/setup-java-6.0.0\n\nchore(deps): bump actions/setup-java from 5.7.0 to 6.0.0",
+          "timestamp": "2026-09-09T17:31:43Z",
+          "url": "https://github.com/msmygit/cdm-rs/commit/2dfd93258211e65337cab751af93f5d26e07018f"
+        },
+        "date": 1789293992999,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "nfr_004_macro_migrate",
+            "value": 133243,
             "range": "± 0",
             "unit": "ns/iter"
           }
