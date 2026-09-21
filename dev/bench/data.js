@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789379682780,
+  "lastUpdate": 1789984581688,
   "repoUrl": "https://github.com/msmygit/cdm-rs",
   "entries": {
     "Benchmark": [
@@ -4451,6 +4451,508 @@ window.BENCHMARK_DATA = {
             "name": "tst_060_explode_map/256",
             "value": 74727,
             "range": "± 362",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "Madhavan",
+            "username": "msmygit",
+            "email": "msmygit@users.noreply.github.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "2dfd93258211e65337cab751af93f5d26e07018f",
+          "message": "Merge pull request #97 from msmygit/dependabot/github_actions/actions/setup-java-6.0.0\n\nchore(deps): bump actions/setup-java from 5.7.0 to 6.0.0",
+          "timestamp": "2026-09-09T17:31:43Z",
+          "url": "https://github.com/msmygit/cdm-rs/commit/2dfd93258211e65337cab751af93f5d26e07018f"
+        },
+        "date": 1789984581141,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "tst_060_passthrough/16",
+            "value": 23,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_passthrough/256",
+            "value": 23,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_passthrough/4096",
+            "value": 23,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_int_to_text",
+            "value": 55,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_collection/1",
+            "value": 163,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_collection/16",
+            "value": 1712,
+            "range": "± 11",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_codec_collection/256",
+            "value": 28434,
+            "range": "± 245",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_murmur3_ring/64",
+            "value": 187,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_murmur3_ring/1024",
+            "value": 2291,
+            "range": "± 17",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_murmur3_ring/65536",
+            "value": 145699,
+            "range": "± 1524",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_random_ring/64",
+            "value": 180,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_random_ring/1024",
+            "value": 2290,
+            "range": "± 4",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_random_ring/65536",
+            "value": 145566,
+            "range": "± 615",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_narrow_range/64",
+            "value": 192,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_narrow_range/4096",
+            "value": 9007,
+            "range": "± 57",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_narrow_range/65536",
+            "value": 9007,
+            "range": "± 33",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_extraction/1",
+            "value": 32,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_extraction/3",
+            "value": 44,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_extraction/8",
+            "value": 73,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/clean/8",
+            "value": 11,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/substituted/8",
+            "value": 153,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/clean/32",
+            "value": 11,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/substituted/32",
+            "value": 562,
+            "range": "± 4",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/clean/128",
+            "value": 11,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/key_substitution/substituted/128",
+            "value": 2231,
+            "range": "± 16",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_row/8",
+            "value": 91,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_row/32",
+            "value": 294,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_row/128",
+            "value": 1123,
+            "range": "± 39",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_unset_decision/value",
+            "value": 294,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_unset_decision/null",
+            "value": 250,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/bind_unset_decision/empty_collection",
+            "value": 322,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/cql/8",
+            "value": 6920,
+            "range": "± 138",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/binder/8",
+            "value": 5171,
+            "range": "± 32",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/cql/32",
+            "value": 27938,
+            "range": "± 496",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/binder/32",
+            "value": 18221,
+            "range": "± 54",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/cql/128",
+            "value": 119439,
+            "range": "± 1138",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060/statement_construction/binder/128",
+            "value": 68893,
+            "range": "± 1043",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_all_columns_match/4",
+            "value": 53,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_all_columns_match/16",
+            "value": 200,
+            "range": "± 7",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_all_columns_match/64",
+            "value": 863,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_mismatch_in_last_column/4",
+            "value": 103,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_mismatch_in_last_column/16",
+            "value": 245,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_mismatch_in_last_column/64",
+            "value": 845,
+            "range": "± 3",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_missing_target_row/4",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_missing_target_row/16",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_missing_target_row/64",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_keys_only/4",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_keys_only/16",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_compare_keys_only/64",
+            "value": 10,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_ratelimit_wait_observer_overhead/none",
+            "value": 39302,
+            "range": "± 120",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_ratelimit_wait_observer_overhead/instruments",
+            "value": 44797,
+            "range": "± 294",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_adaptive_signal_overhead/disabled",
+            "value": 2,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_adaptive_signal_overhead/enabled",
+            "value": 39,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_murmur3/64",
+            "value": 870,
+            "range": "± 6",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_murmur3/1024",
+            "value": 11455,
+            "range": "± 35",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_murmur3/65536",
+            "value": 720156,
+            "range": "± 29075",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_coverage/1",
+            "value": 88503,
+            "range": "± 1332",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_coverage/25",
+            "value": 89055,
+            "range": "± 565",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_coverage/100",
+            "value": 89062,
+            "range": "± 429",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_partition_floor/dense",
+            "value": 5756720,
+            "range": "± 50870",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_split_ring_partition_floor/fallback",
+            "value": 37,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_shuffle_for_run/64",
+            "value": 760,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_shuffle_for_run/1024",
+            "value": 22989,
+            "range": "± 43",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_shuffle_for_run/65536",
+            "value": 728292,
+            "range": "± 3442",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_no_features_baseline/empty_filter_chain",
+            "value": 0,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_no_features_baseline/disabled_constant_columns",
+            "value": 9,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_constant_columns/extend_target_binding",
+            "value": 73,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_constant_columns/resolve",
+            "value": 215,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/field/0",
+            "value": 315,
+            "range": "± 2",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/pointer/0",
+            "value": 480,
+            "range": "± 5",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/field/16",
+            "value": 2076,
+            "range": "± 11",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/pointer/16",
+            "value": 2265,
+            "range": "± 20",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/field/256",
+            "value": 41762,
+            "range": "± 242",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_extract_json/pointer/256",
+            "value": 43649,
+            "range": "± 107",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_filter_chain/accept",
+            "value": 14,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_filter_chain/reject",
+            "value": 22,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_filter_chain/accept_chain_of_four",
+            "value": 58,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_explode_map/1",
+            "value": 143,
+            "range": "± 1",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_explode_map/16",
+            "value": 2163,
+            "range": "± 19",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "tst_060_explode_map/256",
+            "value": 53220,
+            "range": "± 432",
             "unit": "ns/iter"
           }
         ]
