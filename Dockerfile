@@ -5,7 +5,7 @@
 # build at all. This was pinned at 1.85 — below the MSRV — and nothing caught it: the only place
 # this image is built is `release.yml`, which runs on tags, so the first release would have been
 # the discovery. Raise this whenever `rust-version` in Cargo.toml rises.
-FROM rust:1.97-slim AS builder
+FROM rust:1.98-slim AS builder
 WORKDIR /src
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config \
     && rm -rf /var/lib/apt/lists/*
